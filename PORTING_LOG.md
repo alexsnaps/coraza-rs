@@ -304,7 +304,63 @@
 - ✅ Full documentation with examples
 - ✅ Test coverage includes Unicode, dotall mode, case-insensitivity
 
+#### 3. Macro Expansion System (src/operators/macros.rs)
+- **Date:** 2026-03-09
+- **Source:** `coraza/macro/macro.go`
+- **Tests:** 16/16 passing (macro parser) + 156/156 total (all operators updated)
+- **Features:**
+  - **TransactionState trait** - Interface for variable lookups during rule evaluation
+  - **Macro struct** - Parses and expands `%{VARIABLE.key}` syntax with **full static dispatch**
+  - **MacroToken** - Internal representation of parsed macro segments
+  - **NoTx** - Temporary deprecated convenience type (to be removed after transaction port)
+  - Supports plain text, single variables, and multi-variable strings
+  - Comprehensive validation (empty braces, malformed syntax, unknown variables)
+  - All 13 existing operators updated to support macro expansion:
+    - Simple operators: `eq`, `gt`, `ge`, `lt`, `le`, `streq`, `contains`, `begins_with`, `ends_with`
+    - Pattern operators: `rx`, `pm`, `within`, `strmatch`
+  - Operator trait uses generic type parameter: `fn evaluate<TX: TransactionState>(...)`
+  - Caching optimization for operators without macros (pre-compile regex/matchers)
+  - Empty string support (empty parameters are valid)
+- **Design - Zero-Cost Abstraction:**
+  - **Complete static dispatch** - No `&dyn` trait objects anywhere
+  - `Macro::new()` parses macro string at operator construction time
+  - `Macro::expand<TX>()` uses generics for zero runtime overhead
+  - Pattern operators (`rx`, `pm`) cache compiled patterns when no macros present
+  - If macro expansion is used, patterns are compiled on-the-fly
+  - Fallback behavior: invalid macro syntax returns no match
+  - **Compiler inlining:** Full call path `evaluate() → expand() → get_variable()` can be inlined
+  - **Minimal monomorphization:** Only one production `TransactionState` type expected (matches Go)
+- **Improvements over Go:**
+  - Type-safe TransactionState trait (vs interface{})
+  - **Zero dynamic dispatch** - true zero-cost abstraction
+  - Const methods where possible
+  - Compile-time validation of macro syntax
+  - Performance optimization with cached patterns
+  - Idiomatic error handling with Result types
+- **Test Coverage:**
+  - Macro parser: 16 tests (empty, plain text, variables, multi-variable, errors)
+  - Simple operators: 26 tests (+3 macro expansion tests)
+  - Pattern operators: 23 tests (+4 macro expansion tests)
+  - All tests include macro expansion scenarios with MockTx
+
+### Quality Metrics - Phase 3 (Updated)
+- ✅ All tests passing (156/156 unit tests, +39 new from macro integration)
+- ✅ Doc tests passing (56/56)
+- ✅ Clippy clean (no warnings)
+- ✅ Full documentation with examples
+- ✅ Test coverage includes macro expansion, transaction state, caching
+- ✅ **Phase 3, Step 3 Complete!** Macro expansion fully integrated
+
 ### Next Steps
-- [ ] **Phase 3, Step 3:** Add capturing group support for operators
-- [ ] **Phase 3, Step 4:** Port IP matching operators (ipMatch, ipMatchFromFile)
+- [ ] **IMPORTANT - Cleanup After Transaction Port:** Once the production `TransactionState` implementation is ported:
+  - Delete `NoTx` struct from `src/operators/macros.rs`
+  - Remove all `#[allow(deprecated)]` attributes from:
+    - `src/operators/macros.rs` (impl block and test module)
+    - `src/operators/mod.rs` (pub use statement)
+    - `src/operators/simple.rs` (test module)
+    - `src/operators/pattern.rs` (test module)
+  - Update all test code to use the production transaction type instead of `NoTx`
+  - This cleanup is critical to avoid shipping deprecated convenience types
+- [ ] **Phase 3, Step 4:** Add capturing group support for rx and pm operators
+- [ ] **Phase 3, Step 5:** Port IP matching operators (ipMatch, ipMatchFromFile)
 - [ ] **Phase 4:** Port complex text processing transformations (cmd_line, css_decode, js_decode, html_entity_decode, escape sequences)
