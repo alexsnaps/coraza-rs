@@ -12,6 +12,6 @@ pub mod utils;
 
 // Re-export commonly used types
 pub use types::{
-    AuditEngineStatus, AuditLogPart, BodyLimitAction, RuleEngineStatus, RulePhase, RuleSeverity,
-    RuleVariable,
+    AuditEngineStatus, AuditLogPart, AuditLogParts, BodyLimitAction, RuleEngineStatus, RulePhase,
+    RuleSeverity, RuleVariable, apply_audit_log_parts, parse_audit_log_parts,
 };

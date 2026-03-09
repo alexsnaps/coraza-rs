@@ -71,8 +71,8 @@
 
 #### 4. WAF Engine Types (src/types/waf.rs)
 - **Date:** 2026-03-09
-- **Source:** `coraza/types/waf.go`
-- **Tests:** 17/17 passing
+- **Source:** `coraza/types/waf.go`, `coraza/types/waf_test.go`
+- **Tests:** 39/39 passing
 - **Features:**
   - **AuditEngineStatus** - Controls audit logging (On, Off, RelevantOnly)
   - **RuleEngineStatus** - Controls rule processing (On, DetectionOnly, Off)
@@ -82,6 +82,17 @@
     - `from_char()` and `as_char()` conversions
     - `is_mandatory()` helper for parts A and Z
     - `TryFrom<char>` trait implementation
+  - **AuditLogParts** - Type alias for `Vec<AuditLogPart>`
+  - **`parse_audit_log_parts()`** - Validates and parses audit log part strings
+    - Must start with 'A' and end with 'Z' (mandatory)
+    - Validates all middle parts are valid (B-K)
+    - Returns error for invalid parts or missing mandatory parts
+  - **`apply_audit_log_parts()`** - Modifies audit log parts
+    - Addition mode: "+E" adds part E
+    - Removal mode: "-E" removes part E
+    - Absolute mode: "ABCDEFZ" sets exact parts
+    - Maintains canonical order (BCDEFGHIJK)
+    - Prevents modification of mandatory parts A and Z
   - All types support parsing from strings (case-insensitive where applicable)
   - Full error handling with custom error types
 - **Improvements over Go:**
@@ -89,6 +100,7 @@
   - Const methods
   - `is_mandatory()` helper for audit log parts
   - Better char/enum integration for AuditLogPart
+  - Uses `HashSet` for efficient deduplication in `apply_audit_log_parts()`
 
 #### 5. String Utilities (src/utils/strings.rs)
 - **Date:** 2026-03-09
@@ -111,10 +123,11 @@
   - Cleaner code using stdlib utilities
 
 ### Quality Metrics
-- ✅ All tests passing (52/52)
+- ✅ All tests passing (74/74)
 - ✅ Clippy clean (no warnings)
 - ✅ Full documentation
 - ✅ Doc tests included
+- ✅ **Test parity verified** - All Go tests from Phase 1 ported
 - ✅ **Phase 1 Complete!** All foundation types and utilities ported
 
 ### Next Steps

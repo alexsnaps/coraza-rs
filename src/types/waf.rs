@@ -308,6 +308,204 @@ impl TryFrom<char> for AuditLogPart {
     }
 }
 
+/// A collection of audit log parts.
+///
+/// This type represents the configured parts of an audit log entry.
+/// Parts A (header) and Z (end marker) are always mandatory and implicitly included.
+pub type AuditLogParts = Vec<AuditLogPart>;
+
+/// Canonical ordering for audit log parts (B through K, excluding mandatory A and Z).
+const ORDERED_AUDIT_LOG_PARTS: &[AuditLogPart] = &[
+    AuditLogPart::RequestHeaders,              // B
+    AuditLogPart::RequestBody,                 // C
+    AuditLogPart::IntermediaryResponseHeaders, // D
+    AuditLogPart::IntermediaryResponseBody,    // E
+    AuditLogPart::ResponseHeaders,             // F
+    AuditLogPart::ResponseBody,                // G
+    AuditLogPart::Trailer,                     // H
+    AuditLogPart::RequestBodyAlternative,      // I
+    AuditLogPart::UploadedFiles,               // J
+    AuditLogPart::RulesMatched,                // K
+];
+
+/// Error type for invalid audit log parts string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseAuditLogPartsError {
+    message: String,
+}
+
+impl fmt::Display for ParseAuditLogPartsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for ParseAuditLogPartsError {}
+
+/// Parses audit log parts from a string (e.g., "ABCDEFGHIJKZ").
+///
+/// The string must start with 'A' and end with 'Z' (mandatory parts).
+/// All characters between A and Z must be valid audit log part identifiers (B-K).
+///
+/// # Examples
+///
+/// ```
+/// use coraza_rs::types::{parse_audit_log_parts, AuditLogPart};
+///
+/// let parts = parse_audit_log_parts("ABCDEFGHIJKZ").unwrap();
+/// assert_eq!(parts.len(), 12);
+/// assert_eq!(parts[0], AuditLogPart::Header);
+/// assert_eq!(parts[11], AuditLogPart::EndMarker);
+///
+/// assert!(parse_audit_log_parts("").is_err());  // Empty
+/// assert!(parse_audit_log_parts("DEFGHZ").is_err());  // Missing A
+/// assert!(parse_audit_log_parts("ABCD").is_err());  // Missing Z
+/// assert!(parse_audit_log_parts("AMZ").is_err());  // Invalid middle part 'M'
+/// ```
+pub fn parse_audit_log_parts(opts: &str) -> Result<AuditLogParts, ParseAuditLogPartsError> {
+    if !opts.starts_with('A') {
+        return Err(ParseAuditLogPartsError {
+            message: "audit log parts is required to start with A".to_string(),
+        });
+    }
+
+    if !opts.ends_with('Z') {
+        return Err(ParseAuditLogPartsError {
+            message: "audit log parts is required to end with Z".to_string(),
+        });
+    }
+
+    // Validate the middle parts (everything between A and Z)
+    let middle_parts = &opts[1..opts.len() - 1];
+    for p in middle_parts.chars() {
+        let part = AuditLogPart::from_char(p).ok_or_else(|| ParseAuditLogPartsError {
+            message: format!("invalid audit log parts {:?}", opts),
+        })?;
+
+        // Ensure it's one of the valid middle parts (B-K, not A or Z)
+        if !ORDERED_AUDIT_LOG_PARTS.contains(&part) {
+            return Err(ParseAuditLogPartsError {
+                message: format!("invalid audit log parts {:?}", opts),
+            });
+        }
+    }
+
+    // Convert the string to a Vec<AuditLogPart>
+    opts.chars()
+        .map(|c| {
+            AuditLogPart::from_char(c).ok_or_else(|| ParseAuditLogPartsError {
+                message: format!("invalid audit log parts {:?}", opts),
+            })
+        })
+        .collect()
+}
+
+/// Applies audit log parts modifications to base parts.
+///
+/// This function supports three modes:
+/// - Addition: prefix with '+' (e.g., "+E" adds part E)
+/// - Removal: prefix with '-' (e.g., "-E" removes part E)
+/// - Absolute: no prefix (e.g., "ABCDEFZ" sets exact parts)
+///
+/// Parts A and Z are mandatory and cannot be added or removed via modifications.
+/// Results are returned in canonical order (BCDEFGHIJK).
+///
+/// # Examples
+///
+/// ```
+/// use coraza_rs::types::{apply_audit_log_parts, AuditLogPart};
+///
+/// // Addition
+/// let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::RequestBody];
+/// let result = apply_audit_log_parts(&base, "+E").unwrap();
+/// assert_eq!(result.len(), 3);
+///
+/// // Removal
+/// let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::RequestBody,
+///                 AuditLogPart::IntermediaryResponseBody];
+/// let result = apply_audit_log_parts(&base, "-E").unwrap();
+/// assert_eq!(result.len(), 2);
+///
+/// // Absolute value
+/// let base = vec![AuditLogPart::RequestHeaders];
+/// let result = apply_audit_log_parts(&base, "ABCDEFZ").unwrap();
+/// assert_eq!(result.len(), 7);
+///
+/// // Cannot add/remove mandatory parts
+/// assert!(apply_audit_log_parts(&base, "+A").is_err());
+/// assert!(apply_audit_log_parts(&base, "-Z").is_err());
+/// ```
+pub fn apply_audit_log_parts(
+    base: &[AuditLogPart],
+    modification: &str,
+) -> Result<AuditLogParts, ParseAuditLogPartsError> {
+    if modification.is_empty() {
+        return Err(ParseAuditLogPartsError {
+            message: "modification string cannot be empty".to_string(),
+        });
+    }
+
+    // Check if this is a modification (starts with + or -)
+    let first_char = modification.chars().next().unwrap();
+    if first_char != '+' && first_char != '-' {
+        // This is an absolute value, parse it directly
+        return parse_audit_log_parts(modification);
+    }
+
+    let is_addition = first_char == '+';
+    let parts_to_modify = &modification[1..];
+
+    // Validate all parts to modify
+    for p in parts_to_modify.chars() {
+        // Parts A and Z are mandatory and cannot be added or removed
+        if p == 'A' || p == 'Z' {
+            return Err(ParseAuditLogPartsError {
+                message: "audit log parts A and Z are mandatory and cannot be modified".to_string(),
+            });
+        }
+
+        let part = AuditLogPart::from_char(p).ok_or_else(|| ParseAuditLogPartsError {
+            message: format!("invalid audit log part {:?}", p),
+        })?;
+
+        if !ORDERED_AUDIT_LOG_PARTS.contains(&part) {
+            return Err(ParseAuditLogPartsError {
+                message: format!("invalid audit log part {:?}", p),
+            });
+        }
+    }
+
+    // Create a set of current parts for efficient lookup
+    use std::collections::HashSet;
+    let mut parts_set: HashSet<AuditLogPart> = base.iter().copied().collect();
+
+    if is_addition {
+        // Add new parts
+        for p in parts_to_modify.chars() {
+            if let Some(part) = AuditLogPart::from_char(p) {
+                parts_set.insert(part);
+            }
+        }
+    } else {
+        // Remove parts
+        for p in parts_to_modify.chars() {
+            if let Some(part) = AuditLogPart::from_char(p) {
+                parts_set.remove(&part);
+            }
+        }
+    }
+
+    // Convert set back to vec, maintaining the canonical order
+    let mut result = Vec::new();
+    for part in ORDERED_AUDIT_LOG_PARTS {
+        if parts_set.contains(part) {
+            result.push(*part);
+        }
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -489,5 +687,202 @@ mod tests {
             let parsed = AuditLogPart::from_char(c).unwrap();
             assert_eq!(parsed, *part);
         }
+    }
+
+    #[test]
+    fn test_parse_audit_log_parts_valid() {
+        let parts = parse_audit_log_parts("ABCDEFGHIJKZ").unwrap();
+        assert_eq!(parts.len(), 12);
+
+        let expected: Vec<AuditLogPart> = "ABCDEFGHIJKZ"
+            .chars()
+            .map(|c| AuditLogPart::from_char(c).unwrap())
+            .collect();
+
+        for (i, part) in expected.iter().enumerate() {
+            assert_eq!(&parts[i], part);
+        }
+    }
+
+    #[test]
+    fn test_parse_audit_log_parts_empty() {
+        assert!(parse_audit_log_parts("").is_err());
+    }
+
+    #[test]
+    fn test_parse_audit_log_parts_missing_a() {
+        assert!(parse_audit_log_parts("DEFGHZ").is_err());
+    }
+
+    #[test]
+    fn test_parse_audit_log_parts_missing_z() {
+        assert!(parse_audit_log_parts("ABCD").is_err());
+    }
+
+    #[test]
+    fn test_parse_audit_log_parts_invalid_middle() {
+        assert!(parse_audit_log_parts("AMZ").is_err());
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_add_single() {
+        let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::RequestBody];
+        let result = apply_audit_log_parts(&base, "+E").unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], AuditLogPart::RequestHeaders);
+        assert_eq!(result[1], AuditLogPart::RequestBody);
+        assert_eq!(result[2], AuditLogPart::IntermediaryResponseBody);
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_add_multiple() {
+        let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::RequestBody];
+        let result = apply_audit_log_parts(&base, "+EFG").unwrap();
+        assert_eq!(result.len(), 5);
+        assert_eq!(result[0], AuditLogPart::RequestHeaders);
+        assert_eq!(result[1], AuditLogPart::RequestBody);
+        assert_eq!(result[2], AuditLogPart::IntermediaryResponseBody);
+        assert_eq!(result[3], AuditLogPart::ResponseHeaders);
+        assert_eq!(result[4], AuditLogPart::ResponseBody);
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_add_existing() {
+        let base = vec![
+            AuditLogPart::RequestHeaders,
+            AuditLogPart::RequestBody,
+            AuditLogPart::IntermediaryResponseBody,
+        ];
+        let result = apply_audit_log_parts(&base, "+E").unwrap();
+        // Should not add duplicate
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], AuditLogPart::RequestHeaders);
+        assert_eq!(result[1], AuditLogPart::RequestBody);
+        assert_eq!(result[2], AuditLogPart::IntermediaryResponseBody);
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_remove_single() {
+        let base = vec![
+            AuditLogPart::RequestHeaders,
+            AuditLogPart::RequestBody,
+            AuditLogPart::IntermediaryResponseBody,
+            AuditLogPart::ResponseHeaders,
+            AuditLogPart::ResponseBody,
+        ];
+        let result = apply_audit_log_parts(&base, "-E").unwrap();
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0], AuditLogPart::RequestHeaders);
+        assert_eq!(result[1], AuditLogPart::RequestBody);
+        assert_eq!(result[2], AuditLogPart::ResponseHeaders);
+        assert_eq!(result[3], AuditLogPart::ResponseBody);
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_remove_multiple() {
+        let base = vec![
+            AuditLogPart::RequestHeaders,
+            AuditLogPart::RequestBody,
+            AuditLogPart::IntermediaryResponseBody,
+            AuditLogPart::ResponseHeaders,
+            AuditLogPart::ResponseBody,
+        ];
+        let result = apply_audit_log_parts(&base, "-EF").unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], AuditLogPart::RequestHeaders);
+        assert_eq!(result[1], AuditLogPart::RequestBody);
+        assert_eq!(result[2], AuditLogPart::ResponseBody);
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_remove_non_existing() {
+        let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::RequestBody];
+        let result = apply_audit_log_parts(&base, "-E").unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], AuditLogPart::RequestHeaders);
+        assert_eq!(result[1], AuditLogPart::RequestBody);
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_absolute_value() {
+        let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::RequestBody];
+        let result = apply_audit_log_parts(&base, "ABCDEFZ").unwrap();
+        assert_eq!(result.len(), 7);
+        assert_eq!(result[0], AuditLogPart::Header);
+        assert_eq!(result[1], AuditLogPart::RequestHeaders);
+        assert_eq!(result[2], AuditLogPart::RequestBody);
+        assert_eq!(result[3], AuditLogPart::IntermediaryResponseHeaders);
+        assert_eq!(result[4], AuditLogPart::IntermediaryResponseBody);
+        assert_eq!(result[5], AuditLogPart::ResponseHeaders);
+        assert_eq!(result[6], AuditLogPart::EndMarker);
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_empty_modification() {
+        let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::RequestBody];
+        assert!(apply_audit_log_parts(&base, "").is_err());
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_invalid_add() {
+        let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::RequestBody];
+        assert!(apply_audit_log_parts(&base, "+X").is_err());
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_invalid_remove() {
+        let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::RequestBody];
+        assert!(apply_audit_log_parts(&base, "-X").is_err());
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_maintain_order() {
+        let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::ResponseHeaders];
+        let result = apply_audit_log_parts(&base, "+E").unwrap();
+        assert_eq!(result.len(), 3);
+        // E should be inserted between B and F
+        assert_eq!(result[0], AuditLogPart::RequestHeaders); // B
+        assert_eq!(result[1], AuditLogPart::IntermediaryResponseBody); // E
+        assert_eq!(result[2], AuditLogPart::ResponseHeaders); // F
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_add_all_to_empty() {
+        let base: Vec<AuditLogPart> = vec![];
+        let result = apply_audit_log_parts(&base, "+BCDEFGHIJK").unwrap();
+        assert_eq!(result.len(), 10);
+        assert_eq!(result[0], AuditLogPart::RequestHeaders);
+        assert_eq!(result[9], AuditLogPart::RulesMatched);
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_remove_all() {
+        let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::RequestBody];
+        let result = apply_audit_log_parts(&base, "-BC").unwrap();
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_cannot_add_a() {
+        let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::RequestBody];
+        assert!(apply_audit_log_parts(&base, "+A").is_err());
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_cannot_add_z() {
+        let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::RequestBody];
+        assert!(apply_audit_log_parts(&base, "+Z").is_err());
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_cannot_remove_a() {
+        let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::RequestBody];
+        assert!(apply_audit_log_parts(&base, "-A").is_err());
+    }
+
+    #[test]
+    fn test_apply_audit_log_parts_cannot_remove_z() {
+        let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::RequestBody];
+        assert!(apply_audit_log_parts(&base, "-Z").is_err());
     }
 }
