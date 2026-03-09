@@ -273,7 +273,38 @@
 - ✅ Full documentation with examples
 - ✅ Test coverage includes edge cases (negatives, invalid input, empty strings)
 
+#### 2. Pattern Matching Operators (src/operators/pattern.rs)
+- **Date:** 2026-03-09
+- **Source:** `coraza/internal/operators/*.go`
+- **Tests:** 19/19 passing (unit) + 4/4 passing (doc tests)
+- **Dependencies:**
+  - `regex = "1.10"` - RE2-compatible regex engine
+  - `aho-corasick = "1.1"` - Multi-pattern string matching
+- **Operators:**
+  - **`rx`** - Regular expression matching (dotall mode by default)
+  - **`pm`** - Phrase matching (case-insensitive, Aho-Corasick algorithm)
+  - **`within`** - Check if input is within parameter (inverse of contains)
+  - **`strmatch`** - Case-sensitive substring match (alias for contains)
+- **Features:**
+  - `rx` auto-enables dotall mode `(?s)` for ModSecurity compatibility
+  - `pm` uses Aho-Corasick for efficient multi-pattern matching
+  - `pm` is case-insensitive by default
+  - `within` is the inverse of `contains` (needle in haystack check)
+  - No capturing support yet (simplified version)
+- **Improvements over Go:**
+  - Uses Rust's high-performance `regex` crate (RE2-compatible)
+  - Uses `aho-corasick` crate (optimized for multi-pattern)
+  - Type-safe error handling for invalid regex patterns
+  - No runtime macro parsing overhead
+
+### Quality Metrics - Phase 3
+- ✅ All tests passing (133/133 unit tests, +19 new)
+- ✅ Doc tests passing (13/13, +4 new)
+- ✅ Clippy clean (no warnings)
+- ✅ Full documentation with examples
+- ✅ Test coverage includes Unicode, dotall mode, case-insensitivity
+
 ### Next Steps
-- [ ] **Phase 3, Step 2:** Add macro expansion support for operators
-- [ ] **Phase 3, Step 3:** Port pattern matching operators (rx, pm, within, etc.)
+- [ ] **Phase 3, Step 3:** Add capturing group support for operators
+- [ ] **Phase 3, Step 4:** Port IP matching operators (ipMatch, ipMatchFromFile)
 - [ ] **Phase 4:** Port complex text processing transformations (cmd_line, css_decode, js_decode, html_entity_decode, escape sequences)

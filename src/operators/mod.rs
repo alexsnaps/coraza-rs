@@ -6,8 +6,10 @@
 //! Operators are used to evaluate input values against configured parameters.
 //! They return boolean results indicating whether the match succeeded.
 
+mod pattern;
 mod simple;
 
+pub use pattern::{Pm, Rx, StrMatch, Within, pm, rx, strmatch, within};
 pub use simple::{
     BeginsWith, Contains, EndsWith, Eq, Ge, Gt, Le, Lt, StrEq, begins_with, contains, ends_with,
     eq, ge, gt, le, lt, streq,
