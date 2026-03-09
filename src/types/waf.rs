@@ -62,7 +62,7 @@ impl FromStr for AuditEngineStatus {
     /// # Examples
     ///
     /// ```
-    /// use coraza_rs::types::AuditEngineStatus;
+    /// use coraza::types::AuditEngineStatus;
     /// use std::str::FromStr;
     ///
     /// assert_eq!(AuditEngineStatus::from_str("on").unwrap(), AuditEngineStatus::On);
@@ -135,7 +135,7 @@ impl FromStr for RuleEngineStatus {
     /// # Examples
     ///
     /// ```
-    /// use coraza_rs::types::RuleEngineStatus;
+    /// use coraza::types::RuleEngineStatus;
     /// use std::str::FromStr;
     ///
     /// assert_eq!(RuleEngineStatus::from_str("on").unwrap(), RuleEngineStatus::On);
@@ -228,7 +228,7 @@ impl AuditLogPart {
     /// # Examples
     ///
     /// ```
-    /// use coraza_rs::types::AuditLogPart;
+    /// use coraza::types::AuditLogPart;
     ///
     /// assert_eq!(AuditLogPart::Header.as_char(), 'A');
     /// assert_eq!(AuditLogPart::RequestHeaders.as_char(), 'B');
@@ -250,7 +250,7 @@ impl AuditLogPart {
     /// # Examples
     ///
     /// ```
-    /// use coraza_rs::types::AuditLogPart;
+    /// use coraza::types::AuditLogPart;
     ///
     /// assert_eq!(AuditLogPart::from_char('A'), Some(AuditLogPart::Header));
     /// assert_eq!(AuditLogPart::from_char('B'), Some(AuditLogPart::RequestHeaders));
@@ -350,7 +350,7 @@ impl std::error::Error for ParseAuditLogPartsError {}
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::types::{parse_audit_log_parts, AuditLogPart};
+/// use coraza::types::{parse_audit_log_parts, AuditLogPart};
 ///
 /// let parts = parse_audit_log_parts("ABCDEFGHIJKZ").unwrap();
 /// assert_eq!(parts.len(), 12);
@@ -413,7 +413,7 @@ pub fn parse_audit_log_parts(opts: &str) -> Result<AuditLogParts, ParseAuditLogP
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::types::{apply_audit_log_parts, AuditLogPart};
+/// use coraza::types::{apply_audit_log_parts, AuditLogPart};
 ///
 /// // Addition
 /// let base = vec![AuditLogPart::RequestHeaders, AuditLogPart::RequestBody];

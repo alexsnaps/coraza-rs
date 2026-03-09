@@ -25,7 +25,7 @@ const TRIM_SPACES: &[char] = &[' ', '\t', '\n', '\r', '\x0c', '\x0b'];
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::lowercase;
+/// use coraza::transformations::lowercase;
 ///
 /// let (result, changed, _) = lowercase("TestCase");
 /// assert_eq!(result, "testcase");
@@ -46,7 +46,7 @@ pub fn lowercase(input: &str) -> TransformationResult {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::uppercase;
+/// use coraza::transformations::uppercase;
 ///
 /// let (result, changed, _) = uppercase("TestCase");
 /// assert_eq!(result, "TESTCASE");
@@ -69,7 +69,7 @@ pub fn uppercase(input: &str) -> TransformationResult {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::trim;
+/// use coraza::transformations::trim;
 ///
 /// let (result, changed, _) = trim("  hello  ");
 /// assert_eq!(result, "hello");
@@ -92,7 +92,7 @@ pub fn trim(input: &str) -> TransformationResult {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::trim_left;
+/// use coraza::transformations::trim_left;
 ///
 /// let (result, changed, _) = trim_left("  hello  ");
 /// assert_eq!(result, "hello  ");
@@ -111,7 +111,7 @@ pub fn trim_left(input: &str) -> TransformationResult {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::trim_right;
+/// use coraza::transformations::trim_right;
 ///
 /// let (result, changed, _) = trim_right("  hello  ");
 /// assert_eq!(result, "  hello");
@@ -128,7 +128,7 @@ pub fn trim_right(input: &str) -> TransformationResult {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::remove_whitespace;
+/// use coraza::transformations::remove_whitespace;
 ///
 /// let (result, changed, _) = remove_whitespace("t e s t");
 /// assert_eq!(result, "test");
@@ -163,7 +163,7 @@ pub fn remove_whitespace(input: &str) -> TransformationResult {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::compress_whitespace;
+/// use coraza::transformations::compress_whitespace;
 ///
 /// let (result, changed, _) = compress_whitespace("Multiple    spaces");
 /// assert_eq!(result, "Multiple spaces");
@@ -229,7 +229,7 @@ fn is_latin_space(c: u8) -> bool {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::url_decode;
+/// use coraza::transformations::url_decode;
 ///
 /// let (result, changed, _) = url_decode("hello+world");
 /// assert_eq!(result, "hello world");

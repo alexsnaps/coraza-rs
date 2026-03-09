@@ -22,7 +22,7 @@ static RNG: Mutex<Option<fastrand::Rng>> = Mutex::new(None);
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::utils::strings::random_string;
+/// use coraza::utils::strings::random_string;
 ///
 /// let id = random_string(16);
 /// assert_eq!(id.len(), 16);
@@ -45,7 +45,7 @@ pub fn random_string(n: usize) -> String {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::utils::strings::valid_hex;
+/// use coraza::utils::strings::valid_hex;
 ///
 /// assert!(valid_hex(b'0'));
 /// assert!(valid_hex(b'9'));
@@ -68,7 +68,7 @@ pub const fn valid_hex(x: u8) -> bool {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::utils::strings::x2c;
+/// use coraza::utils::strings::x2c;
 ///
 /// assert_eq!(x2c("41"), b'A');  // 0x41 = 65 = 'A'
 /// assert_eq!(x2c("0a"), 10);
@@ -94,7 +94,7 @@ pub fn x2c(what: &str) -> u8 {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::utils::strings::maybe_remove_quotes;
+/// use coraza::utils::strings::maybe_remove_quotes;
 ///
 /// assert_eq!(maybe_remove_quotes(r#""hello""#), "hello");
 /// assert_eq!(maybe_remove_quotes("'world'"), "world");
@@ -129,7 +129,7 @@ pub fn maybe_remove_quotes(s: &str) -> &str {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::utils::strings::unescape_quoted_string;
+/// use coraza::utils::strings::unescape_quoted_string;
 ///
 /// assert_eq!(unescape_quoted_string(r#"hello \"world\""#), r#"hello "world""#);
 /// assert_eq!(unescape_quoted_string(r#"\""#), r#"""#);
@@ -173,7 +173,7 @@ pub fn unescape_quoted_string(s: &str) -> String {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::utils::strings::wrap_unsafe;
+/// use coraza::utils::strings::wrap_unsafe;
 ///
 /// let bytes = b"hello";
 /// let s = unsafe { wrap_unsafe(bytes) };

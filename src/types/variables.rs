@@ -348,7 +348,7 @@ impl RuleVariable {
     /// # Examples
     ///
     /// ```
-    /// use coraza_rs::types::RuleVariable;
+    /// use coraza::types::RuleVariable;
     ///
     /// assert_eq!(RuleVariable::RequestURI.name(), "REQUEST_URI");
     /// assert_eq!(RuleVariable::Args.name(), "ARGS");
@@ -379,7 +379,7 @@ impl RuleVariable {
     /// # Examples
     ///
     /// ```
-    /// use coraza_rs::types::RuleVariable;
+    /// use coraza::types::RuleVariable;
     ///
     /// assert_eq!(RuleVariable::Unknown.as_u8(), 0);
     /// assert_eq!(RuleVariable::ResponseContentType.as_u8(), 1);
@@ -417,7 +417,7 @@ impl FromStr for RuleVariable {
     /// # Examples
     ///
     /// ```
-    /// use coraza_rs::types::RuleVariable;
+    /// use coraza::types::RuleVariable;
     /// use std::str::FromStr;
     ///
     /// assert_eq!(RuleVariable::from_str("REQUEST_URI").unwrap(), RuleVariable::RequestURI);

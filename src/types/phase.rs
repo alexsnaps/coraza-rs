@@ -42,7 +42,7 @@ impl RulePhase {
     /// # Examples
     ///
     /// ```
-    /// use coraza_rs::types::RulePhase;
+    /// use coraza::types::RulePhase;
     ///
     /// assert_eq!(RulePhase::RequestHeaders.as_str(), "request_headers");
     /// assert_eq!(RulePhase::Logging.as_str(), "logging");
@@ -63,7 +63,7 @@ impl RulePhase {
     /// # Examples
     ///
     /// ```
-    /// use coraza_rs::types::RulePhase;
+    /// use coraza::types::RulePhase;
     ///
     /// assert_eq!(RulePhase::Unknown.as_int(), 0);
     /// assert_eq!(RulePhase::RequestHeaders.as_int(), 1);
@@ -78,7 +78,7 @@ impl RulePhase {
     /// # Examples
     ///
     /// ```
-    /// use coraza_rs::types::RulePhase;
+    /// use coraza::types::RulePhase;
     ///
     /// assert!(!RulePhase::Unknown.is_valid());
     /// assert!(RulePhase::RequestHeaders.is_valid());
@@ -125,7 +125,7 @@ impl FromStr for RulePhase {
     /// # Examples
     ///
     /// ```
-    /// use coraza_rs::types::RulePhase;
+    /// use coraza::types::RulePhase;
     /// use std::str::FromStr;
     ///
     /// assert_eq!(RulePhase::from_str("1").unwrap(), RulePhase::RequestHeaders);

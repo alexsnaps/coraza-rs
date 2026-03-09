@@ -49,7 +49,7 @@ impl RuleSeverity {
     /// # Examples
     ///
     /// ```
-    /// use coraza_rs::types::RuleSeverity;
+    /// use coraza::types::RuleSeverity;
     ///
     /// assert_eq!(RuleSeverity::Emergency.as_str(), "emergency");
     /// assert_eq!(RuleSeverity::Warning.as_str(), "warning");
@@ -72,7 +72,7 @@ impl RuleSeverity {
     /// # Examples
     ///
     /// ```
-    /// use coraza_rs::types::RuleSeverity;
+    /// use coraza::types::RuleSeverity;
     ///
     /// assert_eq!(RuleSeverity::Emergency.as_int(), 0);
     /// assert_eq!(RuleSeverity::Debug.as_int(), 7);
@@ -112,7 +112,7 @@ impl FromStr for RuleSeverity {
     /// # Examples
     ///
     /// ```
-    /// use coraza_rs::types::RuleSeverity;
+    /// use coraza::types::RuleSeverity;
     /// use std::str::FromStr;
     ///
     /// assert_eq!(RuleSeverity::from_str("0").unwrap(), RuleSeverity::Emergency);

@@ -16,7 +16,7 @@ use sha1::Sha1;
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::length;
+/// use coraza::transformations::length;
 ///
 /// let (result, changed, _) = length("hello");
 /// assert_eq!(result, "5");
@@ -39,7 +39,7 @@ pub fn length(input: &str) -> TransformationResult {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::none;
+/// use coraza::transformations::none;
 ///
 /// let (result, changed, _) = none("hello");
 /// assert_eq!(result, "hello");
@@ -54,7 +54,7 @@ pub fn none(input: &str) -> TransformationResult {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::remove_nulls;
+/// use coraza::transformations::remove_nulls;
 ///
 /// let (result, changed, _) = remove_nulls("hello\x00world");
 /// assert_eq!(result, "helloworld");
@@ -78,7 +78,7 @@ pub fn remove_nulls(input: &str) -> TransformationResult {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::replace_nulls;
+/// use coraza::transformations::replace_nulls;
 ///
 /// let (result, changed, _) = replace_nulls("hello\x00world");
 /// assert_eq!(result, "hello world");
@@ -99,7 +99,7 @@ pub fn replace_nulls(input: &str) -> TransformationResult {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::hex_encode;
+/// use coraza::transformations::hex_encode;
 ///
 /// let (result, changed, _) = hex_encode("Hello");
 /// assert_eq!(result, "48656c6c6f");
@@ -125,7 +125,7 @@ pub fn hex_encode(input: &str) -> TransformationResult {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::hex_decode;
+/// use coraza::transformations::hex_decode;
 ///
 /// let (result, changed, err) = hex_decode("48656c6c6f");
 /// assert_eq!(result, "Hello");
@@ -193,7 +193,7 @@ fn hex_char_to_value(c: u8) -> Result<u8, TransformationError> {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::url_encode;
+/// use coraza::transformations::url_encode;
 ///
 /// let (result, changed, _) = url_encode("hello world");
 /// assert_eq!(result, "hello+world");
@@ -242,7 +242,7 @@ pub fn url_encode(input: &str) -> TransformationResult {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::base64_encode;
+/// use coraza::transformations::base64_encode;
 ///
 /// let (result, changed, _) = base64_encode("Hello");
 /// assert_eq!(result, "SGVsbG8=");
@@ -310,7 +310,7 @@ fn base64_encode_string(input: &[u8]) -> String {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::md5_hash;
+/// use coraza::transformations::md5_hash;
 ///
 /// let (result, changed, _) = md5_hash("hello");
 /// // Result is raw binary MD5 hash (16 bytes)
@@ -346,7 +346,7 @@ pub fn md5_hash(input: &str) -> TransformationResult {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::sha1_hash;
+/// use coraza::transformations::sha1_hash;
 ///
 /// let (result, changed, _) = sha1_hash("hello");
 /// // Result is raw binary SHA1 hash (20 bytes)
@@ -387,7 +387,7 @@ pub fn sha1_hash(input: &str) -> TransformationResult {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::base64_decode;
+/// use coraza::transformations::base64_decode;
 ///
 /// let (result, changed, _) = base64_decode("SGVsbG8=");
 /// assert_eq!(result, "Hello");
@@ -415,7 +415,7 @@ pub fn base64_decode(input: &str) -> TransformationResult {
 /// # Examples
 ///
 /// ```
-/// use coraza_rs::transformations::base64_decode_ext;
+/// use coraza::transformations::base64_decode_ext;
 ///
 /// // Ignores dots and whitespace
 /// let (result, changed, _) = base64_decode_ext("P.HNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==");

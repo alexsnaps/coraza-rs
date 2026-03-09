@@ -1,5 +1,7 @@
 # Coraza Rust Port - Progress Log
 
+**Note:** Crate renamed from `coraza-rs` to `coraza` on 2026-03-09.
+
 ## Phase 1: Foundation - Types and Enums
 
 ### Completed ✅
