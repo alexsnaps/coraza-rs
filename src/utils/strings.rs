@@ -80,8 +80,7 @@ pub const fn valid_hex(x: u8) -> bool {
 ///
 /// Panics if the string is not exactly 2 bytes or contains invalid hex characters.
 pub fn x2c(what: &str) -> u8 {
-    let bytes = what.as_bytes();
-    assert_eq!(bytes.len(), 2, "x2c requires exactly 2 hex characters");
+    assert_eq!(what.len(), 2, "x2c requires exactly 2 hex characters");
 
     // Use stdlib's from_str_radix for cleaner, safer code
     u8::from_str_radix(what, 16).expect("x2c requires valid hex characters")

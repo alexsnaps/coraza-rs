@@ -122,7 +122,7 @@
   - Panic on invalid input to `x2c()` instead of silent errors
   - Cleaner code using stdlib utilities
 
-### Quality Metrics
+### Quality Metrics - Phase 1
 - ✅ All tests passing (74/74)
 - ✅ Clippy clean (no warnings)
 - ✅ Full documentation
@@ -130,5 +130,42 @@
 - ✅ **Test parity verified** - All Go tests from Phase 1 ported
 - ✅ **Phase 1 Complete!** All foundation types and utilities ported
 
+## Phase 2: Transformations - Simple String Operations
+
+### Completed ✅
+
+#### 1. Simple String Transformations (src/transformations/simple.rs)
+- **Date:** 2026-03-09
+- **Source:** `coraza/internal/transformations/*.go`
+- **Tests:** 10/10 passing
+- **Functions:**
+  - **`lowercase()`** - Convert to lowercase
+  - **`uppercase()`** - Convert to uppercase
+  - **`trim()`** - Remove leading/trailing whitespace
+  - **`trim_left()`** - Remove leading whitespace
+  - **`trim_right()`** - Remove trailing whitespace
+  - **`compress_whitespace()`** - Collapse multiple whitespace to single space
+  - **`remove_whitespace()`** - Remove all whitespace
+  - **`url_decode()`** - URL percent-decoding and + to space
+- **Features:**
+  - All transformations return `(String, bool, Option<Error>)` tuple
+  - Boolean indicates if data was changed
+  - Errors are for logging only, don't stop execution
+  - Fast path optimization: early exit if no transformation needed
+  - Uses existing `valid_hex()` and `x2c()` utilities
+  - ModSecurity-compatible whitespace handling (C++ isspace)
+- **Improvements over Go:**
+  - Used `.position()` instead of manual loops for finding special characters
+  - Iterator-based implementation for `do_compress_whitespace()`
+  - More idiomatic Rust patterns (filter, position, etc.)
+  - Zero-copy where possible (trim returns string slice reference in Go, owned in Rust)
+
+### Quality Metrics
+- ✅ All tests passing (84/84, +10 new)
+- ✅ Clippy clean (no warnings)
+- ✅ Full documentation with examples
+- ✅ Doc tests included
+- ✅ Test parity verified - All Go test cases ported
+
 ### Next Steps
-- [ ] **Phase 2:** Port transformations (30+ functions) - CRITICAL PATH
+- [ ] **Phase 2, Step 2:** Port more complex transformations (base64, hex, hash, etc.)
