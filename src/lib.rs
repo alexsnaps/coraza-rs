@@ -8,6 +8,7 @@
 //! SecLang rulesets and is 100% compatible with the OWASP Core Rule Set v4.
 
 pub mod types;
+pub mod utils;
 
 // Re-export commonly used types
 pub use types::{

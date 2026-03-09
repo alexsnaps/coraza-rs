@@ -90,12 +90,32 @@
   - `is_mandatory()` helper for audit log parts
   - Better char/enum integration for AuditLogPart
 
+#### 5. String Utilities (src/utils/strings.rs)
+- **Date:** 2026-03-09
+- **Source:** `coraza/internal/strings/strings.go`
+- **Tests:** 11/11 passing
+- **Functions:**
+  - **`random_string(n)`** - Thread-safe pseudorandom string generation
+  - **`valid_hex(x)`** - Validate hexadecimal characters (uses `is_ascii_hexdigit()`)
+  - **`x2c(what)`** - Convert hex string to byte (uses `u8::from_str_radix()`)
+  - **`maybe_remove_quotes(s)`** - Remove matching surrounding quotes
+  - **`unescape_quoted_string(s)`** - Unescape `\"` in SecLang strings
+  - **`wrap_unsafe(buf)`** - Zero-copy byte slice to string conversion
+  - ~~`InSlice`~~ - Not ported, use Rust's `slice.contains()` directly
+- **Dependencies:**
+  - `fastrand = "2.0"` - Lightweight RNG (no dependencies)
+- **Improvements over Go:**
+  - Leverages stdlib: `is_ascii_hexdigit()`, `from_str_radix()`, `starts_with()`, `ends_with()`
+  - More idiomatic with `&str` instead of String where possible
+  - Panic on invalid input to `x2c()` instead of silent errors
+  - Cleaner code using stdlib utilities
+
 ### Quality Metrics
-- ✅ All tests passing (41/41)
+- ✅ All tests passing (52/52)
 - ✅ Clippy clean (no warnings)
 - ✅ Full documentation
 - ✅ Doc tests included
-- ✅ **Phase 1, Step 1 Complete!** All types and enums ported (7 total types)
+- ✅ **Phase 1 Complete!** All foundation types and utilities ported
 
 ### Next Steps
-- [ ] Port `internal/strings/strings.go` - String utilities (Phase 1, Step 2)
+- [ ] **Phase 2:** Port transformations (30+ functions) - CRITICAL PATH
