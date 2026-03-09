@@ -2,6 +2,68 @@
 
 **Note:** Crate renamed from `coraza-rs` to `coraza` on 2026-03-09.
 
+## Porting Strategy & Guidelines
+
+### Trait Usage - Avoid Over-Abstraction
+
+**IMPORTANT:** Do not blindly convert Go interfaces to Rust traits. Follow these guidelines:
+
+1. **Only Create Traits for Multiple Implementations**
+   - Check the Go codebase: how many implementations of the interface exist?
+   - If there's only ONE production implementation, **do not create a trait**
+   - Use concrete types instead of traits
+
+2. **Test-Only Interfaces Should Use Generics**
+   - If an interface exists "only to make testing easier" (one real impl + one mock):
+     - **Use generics (monomorphization)** instead of traits
+     - Let the compiler generate optimized code for each concrete type
+     - This achieves **zero-cost abstraction** with no runtime overhead
+   - Example: `TransactionState` has only one production impl + test mocks → use `<TX: TransactionState>`
+
+3. **Dynamic Dispatch Requires Explicit Approval**
+   - If you determine that runtime dynamic dispatch (`&dyn Trait`) is necessary:
+     - **Explicitly inform the user before implementing**
+     - Explain why static dispatch (generics) won't work
+     - Provide justification for the runtime overhead
+   - Most cases can be solved with generics or enums
+
+4. **Performance Philosophy**
+   - Prefer: Concrete types > Generics > Trait objects
+   - Always choose the leftmost option that satisfies the requirements
+   - Rust's strength is zero-cost abstractions - leverage it
+
+### Example: TransactionState
+
+```rust
+// ✅ GOOD: Generic static dispatch (what we implemented)
+pub trait TransactionState {
+    fn get_variable(&self, variable: RuleVariable, key: Option<&str>) -> Option<String>;
+}
+
+impl Operator for Eq {
+    fn evaluate<TX: TransactionState>(&self, tx: Option<&TX>, input: &str) -> bool {
+        // Compiler inlines everything - zero runtime cost
+    }
+}
+
+// ❌ BAD: Dynamic dispatch (unnecessary overhead)
+impl Operator for Eq {
+    fn evaluate(&self, tx: Option<&dyn TransactionState>, input: &str) -> bool {
+        // Vtable lookup every call - unnecessary cost
+    }
+}
+
+// 🤔 QUESTION FOR USER: Need runtime polymorphism
+// "I need to store different operator types in a Vec - should I use Box<dyn Operator>?"
+// → User can decide if the flexibility is worth the cost
+```
+
+### Test Parity Requirements
+
+- **All test cases** from the Go implementation must be ported
+- This guarantees behavioral compatibility with the original implementation
+- Document any intentional deviations in the porting log
+
 ## Phase 1: Foundation - Types and Enums
 
 ### Completed ✅
