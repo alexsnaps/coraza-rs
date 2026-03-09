@@ -415,12 +415,12 @@ impl Operator for Eq {
 
 #### 4. Capturing Groups Support (src/operators/macros.rs, src/operators/pattern.rs)
 - **Date:** 2026-03-09
-- **Source:** `coraza/internal/operators/rx.go`
-- **Tests:** 5/5 passing (new capturing tests) + 161/161 total
+- **Source:** `coraza/internal/operators/rx.go`, `coraza/internal/operators/pm.go`
+- **Tests:** 11/11 passing (new capturing tests) + 167/167 total
 - **Features:**
   - **Extended TransactionState trait:**
     - `capturing(&self) -> bool` - Check if capturing is enabled
-    - `capture_field(&mut self, index: usize, value: &str)` - Store captured groups
+    - `capture_field(&mut self, index: usize, value: &str)` - Store captured groups/matches
   - **Updated Operator trait:**
     - Changed signature to `evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str)`
     - Mutable reference required for capturing mutations
@@ -429,31 +429,35 @@ impl Operator for Eq {
     - Stores up to 9 capturing groups (ModSecurity limit)
     - Index 0 = full match, indices 1-9 = capturing groups
     - Only captures when `tx.capturing()` returns true
+  - **Pm operator capturing implementation:**
+    - Dual mode: fast path (`is_match()`) vs capturing path (`find_iter()`)
+    - Captures each matched pattern (not groups within patterns)
+    - Stores up to 10 matches (ModSecurity limit)
+    - Index 0 = first match, index 1 = second match, etc.
+    - Preserves case from input (e.g., "ADMIN" not "admin")
   - All 13 operators updated to use `Option<&mut TX>` signature
   - Macro expansion still uses immutable reference via `.as_deref()`
 - **Design:**
   - Performance optimization: non-capturing mode uses faster `is_match()`
-  - Capturing mode uses `regex.captures()` for full group extraction
-  - Follows ModSecurity behavior exactly (9 group limit)
+  - **Rx**: Capturing mode uses `regex.captures()` for full group extraction
+  - **Pm**: Capturing mode uses `find_iter()` to collect all pattern matches
+  - Follows ModSecurity behavior exactly (9 groups for rx, 10 matches for pm)
   - Zero overhead when capturing is disabled (default)
 - **Test Coverage:**
-  - Basic capturing with 2 groups
-  - Multiple groups (3 groups)
-  - Nine group limit enforcement (10th group not captured)
-  - No match scenario (no captures stored)
-  - Capturing disabled mode (still matches, doesn't capture)
+  - **Rx tests (5):** Basic (2 groups), Multiple (3 groups), Nine group limit, No match, Capturing disabled
+  - **Pm tests (6):** Basic (2 matches), Single match, Ten match limit, Case preservation, No match, Capturing disabled
 - **Improvements over Go:**
   - Type-safe mutable reference for capturing mutations
   - Explicit `capturing()` method instead of implicit check
   - Cleaner separation of fast path vs capturing path
 
 ### Quality Metrics - Phase 3 (Final)
-- ✅ All tests passing (161/161 unit tests, +5 new capturing tests)
+- ✅ All tests passing (167/167 unit tests, +11 new capturing tests)
 - ✅ Doc tests passing (57/57)
 - ✅ Clippy clean (no warnings)
 - ✅ Full documentation with examples
-- ✅ Test coverage includes capturing groups, macro expansion, transaction state
-- ✅ **Phase 3, Step 4 Complete!** Capturing groups fully implemented
+- ✅ Test coverage includes capturing groups (rx) and capturing matches (pm), macro expansion, transaction state
+- ✅ **Phase 3, Step 4 Complete!** Capturing fully implemented for both @rx and @pm operators
 
 ### Next Steps
 - [ ] **IMPORTANT - Cleanup After Transaction Port:** Once the production `TransactionState` implementation is ported:

@@ -140,7 +140,10 @@ pub struct Pm {
 }
 
 impl Operator for Pm {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate<TX: TransactionState>(&self, mut tx: Option<&mut TX>, input: &str) -> bool {
+        // Determine if we're capturing based on transaction state
+        let capturing = tx.as_ref().is_some_and(|t| t.capturing());
+
         // If we have a cached matcher and no transaction state, use the cache
         if tx.is_none()
             && let Some(ref matcher) = self.cached_matcher
@@ -153,12 +156,30 @@ impl Operator for Pm {
         let patterns_lower = patterns.to_lowercase();
         let dict: Vec<&str> = patterns_lower.split(' ').collect();
 
-        match AhoCorasick::builder()
+        let matcher = match AhoCorasick::builder()
             .ascii_case_insensitive(true)
             .build(&dict)
         {
-            Ok(matcher) => matcher.is_match(input),
-            Err(_) => false,
+            Ok(m) => m,
+            Err(_) => return false,
+        };
+
+        if capturing {
+            // Capturing mode: collect all matches up to limit of 10
+            let mut num_matches = 0;
+            for mat in matcher.find_iter(input) {
+                if let Some(ref mut tx_mut) = tx {
+                    tx_mut.capture_field(num_matches, &input[mat.start()..mat.end()]);
+                }
+                num_matches += 1;
+                if num_matches == 10 {
+                    return true;
+                }
+            }
+            num_matches > 0
+        } else {
+            // Fast path: just check if there's any match
+            matcher.is_match(input)
         }
     }
 }
@@ -624,5 +645,89 @@ mod tests {
 
         // Should still match, but won't capture
         assert!(op.evaluate(Some(&mut tx), "test"));
+    }
+
+    #[test]
+    fn test_pm_capturing_basic() {
+        let op = pm("admin sql script").unwrap();
+        let mut tx = CapturingTx::new();
+
+        assert!(op.evaluate(Some(&mut tx), "This script contains admin panel"));
+
+        // PM captures each matched pattern (not groups within a pattern)
+        // Note: order depends on which patterns are found first in the input
+        assert_eq!(tx.get_capture(0), Some("script".to_string())); // First match
+        assert_eq!(tx.get_capture(1), Some("admin".to_string())); // Second match
+    }
+
+    #[test]
+    fn test_pm_capturing_single_match() {
+        let op = pm("malware virus trojan").unwrap();
+        let mut tx = CapturingTx::new();
+
+        assert!(op.evaluate(Some(&mut tx), "detected malware in file"));
+
+        // Only one pattern matched
+        assert_eq!(tx.get_capture(0), Some("malware".to_string()));
+        assert_eq!(tx.get_capture(1), None);
+    }
+
+    #[test]
+    fn test_pm_capturing_ten_matches() {
+        // Test the 10-match limit
+        let op = pm("a b c d e f g h i j k").unwrap();
+        let mut tx = CapturingTx::new();
+
+        assert!(op.evaluate(Some(&mut tx), "a b c d e f g h i j k"));
+
+        // Should capture first 10 matches
+        for i in 0..10 {
+            assert!(tx.get_capture(i).is_some());
+        }
+        // 11th match should not be captured
+        assert_eq!(tx.get_capture(10), None);
+    }
+
+    #[test]
+    fn test_pm_capturing_case_insensitive() {
+        let op = pm("admin").unwrap();
+        let mut tx = CapturingTx::new();
+
+        assert!(op.evaluate(Some(&mut tx), "ADMIN panel"));
+
+        // Should capture the actual matched text (preserving case from input)
+        assert_eq!(tx.get_capture(0), Some("ADMIN".to_string()));
+    }
+
+    #[test]
+    fn test_pm_no_match_with_capturing() {
+        let op = pm("malware virus").unwrap();
+        let mut tx = CapturingTx::new();
+
+        assert!(!op.evaluate(Some(&mut tx), "clean file"));
+
+        // No captures should be stored
+        assert_eq!(tx.get_capture(0), None);
+    }
+
+    #[test]
+    fn test_pm_capturing_disabled() {
+        struct NonCapturingTx;
+
+        impl TransactionState for NonCapturingTx {
+            fn get_variable(&self, _variable: RuleVariable, _key: Option<&str>) -> Option<String> {
+                None
+            }
+
+            fn capturing(&self) -> bool {
+                false
+            }
+        }
+
+        let op = pm("admin").unwrap();
+        let mut tx = NonCapturingTx;
+
+        // Should still match, but won't capture
+        assert!(op.evaluate(Some(&mut tx), "admin panel"));
     }
 }
