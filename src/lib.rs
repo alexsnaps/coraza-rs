@@ -7,6 +7,7 @@
 //! It is an enterprise-grade, high-performance WAF that supports ModSecurity
 //! SecLang rulesets and is 100% compatible with the OWASP Core Rule Set v4.
 
+pub mod operators;
 pub mod transformations;
 pub mod types;
 pub mod utils;

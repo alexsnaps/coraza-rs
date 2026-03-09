@@ -232,5 +232,48 @@
 - ✅ Test parity verified - All Go test cases ported
 - ✅ **Phase 2 Complete!** All basic transformations ported
 
+## Phase 3: Operators - Rule Matching
+
+### Completed ✅
+
+#### 1. Simple Comparison Operators (src/operators/simple.rs)
+- **Date:** 2026-03-09
+- **Source:** `coraza/internal/operators/*.go`
+- **Tests:** 17/17 passing (unit) + 9/9 passing (doc tests)
+- **Operators:**
+  - **`eq`** - Numeric equality (converts to i32, compares)
+  - **`gt`** - Greater than (numeric)
+  - **`ge`** - Greater than or equal (numeric)
+  - **`lt`** - Less than (numeric)
+  - **`le`** - Less than or equal (numeric)
+  - **`streq`** - String equality (case-sensitive)
+  - **`contains`** - String contains substring
+  - **`begins_with`** - String starts with prefix
+  - **`ends_with`** - String ends with suffix
+- **Features:**
+  - Simple `Operator` trait with `evaluate(&self, input: &str) -> bool`
+  - No macro expansion support (simplified version)
+  - Invalid integer parsing returns 0 (matches Go's strconv.Atoi)
+  - Constructor functions: `eq("10")`, `gt("5")`, etc.
+  - Each operator is a struct storing parsed parameter
+- **Design:**
+  - Trait-based design for operator abstraction
+  - Numeric operators use `str::parse::<i32>()` with `unwrap_or(0)`
+  - String operators use stdlib: `contains()`, `starts_with()`, `ends_with()`
+  - All operators are `Clone` and `Debug`
+- **Improvements over Go:**
+  - Type-safe operator structs instead of closures
+  - No runtime macro parsing overhead (will add later)
+  - Clear separation of concerns (trait-based)
+
+### Quality Metrics - Phase 3
+- ✅ All tests passing (114/114 unit tests, +17 new)
+- ✅ Doc tests passing (9/9 new)
+- ✅ Clippy clean (no warnings)
+- ✅ Full documentation with examples
+- ✅ Test coverage includes edge cases (negatives, invalid input, empty strings)
+
 ### Next Steps
-- [ ] **Phase 3:** Port complex text processing transformations (cmd_line, css_decode, js_decode, html_entity_decode, escape sequences)
+- [ ] **Phase 3, Step 2:** Add macro expansion support for operators
+- [ ] **Phase 3, Step 3:** Port pattern matching operators (rx, pm, within, etc.)
+- [ ] **Phase 4:** Port complex text processing transformations (cmd_line, css_decode, js_decode, html_entity_decode, escape sequences)
