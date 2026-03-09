@@ -167,5 +167,36 @@
 - ✅ Doc tests included
 - ✅ Test parity verified - All Go test cases ported
 
+#### 2. Encoding/Decoding Transformations (src/transformations/encoding.rs)
+- **Date:** 2026-03-09
+- **Source:** `coraza/internal/transformations/*.go`
+- **Tests:** 9/9 passing
+- **Functions:**
+  - **`length()`** - Returns string length as string
+  - **`none()`** - Identity transformation (returns input unchanged)
+  - **`remove_nulls()`** - Removes NUL bytes (\x00)
+  - **`replace_nulls()`** - Replaces NUL bytes with spaces
+  - **`hex_encode()`** - Encode to hexadecimal (lowercase)
+  - **`hex_decode()`** - Decode from hexadecimal (case-insensitive)
+  - **`url_encode()`** - URL encoding (percent-encoding + space to +)
+  - **`base64_encode()`** - Standard base64 encoding with padding
+- **Features:**
+  - Custom base64 encoder (no external dependencies)
+  - Custom hex decoder with proper error handling
+  - URL encoder matches ModSecurity behavior (only alphanumerics and * unencoded)
+  - Fast path optimizations (early exit for empty input, no nulls, etc.)
+- **Improvements over Go:**
+  - Used `.is_multiple_of()` for cleaner odd length check
+  - Used `.div_ceil()` for capacity calculation
+  - More idiomatic error handling with Result types
+  - Custom base64 implementation avoids dependency
+
+### Quality Metrics - Phase 2
+- ✅ All tests passing (93/93, +19 new)
+- ✅ Clippy clean (no warnings)
+- ✅ Full documentation with examples
+- ✅ Doc tests included
+- ✅ Test parity verified - All Go test cases ported
+
 ### Next Steps
-- [ ] **Phase 2, Step 2:** Port more complex transformations (base64, hex, hash, etc.)
+- [ ] **Phase 2, Step 3:** Port hash transformations (MD5, SHA1) and base64_decode
