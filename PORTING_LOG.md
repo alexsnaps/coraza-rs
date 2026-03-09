@@ -44,7 +44,7 @@
 #### 3. RuleVariable (src/types/variables.rs)
 - **Date:** 2026-03-09
 - **Source:** `coraza/types/variables/variables.go`, `coraza/internal/variables/variables.go`
-- **Tests:** 7/7 passing
+- **Tests:** 8/8 passing
 - **Features:**
   - 96 variable variants covering all WAF transaction data
   - String representation (`name()`, `Display`)
@@ -63,16 +63,39 @@
     - Compatibility variables (legacy ModSecurity)
 - **Improvements over Go:**
   - Type-safe enum instead of byte with iota
-  - Const `name()` method
+  - Const `name()` method with lookup table for perfect sync
+  - Safe `from_u8()` helper with bounds checking
   - Compile-time exhaustiveness checking
+  - Roundtrip test validates all 96 variants
   - Better documentation with variable categories
 
+#### 4. WAF Engine Types (src/types/waf.rs)
+- **Date:** 2026-03-09
+- **Source:** `coraza/types/waf.go`
+- **Tests:** 17/17 passing
+- **Features:**
+  - **AuditEngineStatus** - Controls audit logging (On, Off, RelevantOnly)
+  - **RuleEngineStatus** - Controls rule processing (On, DetectionOnly, Off)
+  - **BodyLimitAction** - Action when body exceeds limit (ProcessPartial, Reject)
+  - **AuditLogPart** - Log sections A-K, Z (Header, RequestHeaders, RequestBody, etc.)
+    - Char-based enum (A, B, C, ..., K, Z)
+    - `from_char()` and `as_char()` conversions
+    - `is_mandatory()` helper for parts A and Z
+    - `TryFrom<char>` trait implementation
+  - All types support parsing from strings (case-insensitive where applicable)
+  - Full error handling with custom error types
+- **Improvements over Go:**
+  - Type-safe enums instead of integers
+  - Const methods
+  - `is_mandatory()` helper for audit log parts
+  - Better char/enum integration for AuditLogPart
+
 ### Quality Metrics
-- ✅ All tests passing (23/23)
+- ✅ All tests passing (41/41)
 - ✅ Clippy clean (no warnings)
 - ✅ Full documentation
 - ✅ Doc tests included
-- ✅ **Phase 1 Complete!** All types and enums ported
+- ✅ **Phase 1, Step 1 Complete!** All types and enums ported (7 total types)
 
 ### Next Steps
 - [ ] Port `internal/strings/strings.go` - String utilities (Phase 1, Step 2)

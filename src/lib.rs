@@ -10,4 +10,7 @@
 pub mod types;
 
 // Re-export commonly used types
-pub use types::{RulePhase, RuleSeverity, RuleVariable};
+pub use types::{
+    AuditEngineStatus, AuditLogPart, BodyLimitAction, RuleEngineStatus, RulePhase, RuleSeverity,
+    RuleVariable,
+};
