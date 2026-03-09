@@ -10,4 +10,4 @@
 pub mod types;
 
 // Re-export commonly used types
-pub use types::RuleSeverity;
+pub use types::{RulePhase, RuleSeverity};
