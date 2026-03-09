@@ -9,16 +9,35 @@
 use crate::types::RuleVariable;
 use std::fmt;
 
-/// Transaction state for variable lookups.
+/// Transaction state for variable lookups and capturing.
 ///
-/// This trait provides access to variable collections during rule evaluation.
-/// It's a simplified version that supports basic variable lookups without
-/// full transaction context.
+/// This trait provides access to variable collections during rule evaluation
+/// and supports capturing regex groups for use in rule actions.
 pub trait TransactionState {
     /// Get a variable value by variable type and optional key.
     ///
     /// Returns the first value if the variable contains multiple values.
     fn get_variable(&self, variable: RuleVariable, key: Option<&str>) -> Option<String>;
+
+    /// Check if capturing is enabled for this evaluation.
+    ///
+    /// When capturing is enabled, operators like `@rx` will store matched
+    /// groups for later use in rule actions. Returns false by default.
+    fn capturing(&self) -> bool {
+        false
+    }
+
+    /// Capture a field value at the given index.
+    ///
+    /// Used by regex operators to store captured groups. Index 0 is the full match,
+    /// indices 1-9 are capturing groups. ModSecurity limits captures to 9 groups.
+    ///
+    /// # Arguments
+    /// * `index` - Capture index (0 = full match, 1-9 = groups)
+    /// * `value` - The captured string value
+    fn capture_field(&mut self, index: usize, value: &str) {
+        let _ = (index, value); // Suppress unused warnings for default impl
+    }
 }
 
 /// Empty transaction state that returns None for all variable lookups.
@@ -35,7 +54,7 @@ pub trait TransactionState {
 ///
 /// let op = eq("42").unwrap();
 /// // Instead of NoTx, you'll use your real transaction type in production
-/// assert!(op.evaluate(None::<&NoTx>, "42"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "42"));
 /// ```
 #[deprecated(
     since = "0.1.0",

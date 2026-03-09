@@ -22,9 +22,9 @@ use crate::operators::{Macro, MacroError, Operator, TransactionState};
 /// use coraza::operators::{NoTx, Operator, eq};
 ///
 /// let op = eq("15").unwrap();
-/// assert!(op.evaluate(None::<&NoTx>, "15"));
-/// assert!(op.evaluate(None::<&NoTx>, "015")); // Leading zeros ignored
-/// assert!(!op.evaluate(None::<&NoTx>, "16"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "15"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "015")); // Leading zeros ignored
+/// assert!(!op.evaluate(None::<&mut NoTx>, "16"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Eq {
@@ -32,8 +32,8 @@ pub struct Eq {
 }
 
 impl Operator for Eq {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&TX>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx);
+    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+        let param_value = self.macro_param.expand(tx.as_deref());
         let param_int = param_value.parse::<i32>().unwrap_or(0);
         let input_int = input.parse::<i32>().unwrap_or(0);
         param_int == input_int
@@ -64,9 +64,9 @@ pub fn eq(parameter: &str) -> Result<Eq, MacroError> {
 /// use coraza::operators::{NoTx, Operator, gt};
 ///
 /// let op = gt("10").unwrap();
-/// assert!(op.evaluate(None::<&NoTx>, "15"));
-/// assert!(!op.evaluate(None::<&NoTx>, "10"));
-/// assert!(!op.evaluate(None::<&NoTx>, "5"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "15"));
+/// assert!(!op.evaluate(None::<&mut NoTx>, "10"));
+/// assert!(!op.evaluate(None::<&mut NoTx>, "5"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Gt {
@@ -74,8 +74,8 @@ pub struct Gt {
 }
 
 impl Operator for Gt {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&TX>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx);
+    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+        let param_value = self.macro_param.expand(tx.as_deref());
         let param_int = param_value.parse::<i32>().unwrap_or(0);
         let input_int = input.parse::<i32>().unwrap_or(0);
         input_int > param_int
@@ -105,9 +105,9 @@ pub fn gt(parameter: &str) -> Result<Gt, MacroError> {
 /// use coraza::operators::{NoTx, Operator, ge};
 ///
 /// let op = ge("10").unwrap();
-/// assert!(op.evaluate(None::<&NoTx>, "15"));
-/// assert!(op.evaluate(None::<&NoTx>, "10"));
-/// assert!(!op.evaluate(None::<&NoTx>, "5"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "15"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "10"));
+/// assert!(!op.evaluate(None::<&mut NoTx>, "5"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Ge {
@@ -115,8 +115,8 @@ pub struct Ge {
 }
 
 impl Operator for Ge {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&TX>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx);
+    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+        let param_value = self.macro_param.expand(tx.as_deref());
         let param_int = param_value.parse::<i32>().unwrap_or(0);
         let input_int = input.parse::<i32>().unwrap_or(0);
         input_int >= param_int
@@ -146,9 +146,9 @@ pub fn ge(parameter: &str) -> Result<Ge, MacroError> {
 /// use coraza::operators::{NoTx, Operator, lt};
 ///
 /// let op = lt("10").unwrap();
-/// assert!(op.evaluate(None::<&NoTx>, "5"));
-/// assert!(!op.evaluate(None::<&NoTx>, "10"));
-/// assert!(!op.evaluate(None::<&NoTx>, "15"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "5"));
+/// assert!(!op.evaluate(None::<&mut NoTx>, "10"));
+/// assert!(!op.evaluate(None::<&mut NoTx>, "15"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Lt {
@@ -156,8 +156,8 @@ pub struct Lt {
 }
 
 impl Operator for Lt {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&TX>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx);
+    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+        let param_value = self.macro_param.expand(tx.as_deref());
         let param_int = param_value.parse::<i32>().unwrap_or(0);
         let input_int = input.parse::<i32>().unwrap_or(0);
         input_int < param_int
@@ -187,9 +187,9 @@ pub fn lt(parameter: &str) -> Result<Lt, MacroError> {
 /// use coraza::operators::{NoTx, Operator, le};
 ///
 /// let op = le("10").unwrap();
-/// assert!(op.evaluate(None::<&NoTx>, "5"));
-/// assert!(op.evaluate(None::<&NoTx>, "10"));
-/// assert!(!op.evaluate(None::<&NoTx>, "15"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "5"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "10"));
+/// assert!(!op.evaluate(None::<&mut NoTx>, "15"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Le {
@@ -197,8 +197,8 @@ pub struct Le {
 }
 
 impl Operator for Le {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&TX>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx);
+    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+        let param_value = self.macro_param.expand(tx.as_deref());
         let param_int = param_value.parse::<i32>().unwrap_or(0);
         let input_int = input.parse::<i32>().unwrap_or(0);
         input_int <= param_int
@@ -229,9 +229,9 @@ pub fn le(parameter: &str) -> Result<Le, MacroError> {
 /// use coraza::operators::{NoTx, Operator, streq};
 ///
 /// let op = streq("POST").unwrap();
-/// assert!(op.evaluate(None::<&NoTx>, "POST"));
-/// assert!(!op.evaluate(None::<&NoTx>, "post"));
-/// assert!(!op.evaluate(None::<&NoTx>, "GET"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "POST"));
+/// assert!(!op.evaluate(None::<&mut NoTx>, "post"));
+/// assert!(!op.evaluate(None::<&mut NoTx>, "GET"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct StrEq {
@@ -239,8 +239,8 @@ pub struct StrEq {
 }
 
 impl Operator for StrEq {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&TX>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx);
+    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+        let param_value = self.macro_param.expand(tx.as_deref());
         input == param_value
     }
 }
@@ -268,9 +268,9 @@ pub fn streq(parameter: &str) -> Result<StrEq, MacroError> {
 /// use coraza::operators::{NoTx, Operator, contains};
 ///
 /// let op = contains(".php").unwrap();
-/// assert!(op.evaluate(None::<&NoTx>, "/index.php"));
-/// assert!(op.evaluate(None::<&NoTx>, "test.php?id=1"));
-/// assert!(!op.evaluate(None::<&NoTx>, "/index.html"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "/index.php"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "test.php?id=1"));
+/// assert!(!op.evaluate(None::<&mut NoTx>, "/index.html"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Contains {
@@ -278,8 +278,8 @@ pub struct Contains {
 }
 
 impl Operator for Contains {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&TX>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx);
+    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+        let param_value = self.macro_param.expand(tx.as_deref());
         input.contains(&param_value)
     }
 }
@@ -307,8 +307,8 @@ pub fn contains(parameter: &str) -> Result<Contains, MacroError> {
 /// use coraza::operators::{NoTx, Operator, begins_with};
 ///
 /// let op = begins_with("GET").unwrap();
-/// assert!(op.evaluate(None::<&NoTx>, "GET /index.html HTTP/1.1"));
-/// assert!(!op.evaluate(None::<&NoTx>, "POST /index.html HTTP/1.1"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "GET /index.html HTTP/1.1"));
+/// assert!(!op.evaluate(None::<&mut NoTx>, "POST /index.html HTTP/1.1"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct BeginsWith {
@@ -316,8 +316,8 @@ pub struct BeginsWith {
 }
 
 impl Operator for BeginsWith {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&TX>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx);
+    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+        let param_value = self.macro_param.expand(tx.as_deref());
         input.starts_with(&param_value)
     }
 }
@@ -345,9 +345,9 @@ pub fn begins_with(parameter: &str) -> Result<BeginsWith, MacroError> {
 /// use coraza::operators::{NoTx, Operator, ends_with};
 ///
 /// let op = ends_with(".exe").unwrap();
-/// assert!(op.evaluate(None::<&NoTx>, "malware.exe"));
-/// assert!(op.evaluate(None::<&NoTx>, "C:\\Windows\\system32\\cmd.exe"));
-/// assert!(!op.evaluate(None::<&NoTx>, "document.pdf"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "malware.exe"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "C:\\Windows\\system32\\cmd.exe"));
+/// assert!(!op.evaluate(None::<&mut NoTx>, "document.pdf"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct EndsWith {
@@ -355,8 +355,8 @@ pub struct EndsWith {
 }
 
 impl Operator for EndsWith {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&TX>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx);
+    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+        let param_value = self.macro_param.expand(tx.as_deref());
         input.ends_with(&param_value)
     }
 }
@@ -397,133 +397,133 @@ mod tests {
     fn test_eq_valid_values() {
         let op = eq("1").unwrap();
 
-        assert!(op.evaluate(None::<&NoTx>, "1"));
-        assert!(op.evaluate(None::<&NoTx>, "01")); // Leading zeros
-        assert!(!op.evaluate(None::<&NoTx>, "1.0")); // Float parsing fails, becomes 0
-        assert!(!op.evaluate(None::<&NoTx>, "2"));
-        assert!(!op.evaluate(None::<&NoTx>, "0"));
+        assert!(op.evaluate(None::<&mut NoTx>, "1"));
+        assert!(op.evaluate(None::<&mut NoTx>, "01")); // Leading zeros
+        assert!(!op.evaluate(None::<&mut NoTx>, "1.0")); // Float parsing fails, becomes 0
+        assert!(!op.evaluate(None::<&mut NoTx>, "2"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "0"));
     }
 
     #[test]
     fn test_eq_invalid_values_return_zero() {
         let op = eq("a").unwrap(); // Invalid, becomes 0
 
-        assert!(op.evaluate(None::<&NoTx>, "a")); // Also becomes 0
-        assert!(op.evaluate(None::<&NoTx>, "b")); // Also becomes 0
-        assert!(op.evaluate(None::<&NoTx>, "0")); // Explicitly 0
-        assert!(!op.evaluate(None::<&NoTx>, "1"));
+        assert!(op.evaluate(None::<&mut NoTx>, "a")); // Also becomes 0
+        assert!(op.evaluate(None::<&mut NoTx>, "b")); // Also becomes 0
+        assert!(op.evaluate(None::<&mut NoTx>, "0")); // Explicitly 0
+        assert!(!op.evaluate(None::<&mut NoTx>, "1"));
     }
 
     #[test]
     fn test_eq_edge_cases() {
-        assert!(eq("0").unwrap().evaluate(None::<&NoTx>, ""));
-        assert!(eq("0").unwrap().evaluate(None::<&NoTx>, "invalid"));
-        assert!(eq("123").unwrap().evaluate(None::<&NoTx>, "123"));
-        assert!(eq("-5").unwrap().evaluate(None::<&NoTx>, "-5"));
+        assert!(eq("0").unwrap().evaluate(None::<&mut NoTx>, ""));
+        assert!(eq("0").unwrap().evaluate(None::<&mut NoTx>, "invalid"));
+        assert!(eq("123").unwrap().evaluate(None::<&mut NoTx>, "123"));
+        assert!(eq("-5").unwrap().evaluate(None::<&mut NoTx>, "-5"));
     }
 
     #[test]
     fn test_eq_with_macro() {
         let op = eq("%{TX.threshold}").unwrap();
-        let tx = MockTx;
+        let mut tx = MockTx;
 
-        assert!(op.evaluate(Some(&tx), "10"));
-        assert!(!op.evaluate(Some(&tx), "5"));
-        assert!(!op.evaluate(Some(&tx), "15"));
+        assert!(op.evaluate(Some(&mut tx), "10"));
+        assert!(!op.evaluate(Some(&mut tx), "5"));
+        assert!(!op.evaluate(Some(&mut tx), "15"));
     }
 
     #[test]
     fn test_gt() {
         let op = gt("10").unwrap();
 
-        assert!(op.evaluate(None::<&NoTx>, "15"));
-        assert!(op.evaluate(None::<&NoTx>, "11"));
-        assert!(!op.evaluate(None::<&NoTx>, "10"));
-        assert!(!op.evaluate(None::<&NoTx>, "9"));
-        assert!(!op.evaluate(None::<&NoTx>, "0"));
+        assert!(op.evaluate(None::<&mut NoTx>, "15"));
+        assert!(op.evaluate(None::<&mut NoTx>, "11"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "10"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "9"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "0"));
     }
 
     #[test]
     fn test_gt_with_macro() {
         let op = gt("%{TX.threshold}").unwrap();
-        let tx = MockTx;
+        let mut tx = MockTx;
 
-        assert!(op.evaluate(Some(&tx), "15"));
-        assert!(op.evaluate(Some(&tx), "11"));
-        assert!(!op.evaluate(Some(&tx), "10"));
-        assert!(!op.evaluate(Some(&tx), "5"));
+        assert!(op.evaluate(Some(&mut tx), "15"));
+        assert!(op.evaluate(Some(&mut tx), "11"));
+        assert!(!op.evaluate(Some(&mut tx), "10"));
+        assert!(!op.evaluate(Some(&mut tx), "5"));
     }
 
     #[test]
     fn test_ge() {
         let op = ge("10").unwrap();
 
-        assert!(op.evaluate(None::<&NoTx>, "15"));
-        assert!(op.evaluate(None::<&NoTx>, "11"));
-        assert!(op.evaluate(None::<&NoTx>, "10"));
-        assert!(!op.evaluate(None::<&NoTx>, "9"));
-        assert!(!op.evaluate(None::<&NoTx>, "0"));
+        assert!(op.evaluate(None::<&mut NoTx>, "15"));
+        assert!(op.evaluate(None::<&mut NoTx>, "11"));
+        assert!(op.evaluate(None::<&mut NoTx>, "10"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "9"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "0"));
     }
 
     #[test]
     fn test_lt() {
         let op = lt("10").unwrap();
 
-        assert!(op.evaluate(None::<&NoTx>, "9"));
-        assert!(op.evaluate(None::<&NoTx>, "0"));
-        assert!(op.evaluate(None::<&NoTx>, "-5"));
-        assert!(!op.evaluate(None::<&NoTx>, "10"));
-        assert!(!op.evaluate(None::<&NoTx>, "11"));
+        assert!(op.evaluate(None::<&mut NoTx>, "9"));
+        assert!(op.evaluate(None::<&mut NoTx>, "0"));
+        assert!(op.evaluate(None::<&mut NoTx>, "-5"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "10"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "11"));
     }
 
     #[test]
     fn test_le() {
         let op = le("10").unwrap();
 
-        assert!(op.evaluate(None::<&NoTx>, "9"));
-        assert!(op.evaluate(None::<&NoTx>, "10"));
-        assert!(op.evaluate(None::<&NoTx>, "0"));
-        assert!(!op.evaluate(None::<&NoTx>, "11"));
-        assert!(!op.evaluate(None::<&NoTx>, "15"));
+        assert!(op.evaluate(None::<&mut NoTx>, "9"));
+        assert!(op.evaluate(None::<&mut NoTx>, "10"));
+        assert!(op.evaluate(None::<&mut NoTx>, "0"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "11"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "15"));
     }
 
     #[test]
     fn test_streq() {
         let op = streq("POST").unwrap();
 
-        assert!(op.evaluate(None::<&NoTx>, "POST"));
-        assert!(!op.evaluate(None::<&NoTx>, "post")); // Case sensitive
-        assert!(!op.evaluate(None::<&NoTx>, "GET"));
-        assert!(!op.evaluate(None::<&NoTx>, ""));
+        assert!(op.evaluate(None::<&mut NoTx>, "POST"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "post")); // Case sensitive
+        assert!(!op.evaluate(None::<&mut NoTx>, "GET"));
+        assert!(!op.evaluate(None::<&mut NoTx>, ""));
     }
 
     #[test]
     fn test_streq_empty() {
         let op = streq("").unwrap();
 
-        assert!(op.evaluate(None::<&NoTx>, ""));
-        assert!(!op.evaluate(None::<&NoTx>, "anything"));
+        assert!(op.evaluate(None::<&mut NoTx>, ""));
+        assert!(!op.evaluate(None::<&mut NoTx>, "anything"));
     }
 
     #[test]
     fn test_streq_with_macro() {
         let op = streq("%{TX.method}").unwrap();
-        let tx = MockTx;
+        let mut tx = MockTx;
 
-        assert!(op.evaluate(Some(&tx), "POST"));
-        assert!(!op.evaluate(Some(&tx), "GET"));
-        assert!(!op.evaluate(Some(&tx), "post"));
+        assert!(op.evaluate(Some(&mut tx), "POST"));
+        assert!(!op.evaluate(Some(&mut tx), "GET"));
+        assert!(!op.evaluate(Some(&mut tx), "post"));
     }
 
     #[test]
     fn test_contains() {
         let op = contains(".php").unwrap();
 
-        assert!(op.evaluate(None::<&NoTx>, "/index.php"));
-        assert!(op.evaluate(None::<&NoTx>, "test.php?id=1"));
-        assert!(op.evaluate(None::<&NoTx>, ".php"));
-        assert!(!op.evaluate(None::<&NoTx>, "/index.html"));
-        assert!(!op.evaluate(None::<&NoTx>, ""));
+        assert!(op.evaluate(None::<&mut NoTx>, "/index.php"));
+        assert!(op.evaluate(None::<&mut NoTx>, "test.php?id=1"));
+        assert!(op.evaluate(None::<&mut NoTx>, ".php"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "/index.html"));
+        assert!(!op.evaluate(None::<&mut NoTx>, ""));
     }
 
     #[test]
@@ -531,29 +531,29 @@ mod tests {
         let op = contains("").unwrap();
 
         // Empty string is contained in everything
-        assert!(op.evaluate(None::<&NoTx>, "anything"));
-        assert!(op.evaluate(None::<&NoTx>, ""));
+        assert!(op.evaluate(None::<&mut NoTx>, "anything"));
+        assert!(op.evaluate(None::<&mut NoTx>, ""));
     }
 
     #[test]
     fn test_contains_with_macro() {
         let op = contains("%{TX.extension}").unwrap();
-        let tx = MockTx;
+        let mut tx = MockTx;
 
-        assert!(op.evaluate(Some(&tx), "/index.php"));
-        assert!(op.evaluate(Some(&tx), "test.php?id=1"));
-        assert!(!op.evaluate(Some(&tx), "/index.html"));
+        assert!(op.evaluate(Some(&mut tx), "/index.php"));
+        assert!(op.evaluate(Some(&mut tx), "test.php?id=1"));
+        assert!(!op.evaluate(Some(&mut tx), "/index.html"));
     }
 
     #[test]
     fn test_begins_with() {
         let op = begins_with("GET").unwrap();
 
-        assert!(op.evaluate(None::<&NoTx>, "GET /index.html HTTP/1.1"));
-        assert!(op.evaluate(None::<&NoTx>, "GET"));
-        assert!(!op.evaluate(None::<&NoTx>, "POST /index.html HTTP/1.1"));
-        assert!(!op.evaluate(None::<&NoTx>, " GET"));
-        assert!(!op.evaluate(None::<&NoTx>, ""));
+        assert!(op.evaluate(None::<&mut NoTx>, "GET /index.html HTTP/1.1"));
+        assert!(op.evaluate(None::<&mut NoTx>, "GET"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "POST /index.html HTTP/1.1"));
+        assert!(!op.evaluate(None::<&mut NoTx>, " GET"));
+        assert!(!op.evaluate(None::<&mut NoTx>, ""));
     }
 
     #[test]
@@ -561,19 +561,19 @@ mod tests {
         let op = begins_with("").unwrap();
 
         // Everything starts with empty string
-        assert!(op.evaluate(None::<&NoTx>, "anything"));
-        assert!(op.evaluate(None::<&NoTx>, ""));
+        assert!(op.evaluate(None::<&mut NoTx>, "anything"));
+        assert!(op.evaluate(None::<&mut NoTx>, ""));
     }
 
     #[test]
     fn test_ends_with() {
         let op = ends_with(".exe").unwrap();
 
-        assert!(op.evaluate(None::<&NoTx>, "malware.exe"));
-        assert!(op.evaluate(None::<&NoTx>, ".exe"));
-        assert!(!op.evaluate(None::<&NoTx>, "document.pdf"));
-        assert!(!op.evaluate(None::<&NoTx>, ".exe.txt"));
-        assert!(!op.evaluate(None::<&NoTx>, ""));
+        assert!(op.evaluate(None::<&mut NoTx>, "malware.exe"));
+        assert!(op.evaluate(None::<&mut NoTx>, ".exe"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "document.pdf"));
+        assert!(!op.evaluate(None::<&mut NoTx>, ".exe.txt"));
+        assert!(!op.evaluate(None::<&mut NoTx>, ""));
     }
 
     #[test]
@@ -581,27 +581,27 @@ mod tests {
         let op = ends_with("").unwrap();
 
         // Everything ends with empty string
-        assert!(op.evaluate(None::<&NoTx>, "anything"));
-        assert!(op.evaluate(None::<&NoTx>, ""));
+        assert!(op.evaluate(None::<&mut NoTx>, "anything"));
+        assert!(op.evaluate(None::<&mut NoTx>, ""));
     }
 
     #[test]
     fn test_numeric_operators_with_negatives() {
-        assert!(gt("-5").unwrap().evaluate(None::<&NoTx>, "0"));
-        assert!(gt("-10").unwrap().evaluate(None::<&NoTx>, "-5"));
-        assert!(!gt("5").unwrap().evaluate(None::<&NoTx>, "-10"));
+        assert!(gt("-5").unwrap().evaluate(None::<&mut NoTx>, "0"));
+        assert!(gt("-10").unwrap().evaluate(None::<&mut NoTx>, "-5"));
+        assert!(!gt("5").unwrap().evaluate(None::<&mut NoTx>, "-10"));
 
-        assert!(ge("-5").unwrap().evaluate(None::<&NoTx>, "-5"));
-        assert!(lt("0").unwrap().evaluate(None::<&NoTx>, "-1"));
-        assert!(le("0").unwrap().evaluate(None::<&NoTx>, "0"));
+        assert!(ge("-5").unwrap().evaluate(None::<&mut NoTx>, "-5"));
+        assert!(lt("0").unwrap().evaluate(None::<&mut NoTx>, "-1"));
+        assert!(le("0").unwrap().evaluate(None::<&mut NoTx>, "0"));
     }
 
     #[test]
     fn test_numeric_operators_with_invalid_input() {
         // Invalid input becomes 0
-        assert!(eq("0").unwrap().evaluate(None::<&NoTx>, "invalid"));
-        assert!(gt("-1").unwrap().evaluate(None::<&NoTx>, "abc")); // abc becomes 0, 0 > -1
-        assert!(!gt("1").unwrap().evaluate(None::<&NoTx>, "xyz")); // xyz becomes 0, 0 > 1 is false
+        assert!(eq("0").unwrap().evaluate(None::<&mut NoTx>, "invalid"));
+        assert!(gt("-1").unwrap().evaluate(None::<&mut NoTx>, "abc")); // abc becomes 0, 0 > -1
+        assert!(!gt("1").unwrap().evaluate(None::<&mut NoTx>, "xyz")); // xyz becomes 0, 0 > 1 is false
     }
 
     #[test]

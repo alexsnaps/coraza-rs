@@ -21,15 +21,17 @@ pub use simple::{
 /// Trait for rule operators.
 ///
 /// Operators evaluate input values and return whether they match the configured
-/// criteria. Operators support macro expansion, allowing parameter values to
-/// reference transaction variables like `%{TX.score}`.
+/// criteria. Operators support macro expansion and capturing groups (for regex).
 pub trait Operator {
     /// Evaluates the operator against an input value.
     ///
-    /// The optional `tx` parameter provides access to transaction state for
-    /// macro expansion. If `None`, macros are not expanded.
+    /// The optional `tx` parameter provides mutable access to transaction state for:
+    /// - Macro expansion (reading variables like `%{TX.score}`)
+    /// - Capturing regex groups (writing matched values)
+    ///
+    /// If `None`, macros are not expanded and capturing is disabled.
     ///
     /// Returns true if the operator matches the input value according to its
     /// configured parameter (after macro expansion).
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&TX>, input: &str) -> bool;
+    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool;
 }

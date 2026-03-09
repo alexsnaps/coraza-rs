@@ -26,12 +26,12 @@ use regex::Regex;
 /// use coraza::operators::{NoTx, Operator, rx};
 ///
 /// let op = rx("som(.*)ta").unwrap();
-/// assert!(op.evaluate(None::<&NoTx>, "somedata"));
-/// assert!(!op.evaluate(None::<&NoTx>, "notdata"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "somedata"));
+/// assert!(!op.evaluate(None::<&mut NoTx>, "notdata"));
 ///
 /// // Unicode support
 /// let op = rx("ハロー").unwrap();
-/// assert!(op.evaluate(None::<&NoTx>, "ハローワールド"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "ハローワールド"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Rx {
@@ -41,22 +41,46 @@ pub struct Rx {
 }
 
 impl Operator for Rx {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&TX>, input: &str) -> bool {
-        // If we have a cached regex and no transaction state, use the cache
+    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+        // Determine if we're capturing based on transaction state
+        let capturing = tx.as_ref().is_some_and(|t| t.capturing());
+
+        // Fast path: use cached regex when available and no macro expansion needed
         if tx.is_none()
             && let Some(ref regex) = self.cached_regex
         {
             return regex.is_match(input);
         }
 
-        // Otherwise expand macro and compile regex on the fly
-        let pattern = self.macro_param.expand(tx);
+        // Expand macro if needed and compile regex
+        let pattern = self.macro_param.expand(tx.as_deref());
         let pattern_with_flags = format!("(?s){}", pattern);
 
-        // If regex compilation fails, return false (no match)
-        match Regex::new(&pattern_with_flags) {
-            Ok(regex) => regex.is_match(input),
-            Err(_) => false,
+        let regex = match Regex::new(&pattern_with_flags) {
+            Ok(re) => re,
+            Err(_) => return false,
+        };
+
+        if capturing {
+            // Capturing mode: find all matches including groups
+            if let Some(captures) = regex.captures(input) {
+                if let Some(tx_mut) = tx {
+                    // Store full match and up to 9 capturing groups (ModSecurity limit)
+                    for i in 0..=9 {
+                        if let Some(capture) = captures.get(i) {
+                            tx_mut.capture_field(i, capture.as_str());
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                true
+            } else {
+                false
+            }
+        } else {
+            // Non-capturing mode: fast path using is_match
+            regex.is_match(input)
         }
     }
 }
@@ -72,8 +96,7 @@ impl Operator for Rx {
 /// - The parameter contains invalid macro syntax
 /// - The regex pattern is invalid (when no macros are present)
 pub fn rx(pattern: &str) -> Result<Rx, Box<dyn std::error::Error>> {
-    let macro_param = Macro::new(pattern)
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+    let macro_param = Macro::new(pattern).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
 
     // Try to pre-compile regex if there are no variables
     let cached_regex = if pattern.contains("%{") {
@@ -105,9 +128,9 @@ pub fn rx(pattern: &str) -> Result<Rx, Box<dyn std::error::Error>> {
 /// use coraza::operators::{NoTx, Operator, pm};
 ///
 /// let op = pm("WebZIP WebCopier Webster").unwrap();
-/// assert!(op.evaluate(None::<&NoTx>, "User-Agent: WebZIP/1.0"));
-/// assert!(op.evaluate(None::<&NoTx>, "WEBZIP is here")); // Case-insensitive
-/// assert!(!op.evaluate(None::<&NoTx>, "Mozilla/5.0"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "User-Agent: WebZIP/1.0"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "WEBZIP is here")); // Case-insensitive
+/// assert!(!op.evaluate(None::<&mut NoTx>, "Mozilla/5.0"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Pm {
@@ -117,7 +140,7 @@ pub struct Pm {
 }
 
 impl Operator for Pm {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&TX>, input: &str) -> bool {
+    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
         // If we have a cached matcher and no transaction state, use the cache
         if tx.is_none()
             && let Some(ref matcher) = self.cached_matcher
@@ -126,7 +149,7 @@ impl Operator for Pm {
         }
 
         // Otherwise expand macro and build matcher on the fly
-        let patterns = self.macro_param.expand(tx);
+        let patterns = self.macro_param.expand(tx.as_deref());
         let patterns_lower = patterns.to_lowercase();
         let dict: Vec<&str> = patterns_lower.split(' ').collect();
 
@@ -185,14 +208,14 @@ pub fn pm(patterns: &str) -> Result<Pm, MacroError> {
 ///
 /// // Check if input is within allowed values
 /// let op = within("GET,POST,HEAD").unwrap();
-/// assert!(op.evaluate(None::<&NoTx>, "GET"));
-/// assert!(op.evaluate(None::<&NoTx>, "POST"));
-/// assert!(!op.evaluate(None::<&NoTx>, "DELETE"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "GET"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "POST"));
+/// assert!(!op.evaluate(None::<&mut NoTx>, "DELETE"));
 ///
 /// // Works with any haystack
 /// let op = within("abcdefghij").unwrap();
-/// assert!(op.evaluate(None::<&NoTx>, "def"));
-/// assert!(!op.evaluate(None::<&NoTx>, "xyz"));
+/// assert!(op.evaluate(None::<&mut NoTx>, "def"));
+/// assert!(!op.evaluate(None::<&mut NoTx>, "xyz"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Within {
@@ -200,8 +223,8 @@ pub struct Within {
 }
 
 impl Operator for Within {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&TX>, input: &str) -> bool {
-        let haystack = self.macro_param.expand(tx);
+    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+        let haystack = self.macro_param.expand(tx.as_deref());
         haystack.contains(input)
     }
 }
@@ -230,8 +253,8 @@ pub fn within(haystack: &str) -> Result<Within, MacroError> {
 /// use coraza::operators::{NoTx, Operator, strmatch};
 ///
 /// let op = strmatch("WebZIP").unwrap();
-/// assert!(op.evaluate(None::<&NoTx>, "User-Agent: WebZIP/1.0"));
-/// assert!(!op.evaluate(None::<&NoTx>, "User-Agent: webzip")); // Case-sensitive
+/// assert!(op.evaluate(None::<&mut NoTx>, "User-Agent: WebZIP/1.0"));
+/// assert!(!op.evaluate(None::<&mut NoTx>, "User-Agent: webzip")); // Case-sensitive
 /// ```
 #[derive(Debug, Clone)]
 pub struct StrMatch {
@@ -239,8 +262,8 @@ pub struct StrMatch {
 }
 
 impl Operator for StrMatch {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&TX>, input: &str) -> bool {
-        let needle = self.macro_param.expand(tx);
+    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+        let needle = self.macro_param.expand(tx.as_deref());
         input.contains(&needle)
     }
 }
@@ -281,46 +304,46 @@ mod tests {
     #[test]
     fn test_rx_basic() {
         let op = rx("som(.*)ta").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "somedata"));
-        assert!(!op.evaluate(None::<&NoTx>, "notdata"));
+        assert!(op.evaluate(None::<&mut NoTx>, "somedata"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "notdata"));
     }
 
     #[test]
     fn test_rx_unicode() {
         let op = rx("ハロー").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "ハローワールド"));
-        assert!(!op.evaluate(None::<&NoTx>, "グッバイワールド"));
+        assert!(op.evaluate(None::<&mut NoTx>, "ハローワールド"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "グッバイワールド"));
     }
 
     #[test]
     fn test_rx_dotall_mode() {
         // Dotall mode enabled by default - . matches newlines
         let op = rx("hello.*world").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "hello\nworld"));
-        assert!(op.evaluate(None::<&NoTx>, "hello world"));
+        assert!(op.evaluate(None::<&mut NoTx>, "hello\nworld"));
+        assert!(op.evaluate(None::<&mut NoTx>, "hello world"));
     }
 
     #[test]
     fn test_rx_case_sensitive() {
         let op = rx("test").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "test"));
-        assert!(!op.evaluate(None::<&NoTx>, "TEST"));
+        assert!(op.evaluate(None::<&mut NoTx>, "test"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "TEST"));
 
         // Case-insensitive with flag
         let op = rx("(?i)test").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "test"));
-        assert!(op.evaluate(None::<&NoTx>, "TEST"));
+        assert!(op.evaluate(None::<&mut NoTx>, "test"));
+        assert!(op.evaluate(None::<&mut NoTx>, "TEST"));
     }
 
     #[test]
     fn test_rx_anchors() {
         let op = rx("^GET").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "GET /index.html"));
-        assert!(!op.evaluate(None::<&NoTx>, " GET /index.html"));
+        assert!(op.evaluate(None::<&mut NoTx>, "GET /index.html"));
+        assert!(!op.evaluate(None::<&mut NoTx>, " GET /index.html"));
 
         let op = rx("\\.php$").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "/index.php"));
-        assert!(!op.evaluate(None::<&NoTx>, "/index.php?id=1"));
+        assert!(op.evaluate(None::<&mut NoTx>, "/index.php"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "/index.php?id=1"));
     }
 
     #[test]
@@ -332,142 +355,142 @@ mod tests {
     #[test]
     fn test_rx_with_macro() {
         let op = rx("%{TX.pattern}").unwrap();
-        let tx = MockTx;
+        let mut tx = MockTx;
 
-        assert!(op.evaluate(Some(&tx), "testXYZdata"));
-        assert!(op.evaluate(Some(&tx), "test123data"));
-        assert!(!op.evaluate(Some(&tx), "notmatching"));
+        assert!(op.evaluate(Some(&mut tx), "testXYZdata"));
+        assert!(op.evaluate(Some(&mut tx), "test123data"));
+        assert!(!op.evaluate(Some(&mut tx), "notmatching"));
     }
 
     #[test]
     fn test_pm_basic() {
         let op = pm("WebZIP WebCopier Webster").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "User-Agent: WebZIP/1.0"));
-        assert!(op.evaluate(None::<&NoTx>, "WebCopier tool"));
-        assert!(op.evaluate(None::<&NoTx>, "Webster here"));
-        assert!(!op.evaluate(None::<&NoTx>, "Mozilla/5.0"));
+        assert!(op.evaluate(None::<&mut NoTx>, "User-Agent: WebZIP/1.0"));
+        assert!(op.evaluate(None::<&mut NoTx>, "WebCopier tool"));
+        assert!(op.evaluate(None::<&mut NoTx>, "Webster here"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "Mozilla/5.0"));
     }
 
     #[test]
     fn test_pm_case_insensitive() {
         let op = pm("WebZIP").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "WEBZIP"));
-        assert!(op.evaluate(None::<&NoTx>, "webzip"));
-        assert!(op.evaluate(None::<&NoTx>, "WebZIP"));
-        assert!(op.evaluate(None::<&NoTx>, "WeBzIp"));
+        assert!(op.evaluate(None::<&mut NoTx>, "WEBZIP"));
+        assert!(op.evaluate(None::<&mut NoTx>, "webzip"));
+        assert!(op.evaluate(None::<&mut NoTx>, "WebZIP"));
+        assert!(op.evaluate(None::<&mut NoTx>, "WeBzIp"));
     }
 
     #[test]
     fn test_pm_multiple_matches() {
         let op = pm("<script> javascript: onerror=").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "<script>alert(1)</script>"));
-        assert!(op.evaluate(None::<&NoTx>, "javascript:void(0)"));
-        assert!(op.evaluate(None::<&NoTx>, "<img onerror=alert(1)>"));
+        assert!(op.evaluate(None::<&mut NoTx>, "<script>alert(1)</script>"));
+        assert!(op.evaluate(None::<&mut NoTx>, "javascript:void(0)"));
+        assert!(op.evaluate(None::<&mut NoTx>, "<img onerror=alert(1)>"));
     }
 
     #[test]
     fn test_pm_single_pattern() {
         let op = pm("malware").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "this is malware"));
-        assert!(!op.evaluate(None::<&NoTx>, "this is safe"));
+        assert!(op.evaluate(None::<&mut NoTx>, "this is malware"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "this is safe"));
     }
 
     #[test]
     fn test_pm_empty_pattern() {
         let op = pm("").unwrap();
         // Empty pattern matches empty string in input
-        assert!(op.evaluate(None::<&NoTx>, "anything"));
+        assert!(op.evaluate(None::<&mut NoTx>, "anything"));
     }
 
     #[test]
     fn test_pm_with_macro() {
         let op = pm("%{TX.keywords}").unwrap();
-        let tx = MockTx;
+        let mut tx = MockTx;
 
-        assert!(op.evaluate(Some(&tx), "detected malware here"));
-        assert!(op.evaluate(Some(&tx), "virus found"));
-        assert!(op.evaluate(Some(&tx), "trojan detected"));
-        assert!(!op.evaluate(Some(&tx), "clean file"));
+        assert!(op.evaluate(Some(&mut tx), "detected malware here"));
+        assert!(op.evaluate(Some(&mut tx), "virus found"));
+        assert!(op.evaluate(Some(&mut tx), "trojan detected"));
+        assert!(!op.evaluate(Some(&mut tx), "clean file"));
     }
 
     #[test]
     fn test_within_basic() {
         let op = within("GET,POST,HEAD").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "GET"));
-        assert!(op.evaluate(None::<&NoTx>, "POST"));
-        assert!(op.evaluate(None::<&NoTx>, "HEAD"));
-        assert!(!op.evaluate(None::<&NoTx>, "DELETE"));
-        assert!(!op.evaluate(None::<&NoTx>, "PUT"));
+        assert!(op.evaluate(None::<&mut NoTx>, "GET"));
+        assert!(op.evaluate(None::<&mut NoTx>, "POST"));
+        assert!(op.evaluate(None::<&mut NoTx>, "HEAD"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "DELETE"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "PUT"));
     }
 
     #[test]
     fn test_within_substring() {
         let op = within("abcdefghij").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "abc"));
-        assert!(op.evaluate(None::<&NoTx>, "def"));
-        assert!(op.evaluate(None::<&NoTx>, "j"));
-        assert!(!op.evaluate(None::<&NoTx>, "xyz"));
+        assert!(op.evaluate(None::<&mut NoTx>, "abc"));
+        assert!(op.evaluate(None::<&mut NoTx>, "def"));
+        assert!(op.evaluate(None::<&mut NoTx>, "j"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "xyz"));
     }
 
     #[test]
     fn test_within_exact_match() {
         let op = within("exact").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "exact"));
-        assert!(!op.evaluate(None::<&NoTx>, "not exact"));
+        assert!(op.evaluate(None::<&mut NoTx>, "exact"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "not exact"));
     }
 
     #[test]
     fn test_within_empty_input() {
         let op = within("GET,POST").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "")); // Empty string is in any string
+        assert!(op.evaluate(None::<&mut NoTx>, "")); // Empty string is in any string
     }
 
     #[test]
     fn test_within_case_sensitive() {
         let op = within("GET,POST").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "GET"));
-        assert!(!op.evaluate(None::<&NoTx>, "get")); // Case-sensitive
+        assert!(op.evaluate(None::<&mut NoTx>, "GET"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "get")); // Case-sensitive
     }
 
     #[test]
     fn test_within_with_macro() {
         let op = within("%{TX.methods}").unwrap();
-        let tx = MockTx;
+        let mut tx = MockTx;
 
-        assert!(op.evaluate(Some(&tx), "GET"));
-        assert!(op.evaluate(Some(&tx), "POST"));
-        assert!(!op.evaluate(Some(&tx), "DELETE"));
+        assert!(op.evaluate(Some(&mut tx), "GET"));
+        assert!(op.evaluate(Some(&mut tx), "POST"));
+        assert!(!op.evaluate(Some(&mut tx), "DELETE"));
     }
 
     #[test]
     fn test_strmatch_basic() {
         let op = strmatch("WebZIP").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "User-Agent: WebZIP/1.0"));
-        assert!(op.evaluate(None::<&NoTx>, "WebZIP"));
+        assert!(op.evaluate(None::<&mut NoTx>, "User-Agent: WebZIP/1.0"));
+        assert!(op.evaluate(None::<&mut NoTx>, "WebZIP"));
     }
 
     #[test]
     fn test_strmatch_case_sensitive() {
         let op = strmatch("WebZIP").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "WebZIP"));
-        assert!(!op.evaluate(None::<&NoTx>, "webzip")); // Case-sensitive
+        assert!(op.evaluate(None::<&mut NoTx>, "WebZIP"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "webzip")); // Case-sensitive
     }
 
     #[test]
     fn test_strmatch_path_traversal() {
         let op = strmatch("../../../").unwrap();
-        assert!(op.evaluate(None::<&NoTx>, "GET /../../../etc/passwd"));
-        assert!(!op.evaluate(None::<&NoTx>, "GET /index.html"));
+        assert!(op.evaluate(None::<&mut NoTx>, "GET /../../../etc/passwd"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "GET /index.html"));
     }
 
     #[test]
     fn test_strmatch_with_macro() {
         let op = strmatch("%{TX.search}").unwrap();
-        let tx = MockTx;
+        let mut tx = MockTx;
 
-        assert!(op.evaluate(Some(&tx), "/admin/login"));
-        assert!(op.evaluate(Some(&tx), "administrator"));
-        assert!(!op.evaluate(Some(&tx), "/user/profile"));
+        assert!(op.evaluate(Some(&mut tx), "/admin/login"));
+        assert!(op.evaluate(Some(&mut tx), "administrator"));
+        assert!(!op.evaluate(Some(&mut tx), "/user/profile"));
     }
 
     #[test]
@@ -481,5 +504,125 @@ mod tests {
         assert!(pm("%{TX.").is_err());
         assert!(within("%{").is_err());
         assert!(strmatch("%{unknown_var}").is_err());
+    }
+
+    // Mock transaction with capturing support
+    struct CapturingTx {
+        captures: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl CapturingTx {
+        fn new() -> Self {
+            Self {
+                captures: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+
+        fn get_capture(&self, index: usize) -> Option<String> {
+            self.captures.borrow().get(index).cloned()
+        }
+    }
+
+    impl TransactionState for CapturingTx {
+        fn get_variable(&self, _variable: RuleVariable, _key: Option<&str>) -> Option<String> {
+            None
+        }
+
+        fn capturing(&self) -> bool {
+            true
+        }
+
+        fn capture_field(&mut self, index: usize, value: &str) {
+            let mut caps = self.captures.borrow_mut();
+            // Extend vector if needed
+            while caps.len() <= index {
+                caps.push(String::new());
+            }
+            caps[index] = value.to_string();
+        }
+    }
+
+    #[test]
+    fn test_rx_capturing_basic() {
+        let op = rx("(\\w+)@(\\w+)\\.com").unwrap();
+        let mut tx = CapturingTx::new();
+
+        assert!(op.evaluate(Some(&mut tx), "user@example.com"));
+
+        // Check captured groups
+        assert_eq!(tx.get_capture(0), Some("user@example.com".to_string())); // Full match
+        assert_eq!(tx.get_capture(1), Some("user".to_string())); // Group 1
+        assert_eq!(tx.get_capture(2), Some("example".to_string())); // Group 2
+    }
+
+    #[test]
+    fn test_rx_capturing_multiple_groups() {
+        let op = rx("(\\d{3})-(\\d{3})-(\\d{4})").unwrap();
+        let mut tx = CapturingTx::new();
+
+        assert!(op.evaluate(Some(&mut tx), "123-456-7890"));
+
+        // Check all groups
+        assert_eq!(tx.get_capture(0), Some("123-456-7890".to_string()));
+        assert_eq!(tx.get_capture(1), Some("123".to_string()));
+        assert_eq!(tx.get_capture(2), Some("456".to_string()));
+        assert_eq!(tx.get_capture(3), Some("7890".to_string()));
+    }
+
+    #[test]
+    fn test_rx_capturing_nine_groups() {
+        // Test ModSecurity's 9-group limit
+        let op = rx("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)").unwrap();
+        let mut tx = CapturingTx::new();
+
+        assert!(op.evaluate(Some(&mut tx), "abcdefghij"));
+
+        // Check full match and first 9 groups
+        assert_eq!(tx.get_capture(0), Some("abcdefghij".to_string()));
+        assert_eq!(tx.get_capture(1), Some("a".to_string()));
+        assert_eq!(tx.get_capture(2), Some("b".to_string()));
+        assert_eq!(tx.get_capture(3), Some("c".to_string()));
+        assert_eq!(tx.get_capture(4), Some("d".to_string()));
+        assert_eq!(tx.get_capture(5), Some("e".to_string()));
+        assert_eq!(tx.get_capture(6), Some("f".to_string()));
+        assert_eq!(tx.get_capture(7), Some("g".to_string()));
+        assert_eq!(tx.get_capture(8), Some("h".to_string()));
+        assert_eq!(tx.get_capture(9), Some("i".to_string()));
+
+        // 10th group should not be captured (ModSecurity limit)
+        assert_eq!(tx.get_capture(10), None);
+    }
+
+    #[test]
+    fn test_rx_no_match_with_capturing() {
+        let op = rx("test(\\d+)").unwrap();
+        let mut tx = CapturingTx::new();
+
+        assert!(!op.evaluate(Some(&mut tx), "nodigits"));
+
+        // No captures should be stored
+        assert_eq!(tx.get_capture(0), None);
+    }
+
+    #[test]
+    fn test_rx_capturing_disabled() {
+        // Mock transaction that doesn't enable capturing
+        struct NonCapturingTx;
+
+        impl TransactionState for NonCapturingTx {
+            fn get_variable(&self, _variable: RuleVariable, _key: Option<&str>) -> Option<String> {
+                None
+            }
+
+            fn capturing(&self) -> bool {
+                false
+            }
+        }
+
+        let op = rx("(test)").unwrap();
+        let mut tx = NonCapturingTx;
+
+        // Should still match, but won't capture
+        assert!(op.evaluate(Some(&mut tx), "test"));
     }
 }
