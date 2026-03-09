@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 # Lightweight, fast random number generator (no dependencies)
 fastrand = "2.0"
+
+# Cryptographic hash functions (RustCrypto)
+md-5 = "0.10"
+sha1 = "0.10"

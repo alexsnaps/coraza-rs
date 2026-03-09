@@ -8,6 +8,8 @@
 
 use crate::transformations::{TransformationError, TransformationResult};
 use crate::utils::strings::wrap_unsafe;
+use md5::{Digest, Md5};
+use sha1::Sha1;
 
 /// Returns the length of the input as a string.
 ///
@@ -303,6 +305,215 @@ fn base64_encode_string(input: &[u8]) -> String {
     result
 }
 
+/// Computes MD5 hash of input (returns raw binary hash, not hex-encoded).
+///
+/// # Examples
+///
+/// ```
+/// use coraza_rs::transformations::md5_hash;
+///
+/// let (result, changed, _) = md5_hash("hello");
+/// // Result is raw binary MD5 hash (16 bytes)
+/// assert_eq!(result.len(), 16);
+/// assert!(changed);
+/// ```
+pub fn md5_hash(input: &str) -> TransformationResult {
+    if input.is_empty() {
+        // Pre-computed MD5 of empty string
+        static EMPTY_MD5: &[u8] = &[
+            0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8,
+            0x42, 0x7e,
+        ];
+        // SAFETY: EMPTY_MD5 is a valid byte slice representing MD5 output
+        let hash_str = unsafe { wrap_unsafe(EMPTY_MD5) }.to_string();
+        return (hash_str, true, None);
+    }
+
+    let mut hasher = Md5::new();
+    hasher.update(input.as_bytes());
+    let hash = hasher.finalize();
+
+    // SAFETY: MD5 hash output is always valid bytes (may not be valid UTF-8)
+    // We're treating it as raw bytes, wrapped as a string
+    let hash_str = unsafe { wrap_unsafe(&hash) }.to_string();
+
+    // Hash transformations are almost always a change (invariant is extremely unlikely)
+    (hash_str, true, None)
+}
+
+/// Computes SHA1 hash of input (returns raw binary hash, not hex-encoded).
+///
+/// # Examples
+///
+/// ```
+/// use coraza_rs::transformations::sha1_hash;
+///
+/// let (result, changed, _) = sha1_hash("hello");
+/// // Result is raw binary SHA1 hash (20 bytes)
+/// assert_eq!(result.len(), 20);
+/// assert!(changed);
+/// ```
+pub fn sha1_hash(input: &str) -> TransformationResult {
+    if input.is_empty() {
+        // Pre-computed SHA1 of empty string
+        static EMPTY_SHA1: &[u8] = &[
+            0xda, 0x39, 0xa3, 0xee, 0x5e, 0x6b, 0x4b, 0x0d, 0x32, 0x55, 0xbf, 0xef, 0x95, 0x60,
+            0x18, 0x90, 0xaf, 0xd8, 0x07, 0x09,
+        ];
+        // SAFETY: EMPTY_SHA1 is a valid byte slice representing SHA1 output
+        let hash_str = unsafe { wrap_unsafe(EMPTY_SHA1) }.to_string();
+        return (hash_str, true, None);
+    }
+
+    let mut hasher = Sha1::new();
+    hasher.update(input.as_bytes());
+    let hash = hasher.finalize();
+
+    // SAFETY: SHA1 hash output is always valid bytes (may not be valid UTF-8)
+    // We're treating it as raw bytes, wrapped as a string
+    let hash_str = unsafe { wrap_unsafe(&hash) }.to_string();
+
+    // Hash transformations are almost always a change (invariant is extremely unlikely)
+    (hash_str, true, None)
+}
+
+/// Base64 decodes the input with partial decoding support.
+///
+/// Decodes base64 input, stopping at the first invalid character. Returns
+/// successfully decoded bytes up to that point. Newlines (\r, \n) are ignored.
+///
+/// This matches ModSecurity behavior for lenient base64 decoding.
+///
+/// # Examples
+///
+/// ```
+/// use coraza_rs::transformations::base64_decode;
+///
+/// let (result, changed, _) = base64_decode("SGVsbG8=");
+/// assert_eq!(result, "Hello");
+/// assert!(changed);
+///
+/// // Partial decoding - stops at space (invalid)
+/// let (result, changed, _) = base64_decode("PFR FU1Q+");
+/// assert_eq!(result, "<T");
+/// assert!(changed);
+///
+/// // Without padding
+/// let (result, changed, _) = base64_decode("VGVzdENhc2U");
+/// assert_eq!(result, "TestCase");
+/// assert!(changed);
+/// ```
+pub fn base64_decode(input: &str) -> TransformationResult {
+    let result = do_base64_decode(input, false);
+    (result, true, None)
+}
+
+/// Base64 decodes with lenient handling of whitespace and dots.
+///
+/// Like base64_decode but also ignores whitespace and '.' characters.
+///
+/// # Examples
+///
+/// ```
+/// use coraza_rs::transformations::base64_decode_ext;
+///
+/// // Ignores dots and whitespace
+/// let (result, changed, _) = base64_decode_ext("P.HNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==");
+/// assert_eq!(result, "<script>alert(1)</script>");
+/// assert!(changed);
+///
+/// let (result, changed, _) = base64_decode_ext("PFR FU1Q+");
+/// assert_eq!(result, "<TEST>");
+/// assert!(changed);
+/// ```
+pub fn base64_decode_ext(input: &str) -> TransformationResult {
+    let result = do_base64_decode(input, true);
+    (result, true, None)
+}
+
+/// Base64 decode map for custom decoder.
+const BASE64_DEC_MAP: [u8; 128] = [
+    127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, // 0-15
+    127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, // 16-31
+    127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 62, 127, 127, 127,
+    63, // 32-47 ('+' = 62, '/' = 63)
+    52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 127, 127, 127, 64, 127,
+    127, // 48-63 ('0'-'9' = 52-61, '=' = 64)
+    127, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, // 64-79 ('A'-'O' = 0-14)
+    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 127, 127, 127, 127,
+    127, // 80-95 ('P'-'Z' = 15-25)
+    127, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+    40, // 96-111 ('a'-'o' = 26-40)
+    41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 127, 127, 127, 127,
+    127, // 112-127 ('p'-'z' = 41-51)
+];
+
+/// Performs base64 decoding with partial decode support.
+///
+/// The `ext` flag enables lenient mode which skips whitespace and '.' characters.
+fn do_base64_decode(src: &str, ext: bool) -> String {
+    if src.is_empty() {
+        return String::new();
+    }
+
+    let mut result = Vec::with_capacity(src.len());
+    let mut n = 0; // Number of valid base64 characters accumulated
+    let mut x = 0u32; // Accumulator for decoding
+
+    for byte in src.bytes() {
+        // Skip whitespace and '.' if in ext mode
+        if ext && (byte.is_ascii_whitespace() || byte == b'.') {
+            continue;
+        }
+
+        // Newline characters are always ignored
+        if byte == b'\r' || byte == b'\n' {
+            continue;
+        }
+
+        // Stop on padding, space, or non-ASCII
+        if byte == b'=' || byte == b' ' || byte > 127 {
+            break;
+        }
+
+        let decoded = BASE64_DEC_MAP[byte as usize];
+
+        // Invalid character - stop decoding
+        if decoded == 127 {
+            break;
+        }
+
+        x = (x << 6) | (decoded as u32 & 0x3F);
+        n += 1;
+
+        if n == 4 {
+            result.push((x >> 16) as u8);
+            result.push((x >> 8) as u8);
+            result.push(x as u8);
+            n = 0;
+            x = 0;
+        }
+    }
+
+    // Handle remaining characters
+    match n {
+        2 => {
+            x <<= 12;
+            result.push((x >> 16) as u8);
+        }
+        3 => {
+            x <<= 6;
+            result.push((x >> 16) as u8);
+            result.push((x >> 8) as u8);
+        }
+        _ => {}
+    }
+
+    // SAFETY: base64 decoding can produce arbitrary bytes, but we're wrapping
+    // them as a string. The caller is responsible for interpreting the result.
+    unsafe { wrap_unsafe(&result) }.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,6 +681,135 @@ mod tests {
 
         for (input, want) in tests {
             let (got, changed, err) = base64_encode(input);
+            assert!(err.is_none(), "unexpected error for input: {:?}", input);
+            assert_eq!(got, want, "input: {:?}", input);
+            assert!(changed, "input: {:?}", input);
+        }
+    }
+
+    #[test]
+    fn test_md5_hash() {
+        // Test that MD5 produces 16-byte output
+        let (result, changed, err) = md5_hash("hello");
+        assert!(err.is_none());
+        assert_eq!(result.len(), 16);
+        assert!(changed);
+
+        // Test empty string
+        let (result, changed, err) = md5_hash("");
+        assert!(err.is_none());
+        assert_eq!(result.len(), 16);
+        assert!(changed);
+
+        // Test that different inputs produce different hashes
+        let (result1, _, _) = md5_hash("test1");
+        let (result2, _, _) = md5_hash("test2");
+        assert_ne!(result1, result2);
+    }
+
+    #[test]
+    fn test_sha1_hash() {
+        // Test that SHA1 produces 20-byte output
+        let (result, changed, err) = sha1_hash("hello");
+        assert!(err.is_none());
+        assert_eq!(result.len(), 20);
+        assert!(changed);
+
+        // Test empty string
+        let (result, changed, err) = sha1_hash("");
+        assert!(err.is_none());
+        assert_eq!(result.len(), 20);
+        assert!(changed);
+
+        // Test that different inputs produce different hashes
+        let (result1, _, _) = sha1_hash("test1");
+        let (result2, _, _) = sha1_hash("test2");
+        assert_ne!(result1, result2);
+    }
+
+    #[test]
+    fn test_base64_decode() {
+        // Helper function to create test expected values from byte arrays
+        fn bytes_to_string(bytes: &[u8]) -> String {
+            unsafe { wrap_unsafe(bytes) }.to_string()
+        }
+
+        let tests: Vec<(&str, String)> = vec![
+            // Valid cases
+            ("VGVzdENhc2U=", "TestCase".to_string()),
+            ("VGVzdABDYXNl", "Test\x00Case".to_string()), // With null byte
+            ("VGVzdENhc2U", "TestCase".to_string()),      // Without padding
+            ("PA==", "<".to_string()),
+            ("PFRFU1Q+", "<TEST>".to_string()),
+            // Partial decoding - stops at first invalid char
+            ("PHNjcmlwd", "<scrip".to_string()), // Malformed
+            ("PFR FU1Q+", "<T".to_string()),     // Space is invalid
+            ("P.HNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==", "".to_string()), // Dot is invalid, P alone doesn't decode
+            (
+                "PHNjcmlwd.D5hbGVydCgxKTwvc2NyaXB0Pg==",
+                "<scrip".to_string(),
+            ),
+            (
+                "PHNjcmlwdD.5hbGVydCgxKTwvc2NyaXB0Pg==",
+                "<script".to_string(),
+            ),
+            ("PFRFU1Q-", "<TEST".to_string()), // Dash is invalid for std base64
+            // RFC 3548 examples (binary data)
+            (
+                "FPucA9l+",
+                bytes_to_string(&[0x14, 0xfb, 0x9c, 0x03, 0xd9, 0x7e]),
+            ),
+            ("FPucA9k=", bytes_to_string(&[0x14, 0xfb, 0x9c, 0x03, 0xd9])),
+            ("FPucAw==", bytes_to_string(&[0x14, 0xfb, 0x9c, 0x03])),
+            // RFC 4648 examples
+            ("", "".to_string()),
+            ("Zg==", "f".to_string()),
+            ("Zm8=", "fo".to_string()),
+            ("Zm9v", "foo".to_string()),
+            ("Zm9vYg==", "foob".to_string()),
+            ("Zm9vYmE=", "fooba".to_string()),
+            ("Zm9vYmFy", "foobar".to_string()),
+            // Wikipedia examples
+            ("c3VyZS4=", "sure.".to_string()),
+            ("c3VyZQ==", "sure".to_string()),
+            ("c3Vy", "sur".to_string()),
+            ("c3U=", "su".to_string()),
+            ("bGVhc3VyZS4=", "leasure.".to_string()),
+            ("ZWFzdXJlLg==", "easure.".to_string()),
+            ("YXN1cmUu", "asure.".to_string()),
+        ];
+
+        for (input, want) in tests {
+            let (got, changed, err) = base64_decode(input);
+            assert!(err.is_none(), "unexpected error for input: {:?}", input);
+            assert_eq!(got, want, "input: {:?}", input);
+            assert!(changed, "input: {:?}", input);
+        }
+    }
+
+    #[test]
+    fn test_base64_decode_ext() {
+        let tests = vec![
+            ("VGVzdENhc2U=", "TestCase"),
+            ("VGVzdABDYXNl", "Test\x00Case"),
+            // Ext mode ignores whitespace and dots
+            (
+                "P.HNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+                "<script>alert(1)</script>",
+            ),
+            ("PFR FU1Q+", "<TEST>"),
+            (
+                "PHNjcmlwd.D5hbGVydCgxKTwvc2NyaXB0Pg==",
+                "<script>alert(1)</script>",
+            ),
+            (
+                "PHNjcmlwdD.5hbGVydCgxKTwvc2NyaXB0Pg==",
+                "<script>alert(1)</script>",
+            ),
+        ];
+
+        for (input, want) in tests {
+            let (got, changed, err) = base64_decode_ext(input);
             assert!(err.is_none(), "unexpected error for input: {:?}", input);
             assert_eq!(got, want, "input: {:?}", input);
             assert!(changed, "input: {:?}", input);

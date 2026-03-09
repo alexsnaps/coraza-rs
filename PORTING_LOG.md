@@ -198,5 +198,37 @@
 - ✅ Doc tests included
 - ✅ Test parity verified - All Go test cases ported
 
+#### 3. Hash Functions and Base64 Decode (src/transformations/encoding.rs)
+- **Date:** 2026-03-09
+- **Source:** `coraza/internal/transformations/*.go`
+- **Tests:** 4/4 passing
+- **Functions:**
+  - **`md5_hash()`** - Computes MD5 hash (returns raw binary, not hex)
+  - **`sha1_hash()`** - Computes SHA1 hash (returns raw binary, not hex)
+  - **`base64_decode()`** - Base64 decode with partial decoding support
+  - **`base64_decode_ext()`** - Lenient base64 decode (ignores whitespace and dots)
+- **Dependencies:**
+  - `md-5 = "0.10"` - RustCrypto MD5 implementation
+  - `sha1 = "0.10"` - RustCrypto SHA1 implementation
+- **Features:**
+  - Hash functions return raw binary output (matches ModSecurity behavior)
+  - Pre-computed hashes for empty strings (optimization)
+  - Custom base64 decoder with partial decoding (ModSecurity compatibility)
+  - base64_decode stops at first invalid character, returns partial result
+  - base64_decode_ext also ignores whitespace and '.' characters
+  - Comprehensive test coverage from Go test suite (30+ test cases)
+- **Improvements over Go:**
+  - Uses industry-standard RustCrypto implementations (audited, well-maintained)
+  - Cleaner base64 decode map constant
+  - More efficient byte processing with iterators
+
+### Quality Metrics - Phase 2
+- ✅ All tests passing (97/97, +4 new)
+- ✅ Clippy clean (no warnings)
+- ✅ Full documentation with examples
+- ✅ Doc tests included
+- ✅ Test parity verified - All Go test cases ported
+- ✅ **Phase 2 Complete!** All basic transformations ported
+
 ### Next Steps
-- [ ] **Phase 2, Step 3:** Port hash transformations (MD5, SHA1) and base64_decode
+- [ ] **Phase 3:** Port complex text processing transformations (cmd_line, css_decode, js_decode, html_entity_decode, escape sequences)
