@@ -500,13 +500,84 @@ impl Operator for Eq {
   - Fast O(n) lookup where n = number of configured subnets
   - Could optimize with interval tree for large subnet lists (future)
 
-### Quality Metrics - Phase 3 (Final)
+### Quality Metrics - Phase 3 (Updated)
 - ✅ All tests passing (178/178 unit tests, +11 new IP tests)
 - ✅ Doc tests passing (60/60, +3 new IP examples)
 - ✅ Clippy clean (no warnings)
 - ✅ Full documentation with examples
 - ✅ Test coverage includes IP/CIDR matching, capturing groups, macro expansion, transaction state
 - ✅ **Phase 3, Step 5 Complete!** IP matching operator fully implemented
+
+#### 6. Validation and Utility Operators (src/operators/validation.rs)
+- **Date:** 2026-03-10
+- **Source:**
+  - `coraza/internal/operators/unconditional_match.go`
+  - `coraza/internal/operators/no_match.go`
+  - `coraza/internal/operators/validate_byte_range.go` + tests
+  - `coraza/internal/operators/validate_url_encoding.go`
+  - `coraza/internal/operators/validate_utf8_encoding.go`
+- **Tests:** 13/13 passing (2 ported from Go + 11 additional edge cases) + 191/191 total
+- **Features:**
+  - **`@unconditionalMatch` operator:**
+    - Always returns true (trivial implementation)
+    - Used for rules that always fire actions (e.g., initialization)
+  - **`@noMatch` operator:**
+    - Always returns false (trivial implementation)
+    - Used for temporarily disabling rules
+  - **`@validateByteRange` operator:**
+    - Validates bytes fall within allowed ranges
+    - Supports comma-separated byte values and ranges: `"10,13,32-126"`
+    - Returns true if violation detected (any byte outside range)
+    - Uses bitmap `[bool; 256]` for O(1) lookup per byte
+    - Empty spec allows all bytes
+  - **`@validateUrlEncoding` operator:**
+    - Validates percent-encoding format `%XX` where X is hex digit
+    - Returns true if violation detected (incomplete sequence or non-hex)
+    - Uses `is_ascii_hexdigit()` for validation
+  - **`@validateUtf8Encoding` operator:**
+    - Validates UTF-8 encoding correctness
+    - **Note:** In Rust, `&str` is always valid UTF-8 by construction
+    - Always returns false since invalid UTF-8 can't be represented as `&str`
+    - Added comment explaining this Rust-specific behavior
+- **Implementation:**
+  - All operators are zero-sized types (trivial or bitmap-based)
+  - No transaction state needed - pure parameter evaluation
+  - No macro expansion needed - static parameters
+- **Test Coverage:**
+  - ✅ Unconditional match (always true)
+  - ✅ No match (always false)
+  - ✅ ValidateByteRange: 2 ported from Go + 7 edge cases
+    - Ported: Case 4 (full range), Case 5 (printable ASCII + high bytes)
+    - Added: Printable ASCII only, with newline/tab, empty input, individual bytes, empty spec
+  - ✅ ValidateUrlEncoding: Valid/invalid encodings, incomplete sequences, non-hex chars
+  - ✅ ValidateUtf8Encoding: Always valid (Rust `&str` guarantee)
+- **Design Notes:**
+  - ValidateByteRange uses fixed-size array `[bool; 256]` for bitmap (stack-allocated)
+  - ValidateUrlEncoding manually checks hex digits for clarity (before clippy suggested built-in)
+  - ValidateUtf8Encoding documented as always returning false due to Rust's `&str` invariant
+
+### Quality Metrics - Phase 3 (Final)
+- ✅ All tests passing (191/191 unit tests, +13 new validation tests)
+- ✅ Doc tests passing (71/71, +11 new validation examples)
+- ✅ Clippy clean (no warnings)
+- ✅ Full documentation with examples
+- ✅ Test coverage includes validation operators, IP/CIDR matching, capturing groups, macro expansion
+- ✅ **Phase 3, Step 6 Complete!** Validation and utility operators fully implemented
+
+### Phase 3 Summary
+**Operators Ported:** 19 total
+- Simple comparison: 9 (@streq, @contains, @beginsWith, @endsWith, @eq, @gt, @lt, @ge, @le)
+- Pattern matching: 4 (@rx, @pm, @within, @strmatch)
+- IP matching: 1 (@ipMatch)
+- Validation: 5 (@validateByteRange, @validateUrlEncoding, @validateUtf8Encoding, @unconditionalMatch, @noMatch)
+
+**Deferred to Phase 6+:**
+- @ipMatchFromFile, @ipMatchFromDataset (need WAF core infrastructure)
+- @pmFromFile, @pmFromDataset (need file/dataset infrastructure)
+- @detectSQLi, @detectXSS (need libinjection integration)
+- @geoLookup (need GeoIP database)
+- @rbl (need DNS lookup)
+- @inspectFile, @validateSchema (need file/schema infrastructure)
 
 ### Next Steps
 - [ ] **IMPORTANT - Cleanup After Transaction Port:** Once the production `TransactionState` implementation is ported:
@@ -517,8 +588,9 @@ impl Operator for Eq {
     - `src/operators/simple.rs` (test module)
     - `src/operators/pattern.rs` (test module)
     - `src/operators/ip.rs` (test module)
+    - `src/operators/validation.rs` (test module)
   - Update all test code to use the production transaction type instead of `NoTx`
   - This cleanup is critical to avoid shipping deprecated convenience types
-- [ ] **Phase 3, Step 6:** Port additional operators (@unconditionalMatch, @validateByteRange, @validateUrlEncoding, etc.)
-- [ ] **Phase 6+:** When porting WAF core, implement `@ipMatchFromFile` and `@ipMatchFromDataset`
 - [ ] **Phase 4:** Port complex text processing transformations (cmd_line, css_decode, js_decode, html_entity_decode, escape sequences)
+- [ ] **Phase 5:** Port remaining simple transformations if any
+- [ ] **Phase 6:** Begin WAF core (collections, variables, transaction system)

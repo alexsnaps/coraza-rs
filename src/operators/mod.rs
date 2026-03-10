@@ -10,6 +10,7 @@ pub mod ip;
 pub mod macros;
 mod pattern;
 mod simple;
+pub mod validation;
 
 pub use ip::{IpMatch, ip_match};
 #[allow(deprecated)]
@@ -18,6 +19,11 @@ pub use pattern::{Pm, Rx, StrMatch, Within, pm, rx, strmatch, within};
 pub use simple::{
     BeginsWith, Contains, EndsWith, Eq, Ge, Gt, Le, Lt, StrEq, begins_with, contains, ends_with,
     eq, ge, gt, le, lt, streq,
+};
+pub use validation::{
+    NoMatch, UnconditionalMatch, ValidateByteRange, ValidateUrlEncoding, ValidateUtf8Encoding,
+    no_match, unconditional_match, validate_byte_range, validate_url_encoding,
+    validate_utf8_encoding,
 };
 
 /// Trait for rule operators.
