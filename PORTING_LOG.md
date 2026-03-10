@@ -4,7 +4,7 @@
 
 ## Current Status (as of 2026-03-10)
 
-**Phase 7: Rule Engine** - COMPLETE ✅
+**Phase 8: SecLang Parser** - In Progress (Step 0/9)
 
 - ✅ **Phase 1:** Foundation types (RuleSeverity, RulePhase, RuleVariable, etc.) - COMPLETE
 - ✅ **Phase 2:** String utilities - COMPLETE
@@ -13,14 +13,16 @@
 - ✅ **Phase 5:** Operators (10 operators: rx, pm, streq, contains, etc.) - COMPLETE
 - ✅ **Phase 6:** Actions (26/26 implemented) - COMPLETE
 - ✅ **Phase 7:** Rule Engine (8/8 steps complete) - COMPLETE
-  - ✅ Step 1: Variable extraction system - COMPLETE
-  - ✅ Step 2: Transformation pipeline - COMPLETE
-  - ✅ Step 3: Operator integration - COMPLETE
-  - ✅ Step 4: Action execution - COMPLETE
-  - ✅ Step 5: Core rule evaluation engine - COMPLETE
-  - ✅ Step 6: Rule chaining (integrated into Step 5) - COMPLETE
-  - ✅ Step 7: Rule groups and phase processing - COMPLETE
-  - ✅ Step 8: Integration tests - COMPLETE
+- 🚧 **Phase 8:** SecLang Parser (0/9 steps complete) - IN PROGRESS
+  - ⏳ Step 1: Parser infrastructure - NEXT
+  - ⏳ Step 2: Directive system
+  - ⏳ Step 3: Variable parser
+  - ⏳ Step 4: Operator parser
+  - ⏳ Step 5: Action parser
+  - ⏳ Step 6: SecRule compilation
+  - ⏳ Step 7: Include and advanced directives
+  - ⏳ Step 8: Remaining directives
+  - ⏳ Step 9: Integration tests
 
 **Quality Metrics:**
 - 719 tests passing total:
@@ -30,7 +32,7 @@
 - Clippy clean (0 warnings)
 - 100% test parity with Go implementation for all components
 
-**Next Milestone:** Phase 8 - SecLang Parser (ModSecurity rule language parsing)
+**Next Milestone:** Complete Phase 8 - Parse and compile ModSecurity SecLang directives to executable rules
 
 ## Porting Strategy & Guidelines
 
@@ -1537,20 +1539,153 @@ Implement the core rule evaluation engine that ties together variables, transfor
 **Target:** `tests/rule_engine.rs` (~560 lines)
 **Dependencies:** ✅ All prerequisites complete (Phases 1-6, Steps 1-7)
 
+## Phase 8: SecLang Parser (IN PROGRESS)
+
+### Goal
+Parse ModSecurity SecLang directives and compile them into executable Rule structures. This connects textual rule definitions to the runtime engine built in Phase 7.
+
+### Analysis of Go Implementation
+
+**Source files:**
+- `parser.go` (241 lines) - Main parser infrastructure
+- `rule_parser.go` (665 lines) - SecRule parsing with complex variable/operator/action parsing
+- `directives.go` (1351 lines) - 66 directive implementations
+- `directivesmap.gen.go` (139 lines) - Generated directive registry
+- Test files: 2,473 lines of tests
+- **Total:** ~5,400 lines
+
+**Key components:**
+1. **Parser struct** - File/line tracking, include recursion protection (max 100)
+2. **Line processing** - Continuation (`\`), comments (`#`), backticks for multi-line
+3. **Directive registry** - 66 directives mapped by lowercase name
+4. **Variable parser** - Complex state machine (4 states: name, key, regex, xpath)
+5. **Operator parser** - Extract `@name` and arguments, handle negation
+6. **Action parser** - Comma-separated `key:value` pairs
+7. **Include handling** - Glob patterns, relative/absolute paths, circular protection
+
+**Complexity:**
+- Variable parsing is most complex (handles: `ARGS|HEADERS|!ARGS:id|&ARGS|ARGS:/regex/|XML:xpath`)
+- Not a full grammar parser - line-by-line directive processing
+- Each directive is a function that modifies WAF state
+
+### Execution Plan
+
+**Design Decision: Hand-Rolled Parser (2026-03-10)**
+Following Go implementation exactly - no parser library (nom, pest, etc.). The Go implementation uses manual byte-by-byte parsing with explicit state machines. This approach:
+- ✅ Guarantees behavioral parity with Go (easier to verify)
+- ✅ Matches test expectations exactly
+- ✅ No external parser dependencies
+- ✅ Similar performance characteristics to Go
+- Parser is simple enough (~900 lines) that manual parsing is straightforward
+
+**Step 1: Parser Infrastructure (Days 1-2)**
+- [ ] Parser struct with file/line tracking
+- [ ] Line reading with continuation support (`\` at end of line)
+- [ ] Comment handling (`#` lines skipped)
+- [ ] Backtick multi-line support for SecDataset
+- [ ] Directive name extraction and dispatch
+- [ ] Error reporting with file:line context
+- [ ] Tests: Basic parsing, comments, continuations, backticks
+
+**Step 2: Directive System (Days 3-4)**
+- [ ] Directive trait with execute method
+- [ ] DirectiveOptions struct (parser context, WAF reference, options string)
+- [ ] Directive registry (HashMap of name -> directive function)
+- [ ] Simple config directives (non-rule directives):
+  - [ ] SecRuleEngine On|Off|DetectionOnly
+  - [ ] SecRequestBodyAccess On|Off
+  - [ ] SecResponseBodyAccess On|Off
+  - [ ] SecRequestBodyLimit
+  - [ ] SecDebugLogLevel 0-9
+  - [ ] SecWebAppId
+- [ ] Tests: Each directive, case-insensitive names, unknown directives
+
+**Step 3: Variable Parser (Days 5-7)**
+- [ ] State machine for variable parsing (4 states)
+- [ ] Variable name parsing (ARGS, HEADERS, TX, REQUEST_URI, etc.)
+- [ ] Literal key parsing (`ARGS:username`)
+- [ ] Regex key parsing (`ARGS:/user.*/`)
+- [ ] Negation parsing (`!ARGS:id`)
+- [ ] Count parsing (`&ARGS`)
+- [ ] Pipe-separated variables (`ARGS|HEADERS`)
+- [ ] Quoted regex support (`ARGS:'/regex/'`)
+- [ ] XML/JSON xpath support (`XML:xpath`, `JSON:path`)
+- [ ] Tests: All variable syntax variations (20+ tests)
+
+**Step 4: Operator Parser (Days 8-9)**
+- [ ] Operator name extraction (`@rx`, `@pm`, `@streq`, etc.)
+- [ ] Operator argument parsing (pattern/parameter)
+- [ ] Negation detection (`!@rx`)
+- [ ] Operator lookup from registry (Phase 5 operators)
+- [ ] Quote handling in operator arguments
+- [ ] Tests: All operators, negation, quoting, missing operators
+
+**Step 5: Action Parser (Days 10-11)**
+- [ ] Comma-separated action list parsing
+- [ ] Key:value action parsing (`id:123`, `msg:'Attack'`)
+- [ ] Bare action parsing (`log`, `deny`, `pass`)
+- [ ] Quote handling in action values
+- [ ] Action lookup from registry (Phase 6 actions)
+- [ ] Default actions per phase
+- [ ] Tests: All actions, combinations, quoting, defaults
+
+**Step 6: SecRule Compilation (Days 12-14)**
+- [ ] SecRule directive implementation
+- [ ] Parse `SecRule VARIABLES OPERATOR ACTIONS`
+- [ ] Combine variables + operator + actions into Rule struct
+- [ ] Handle chained rules (SecRule followed by SecRule with chain action)
+- [ ] SecAction directive (operator-less rule)
+- [ ] SecMarker directive (flow control marker)
+- [ ] Rule ID tracking and validation
+- [ ] Tests: Simple rules, complex rules, chains, operator-less
+
+**Step 7: Include and Advanced Directives (Days 15-16)**
+- [ ] Include directive with file path resolution
+- [ ] Relative path handling (relative to current file's directory)
+- [ ] Absolute path handling
+- [ ] Glob pattern support (`Include /path/*.conf`)
+- [ ] Recursion protection (max 100 includes)
+- [ ] Circular include detection
+- [ ] SecRuleRemoveById/ByTag/ByMsg directives
+- [ ] SecDefaultAction directive
+- [ ] Tests: Includes, globs, recursion limit, rule removal
+
+**Step 8: Remaining Directives (Days 17-18)**
+- [ ] Audit log directives (SecAuditLog, SecAuditEngine, SecAuditLogParts)
+- [ ] Upload directives (SecUploadDir, SecUploadKeepFiles, etc.)
+- [ ] Collection directives (SecCollectionTimeout)
+- [ ] Rule update directives (SecRuleUpdateTargetById, SecRuleUpdateActionById)
+- [ ] Legacy/compatibility directives (SecServerSignature, etc.)
+- [ ] Tests: Each directive group
+
+**Step 9: Integration Tests (Days 19-20)**
+- [ ] Port all tests from `parser_test.go` (845 lines)
+- [ ] Port all tests from `rule_parser_test.go` (431 lines)
+- [ ] Port all tests from `directives_test.go` (357 lines)
+- [ ] Port all tests from `rules_test.go` (1064 lines)
+- [ ] Test error handling and malformed input
+- [ ] Test real CRS rule syntax samples
+- [ ] Integration with Phase 7 rule engine
+
+**Quality Gates:**
+- [ ] All 66 SecLang directives implemented
+- [ ] All variable syntax supported (literal, regex, negation, count, pipe)
+- [ ] All operator syntax supported (name, arguments, negation)
+- [ ] All action syntax supported (key:value, bare, quoting)
+- [ ] Include files with glob and recursion protection
+- [ ] Parse real CRS v4 rules successfully
+- [ ] Comprehensive error messages for malformed input
+- [ ] All Go tests ported (~2,500 lines of tests)
+- [ ] Clippy clean (0 warnings)
+- [ ] Full documentation with examples
+
+**Source:** `coraza/internal/seclang/` (~5,400 lines)
+**Target:** `src/seclang/` module (~3,000 lines estimated)
+**Dependencies:** ✅ All prerequisites complete (Phases 1-7)
+
+**Timeline:** ~20 days (4 weeks)
+
 ## Next Steps: Remaining Phases
-
-### Phase 8: SecLang Parser (~15 days)
-**Goal:** Parse ModSecurity SecLang directives and compile to rules.
-
-**Components to implement:**
-- [ ] Parser infrastructure (nom-based)
-- [ ] SecRule parsing (variables, operators, actions)
-- [ ] All configuration directives (SecRuleEngine, etc.)
-- [ ] Include file handling
-- [ ] Rule compilation to executable structures
-
-**Source:** `coraza/internal/seclang/` (parser.go, rule_parser.go, directives.go)
-**Target:** `src/seclang/` module
 
 ### Phase 9: Transaction Enhancements (~10 days)
 **Goal:** Enhance transaction system with full WAF capabilities.
