@@ -387,6 +387,60 @@ impl RuleVariable {
     pub const fn as_u8(&self) -> u8 {
         *self as u8
     }
+
+    /// Returns whether this variable can be selected with a key.
+    ///
+    /// Variables that are collections (like ARGS, HEADERS) can be selected with a key.
+    /// Single-value variables (like REQUEST_URI, REQUEST_METHOD) cannot.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::types::RuleVariable;
+    ///
+    /// // Collections can be selected
+    /// assert!(RuleVariable::Args.can_be_selected());
+    /// assert!(RuleVariable::RequestHeaders.can_be_selected());
+    ///
+    /// // Single values cannot
+    /// assert!(!RuleVariable::RequestURI.can_be_selected());
+    /// assert!(!RuleVariable::RequestMethod.can_be_selected());
+    /// ```
+    pub const fn can_be_selected(&self) -> bool {
+        matches!(
+            self,
+            Self::ResponseHeadersNames
+                | Self::RequestHeadersNames
+                | Self::Args
+                | Self::ArgsGet
+                | Self::ArgsPost
+                | Self::ArgsPath
+                | Self::FilesSizes
+                | Self::FilesNames
+                | Self::FilesTmpContent
+                | Self::MultipartFilename
+                | Self::MultipartName
+                | Self::MatchedVarsNames
+                | Self::MatchedVars
+                | Self::Files
+                | Self::RequestCookies
+                | Self::RequestHeaders
+                | Self::ResponseHeaders
+                | Self::Geo
+                | Self::RequestCookiesNames
+                | Self::FilesTmpNames
+                | Self::ArgsNames
+                | Self::ArgsGetNames
+                | Self::ArgsPostNames
+                | Self::TX
+                | Self::Rule
+                | Self::JSON
+                | Self::XML
+                | Self::Env
+                | Self::IP
+                | Self::MultipartPartHeaders
+        )
+    }
 }
 
 impl fmt::Display for RuleVariable {
