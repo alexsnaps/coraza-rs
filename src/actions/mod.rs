@@ -436,16 +436,16 @@ fn init_registry() -> HashMap<String, ActionFactory> {
 /// # Examples
 ///
 /// ```no_run
-/// use coraza::actions::{register, Action, ActionType, ActionError, RuleMetadata, TransactionState};
+/// use coraza::actions::{register, Action, ActionType, ActionError, Rule, TransactionState};
 ///
 /// struct CustomAction;
 ///
 /// impl Action for CustomAction {
-///     fn init(&mut self, _rule: &mut dyn RuleMetadata, _data: &str) -> Result<(), ActionError> {
+///     fn init(&mut self, _rule: &mut Rule, _data: &str) -> Result<(), ActionError> {
 ///         Ok(())
 ///     }
 ///
-///     fn evaluate(&self, _rule: &dyn RuleMetadata, _tx: &mut dyn TransactionState) {
+///     fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
 ///         // Custom action logic
 ///     }
 ///
