@@ -14,7 +14,10 @@ mod encoding;
 pub mod escape;
 mod simple;
 
-pub use complex::{html_entity_decode, normalise_path, normalise_path_win};
+pub use complex::{
+    cmd_line, html_entity_decode, normalise_path, normalise_path_win, remove_comments,
+    replace_comments,
+};
 pub use encoding::{
     base64_decode, base64_decode_ext, base64_encode, hex_decode, hex_encode, length, md5_hash,
     none, remove_nulls, replace_nulls, sha1_hash, url_encode,

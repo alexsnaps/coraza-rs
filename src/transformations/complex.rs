@@ -157,6 +157,296 @@ pub fn normalise_path_win(input: &str) -> (String, bool) {
     (result, changed)
 }
 
+/// Command line normalization transformation.
+///
+/// Normalizes command-line input by applying the following transformations:
+/// - Deletes backslashes (`\`), double quotes (`"`), single quotes (`'`), carets (`^`)
+/// - Replaces commas (`,`), semicolons (`;`), and whitespace with single space
+/// - Removes spaces before slashes (`/`) and open parentheses (`(`)
+/// - Compresses multiple spaces into one
+/// - Converts to lowercase
+///
+/// This transformation is useful for detecting command injection attempts.
+///
+/// # Arguments
+///
+/// * `input` - Input string to normalize
+///
+/// # Returns
+///
+/// Returns `(output, changed)` where:
+/// - `output` is the normalized string
+/// - `changed` is `true` if any transformations were applied, `false` otherwise
+///
+/// # Examples
+///
+/// ```
+/// # use coraza::transformations::complex::cmd_line;
+/// let (result, changed) = cmd_line("cmd.exe /c \"whoami\"");
+/// assert_eq!(result, "cmd.exe/c whoami");
+/// assert!(changed);
+///
+/// let (result, changed) = cmd_line("SELECT * FROM users WHERE id=1;");
+/// assert_eq!(result, "select * from users where id=1 ");
+/// assert!(changed);
+/// ```
+pub fn cmd_line(input: &str) -> (String, bool) {
+    // Check if transformation is needed
+    if let Some(pos) = input.bytes().position(needs_cmd_transform) {
+        (do_cmd_line(input, pos), true)
+    } else {
+        (input.to_string(), false)
+    }
+}
+
+fn do_cmd_line(input: &str, pos: usize) -> String {
+    let mut result = String::with_capacity(input.len());
+
+    // Copy prefix before first transformable character
+    result.push_str(&input[..pos]);
+
+    let mut space = false;
+
+    for c in input[pos..].bytes() {
+        match c {
+            // Remove these characters
+            b'"' | b'\'' | b'\\' | b'^' => {
+                // Skip these characters entirely
+            }
+            // Replace with space (compress multiple)
+            b' ' | b',' | b';' | b'\t' | b'\r' | b'\n' => {
+                if !space {
+                    result.push(' ');
+                    space = true;
+                }
+            }
+            // Remove space before / or (
+            b'/' | b'(' => {
+                if space && !result.is_empty() {
+                    result.pop(); // Remove the trailing space
+                }
+                space = false;
+                result.push(c as char);
+            }
+            // Regular character - lowercase if needed
+            _ => {
+                let lower = if c.is_ascii_uppercase() {
+                    c + (b'a' - b'A')
+                } else {
+                    c
+                };
+                result.push(lower as char);
+                space = false;
+            }
+        }
+    }
+
+    result
+}
+
+/// Check if a byte needs command-line transformation
+fn needs_cmd_transform(c: u8) -> bool {
+    c.is_ascii_uppercase()
+        || matches!(
+            c,
+            b'"' | b'\'' | b'\\' | b'^' | b' ' | b',' | b';' | b'\t' | b'\r' | b'\n' | b'/' | b'('
+        )
+}
+
+/// Remove comment markers from text.
+///
+/// Removes the following comment styles:
+/// - C-style: `/* comment */`
+/// - HTML-style: `<!-- comment -->`
+/// - SQL/shell single-line: `--` (removes rest of line)
+/// - Shell/Perl: `#` (removes rest of line)
+///
+/// Content between comment delimiters is removed, and end-of-line comments
+/// are replaced with a space. Following ModSecurity behavior, when a comment
+/// ends exactly at the end of the input, a null byte is appended.
+///
+/// # Arguments
+///
+/// * `input` - Input string that may contain comments
+///
+/// # Returns
+///
+/// Returns `(output, changed)` where:
+/// - `output` is the string with comments removed
+/// - `changed` is `true` if any comments were found, `false` otherwise
+///
+/// # Examples
+///
+/// ```
+/// # use coraza::transformations::complex::remove_comments;
+/// let (result, changed) = remove_comments("SELECT * FROM users /* comment */ WHERE id=1");
+/// assert_eq!(result, "SELECT * FROM users  WHERE id=1");
+/// assert!(changed);
+///
+/// let (result, changed) = remove_comments("<!-- HTML comment --> <div>content</div>");
+/// assert_eq!(result, " <div>content</div>");
+/// assert!(changed);
+/// ```
+pub fn remove_comments(input: &str) -> (String, bool) {
+    // Add null byte padding to match ModSecurity behavior
+    let mut input_with_padding = input.as_bytes().to_vec();
+    input_with_padding.push(b'\0');
+
+    let input_len = input.len(); // Original length without padding
+    let mut result = Vec::with_capacity(input_len);
+
+    let mut i = 0;
+    let mut in_comment = false;
+    let mut changed = false;
+
+    while i < input_len {
+        if !in_comment {
+            if i + 1 < input_len
+                && input_with_padding[i] == b'/'
+                && input_with_padding[i + 1] == b'*'
+            {
+                // Start of C-style comment /*
+                in_comment = true;
+                changed = true;
+                i += 2;
+            } else if i + 3 < input_len
+                && input_with_padding[i] == b'<'
+                && input_with_padding[i + 1] == b'!'
+                && input_with_padding[i + 2] == b'-'
+                && input_with_padding[i + 3] == b'-'
+            {
+                // Start of HTML comment <!--
+                in_comment = true;
+                changed = true;
+                i += 4;
+            } else if i + 1 < input_len
+                && input_with_padding[i] == b'-'
+                && input_with_padding[i + 1] == b'-'
+            {
+                // SQL-style comment -- (rest of line)
+                result.push(b' ');
+                changed = true;
+                break;
+            } else if input_with_padding[i] == b'#' {
+                // Shell-style comment # (rest of line)
+                result.push(b' ');
+                changed = true;
+                break;
+            } else {
+                // Regular character
+                result.push(input_with_padding[i]);
+                i += 1;
+            }
+        } else {
+            // Inside a comment
+            if i + 1 < input_len
+                && input_with_padding[i] == b'*'
+                && input_with_padding[i + 1] == b'/'
+            {
+                // End of C-style comment */
+                in_comment = false;
+                i += 2;
+                // Copy the next character after comment (may be null byte padding)
+                result.push(input_with_padding[i]);
+                i += 1;
+            } else if i + 2 < input_len
+                && input_with_padding[i] == b'-'
+                && input_with_padding[i + 1] == b'-'
+                && input_with_padding[i + 2] == b'>'
+            {
+                // End of HTML comment -->
+                in_comment = false;
+                i += 3;
+                // Copy the next character after comment (may be null byte padding)
+                result.push(input_with_padding[i]);
+                i += 1;
+            } else {
+                // Skip characters inside comment
+                i += 1;
+            }
+        }
+    }
+
+    // If still in comment at end, add space
+    if in_comment {
+        changed = true;
+        result.push(b' ');
+    }
+
+    (String::from_utf8_lossy(&result).into_owned(), changed)
+}
+
+/// Replace C-style comments with spaces.
+///
+/// Replaces C-style comments (`/* comment */`) with a single space.
+/// Unlike `remove_comments`, this only handles C-style comments and
+/// replaces them with a space rather than removing them entirely.
+///
+/// # Arguments
+///
+/// * `input` - Input string that may contain C-style comments
+///
+/// # Returns
+///
+/// Returns `(output, changed)` where:
+/// - `output` is the string with comments replaced by spaces
+/// - `changed` is `true` if any comments were found, `false` otherwise
+///
+/// # Examples
+///
+/// ```
+/// # use coraza::transformations::complex::replace_comments;
+/// let (result, changed) = replace_comments("SELECT * FROM users /* comment */ WHERE id=1");
+/// assert_eq!(result, "SELECT * FROM users   WHERE id=1");
+/// assert!(changed);
+///
+/// let (result, changed) = replace_comments("no comments here");
+/// assert_eq!(result, "no comments here");
+/// assert!(!changed);
+/// ```
+pub fn replace_comments(input: &str) -> (String, bool) {
+    let input_bytes = input.as_bytes();
+    let input_len = input_bytes.len();
+    let mut result = Vec::with_capacity(input_len);
+
+    let mut i = 0;
+    let mut in_comment = false;
+    let mut changed = false;
+
+    while i < input_len {
+        if !in_comment {
+            if i + 1 < input_len && input_bytes[i] == b'/' && input_bytes[i + 1] == b'*' {
+                // Start of C-style comment /*
+                in_comment = true;
+                changed = true;
+                i += 2;
+            } else {
+                // Regular character
+                result.push(input_bytes[i]);
+                i += 1;
+            }
+        } else {
+            // Inside a comment
+            if i + 1 < input_len && input_bytes[i] == b'*' && input_bytes[i + 1] == b'/' {
+                // End of C-style comment */
+                in_comment = false;
+                i += 2;
+                result.push(b' ');
+            } else {
+                // Skip characters inside comment
+                i += 1;
+            }
+        }
+    }
+
+    // If still in comment at end, add space
+    if in_comment {
+        result.push(b' ');
+    }
+
+    (String::from_utf8_lossy(&result).into_owned(), changed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -645,5 +935,291 @@ mod tests {
             normalise_path_win("\\.\\..\\.\\..\\..\\..\\..\\..\\..\\..\\\\0\\..\\etc\\.\\passwd");
         assert_eq!(result, "/etc/passwd");
         assert!(changed);
+    }
+
+    // Test cases from cmdLine.json
+
+    #[test]
+    fn test_cmd_line_empty() {
+        let (result, changed) = cmd_line("");
+        assert_eq!(result, "");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_cmd_line_no_transform() {
+        let (result, changed) = cmd_line("test");
+        assert_eq!(result, "test");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_cmd_line_caret_and_case() {
+        let (result, changed) = cmd_line("C^OMMAND /C DIR");
+        assert_eq!(result, "command/c dir");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_cmd_line_mixed_case() {
+        let (result, changed) = cmd_line("C^oMMaNd /C DiR");
+        assert_eq!(result, "command/c dir");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_cmd_line_comma() {
+        let (result, changed) = cmd_line("cmd,/c DiR");
+        assert_eq!(result, "cmd/c dir");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_cmd_line_quotes() {
+        let (result, changed) = cmd_line("\"command\" /c DiR");
+        assert_eq!(result, "command/c dir");
+        assert!(changed);
+    }
+
+    // Test cases from removeComments.json
+
+    #[test]
+    fn test_remove_comments_empty() {
+        let (result, changed) = remove_comments("");
+        assert_eq!(result, "");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_remove_comments_no_comments() {
+        let (result, changed) = remove_comments("TestCase");
+        assert_eq!(result, "TestCase");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_remove_comments_with_null() {
+        let (result, changed) = remove_comments("Test\u{0000}Case");
+        assert_eq!(result, "Test\u{0000}Case");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_remove_comments_full_comment() {
+        let (result, changed) = remove_comments("/* TestCase */");
+        assert_eq!(result, "\u{0000}");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_remove_comments_no_spaces() {
+        let (result, changed) = remove_comments("/*TestCase*/");
+        assert_eq!(result, "\u{0000}");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_remove_comments_space_before() {
+        let (result, changed) = remove_comments("/* TestCase*/");
+        assert_eq!(result, "\u{0000}");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_remove_comments_space_after() {
+        let (result, changed) = remove_comments("/*TestCase */");
+        assert_eq!(result, "\u{0000}");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_remove_comments_before_after() {
+        let (result, changed) = remove_comments("Before/* TestCase */After");
+        assert_eq!(result, "BeforeAfter");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_remove_comments_orphan_end() {
+        let (result, changed) = remove_comments("Before TestCase */ After");
+        assert_eq!(result, "Before TestCase */ After");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_remove_comments_newline() {
+        let (result, changed) = remove_comments("/* Test\nCase */");
+        assert_eq!(result, "\u{0000}");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_remove_comments_crlf() {
+        let (result, changed) = remove_comments("/* Test\r\nCase */");
+        assert_eq!(result, "\u{0000}");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_remove_comments_unclosed() {
+        let (result, changed) = remove_comments("/*Before/* Test\r\nCase ");
+        assert_eq!(result, " ");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_remove_comments_unclosed_after_text() {
+        let (result, changed) = remove_comments("Before /* Test\nCase ");
+        assert_eq!(result, "Before  ");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_remove_comments_multiple() {
+        let (result, changed) = remove_comments("Before/* T*/ /* e */ /* s */ /* t */\r\nCase ");
+        assert_eq!(result, "Before   \r\nCase ");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_remove_comments_nested_markers() {
+        let (result, changed) = remove_comments("Before /* */ ops */ Test\nCase ");
+        assert_eq!(result, "Before  ops */ Test\nCase ");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_remove_comments_comment_then_text() {
+        let (result, changed) = remove_comments("/*Test\r\nCase */After");
+        assert_eq!(result, "After");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_remove_comments_empty_comment() {
+        let (result, changed) = remove_comments("Test\nCase /**/ After");
+        assert_eq!(result, "Test\nCase  After");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_remove_comments_end_marker_without_start() {
+        let (result, changed) = remove_comments("Test\r\nCase */After");
+        assert_eq!(result, "Test\r\nCase */After");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_remove_comments_with_newline_after() {
+        let (result, changed) = remove_comments("Test/*\nCase */ After");
+        assert_eq!(result, "Test After");
+        assert!(changed);
+    }
+
+    // Test cases from replaceComments.json
+
+    #[test]
+    fn test_replace_comments_empty() {
+        let (result, changed) = replace_comments("");
+        assert_eq!(result, "");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_replace_comments_no_comments() {
+        let (result, changed) = replace_comments("TestCase");
+        assert_eq!(result, "TestCase");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_replace_comments_with_null() {
+        let (result, changed) = replace_comments("Test\u{0000}Case");
+        assert_eq!(result, "Test\u{0000}Case");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_replace_comments_full_comment() {
+        let (result, changed) = replace_comments("/* TestCase */");
+        assert_eq!(result, " ");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_replace_comments_no_spaces() {
+        let (result, changed) = replace_comments("/*TestCase*/");
+        assert_eq!(result, " ");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_replace_comments_space_before() {
+        let (result, changed) = replace_comments("/* TestCase*/");
+        assert_eq!(result, " ");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_replace_comments_space_after() {
+        let (result, changed) = replace_comments("/*TestCase */");
+        assert_eq!(result, " ");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_replace_comments_before_after() {
+        let (result, changed) = replace_comments("Before/* TestCase */After");
+        assert_eq!(result, "Before After");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_replace_comments_with_spaces() {
+        let (result, changed) = replace_comments("Before /* TestCase */ After");
+        assert_eq!(result, "Before   After");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_replace_comments_newline() {
+        let (result, changed) = replace_comments("/* Test\nCase */");
+        assert_eq!(result, " ");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_replace_comments_crlf() {
+        let (result, changed) = replace_comments("/* Test\r\nCase */");
+        assert_eq!(result, " ");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_replace_comments_unclosed_1() {
+        let (result, changed) = replace_comments("Before/* Test\r\nCase ");
+        assert_eq!(result, "Before ");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_replace_comments_unclosed_2() {
+        let (result, changed) = replace_comments("Before /* Test\nCase ");
+        assert_eq!(result, "Before  ");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_replace_comments_orphan_end() {
+        let (result, changed) = replace_comments("Test\r\nCase */After");
+        assert_eq!(result, "Test\r\nCase */After");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_replace_comments_orphan_end_2() {
+        let (result, changed) = replace_comments("Test\nCase */ After");
+        assert_eq!(result, "Test\nCase */ After");
+        assert!(!changed);
     }
 }

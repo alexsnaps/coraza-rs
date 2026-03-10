@@ -713,13 +713,63 @@ impl Operator for Eq {
 - ✅ Full documentation with examples
 - ✅ **Phase 4, Group B Complete!** All 5 escape sequence decoders fully implemented
 
-### Phase 4 Summary (So Far)
-**Transformations Ported:** 8 total
+#### Group C: Command Line & Comment Processing (src/transformations/complex.rs)
+- **Date:** 2026-03-10
+- **Source:**
+  - `coraza/internal/transformations/cmd_line.go`
+  - `coraza/internal/transformations/remove_comments.go`
+  - `coraza/internal/transformations/replace_comments.go`
+  - Test data from `testdata/*.json` files
+- **Tests:** 40/40 passing (6 + 19 + 15) + 346/346 total
+- **Features:**
+  - **`cmd_line` transformation:**
+    - Command-line normalization for injection detection
+    - Removes: backslashes (`\`), quotes (`"`, `'`), carets (`^`)
+    - Replaces: commas (`,`), semicolons (`;`), whitespace → single space
+    - Removes spaces before slashes (`/`) and parentheses (`(`)
+    - Compresses multiple spaces to one
+    - Converts to lowercase
+    - **6 test cases ported from JSON**
+  - **`remove_comments` transformation:**
+    - Removes C-style (`/* */`), HTML (`<!-- -->`), SQL (`--`), shell (`#`) comments
+    - Content between delimiters is removed completely
+    - End-of-line comments replaced with space
+    - **ModSecurity quirk:** When comment ends at string end, adds null byte (padding behavior)
+    - **19 test cases ported from JSON**
+  - **`replace_comments` transformation:**
+    - Replaces C-style comments (`/* */`) with single space
+    - Simpler than `remove_comments` - only handles C-style
+    - Unclosed comments at end get space appended
+    - **15 test cases ported from JSON**
+- **Implementation Notes:**
+  - `cmd_line`: Efficient byte-level processing with early return optimization
+  - `remove_comments`: Null byte padding trick to match ModSecurity behavior exactly
+  - `replace_comments`: Simple state machine for comment detection
+  - All return `(String, bool)` tuple (output, changed)
+  - All use is_ascii_uppercase() per clippy suggestion
+- **Test Coverage:**
+  - **cmd_line (6 tests):** Empty, no transform, caret removal, case conversion, comma replacement, quote removal
+  - **remove_comments (19 tests):** Empty, no comments, null bytes, full comments, spaces, newlines, CRLF, unclosed comments, multiple comments, nested markers, orphan markers
+  - **replace_comments (15 tests):** Empty, no comments, null bytes, full comments, spaces, newlines, CRLF, unclosed comments, orphan markers
+- **Performance:**
+  - Zero-copy when unchanged (early returns)
+  - Byte-level processing for efficiency
+  - Pre-allocated result buffers
+
+### Quality Metrics - Phase 4, Group C
+- ✅ All tests passing (346/346 unit tests, +40 new comment processing tests)
+- ✅ Doc tests passing (82/82, +3 new examples)
+- ✅ Clippy clean (no warnings)
+- ✅ Full documentation with examples
+- ✅ **Phase 4, Group C Complete!** All command-line and comment processing transformations fully implemented
+
+### Phase 4 Summary - COMPLETE ✅
+**Transformations Ported:** 11 total
 - Group A (Simple): 3 (html_entity_decode, normalise_path, normalise_path_win)
 - Group B (Escape Decoders): 5 (escape_seq_decode, js_decode, css_decode, url_decode_uni, utf8_to_unicode)
+- Group C (Command & Comments): 3 (cmd_line, remove_comments, replace_comments)
 
-**Still Remaining:**
-- Group C: cmdLine, removeComments, replaceComments (3 transformations)
+**All Phase 4 complex text processing transformations complete!**
 
 ### Next Steps
 - [ ] **IMPORTANT - Cleanup After Transaction Port:** Once the production `TransactionState` implementation is ported:
