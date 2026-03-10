@@ -6,13 +6,13 @@
 //! These tests exercise the complete rule evaluation pipeline as external users
 //! would interact with it, testing the public API end-to-end.
 
+use coraza::RulePhase;
+use coraza::RuleVariable;
 use coraza::collection::MapCollection;
 use coraza::operators::{eq, streq};
 use coraza::rules::{Rule, RuleGroup, RuleOperator, VariableSpec};
 use coraza::transaction::Transaction;
 use coraza::transformations::lowercase;
-use coraza::RulePhase;
-use coraza::RuleVariable;
 
 // ============================================================================
 // Basic Rule Evaluation Tests
@@ -455,8 +455,7 @@ fn test_complex_rule_with_transformations_and_chain() {
 
     let mut tx = Transaction::new("test-tx");
     tx.args_get_mut().add("action", "DELETE"); // Will be lowercased
-    tx.request_headers_mut()
-        .add("User-Agent", "BOT"); // Will be lowercased to match "bot"
+    tx.request_headers_mut().add("User-Agent", "BOT"); // Will be lowercased to match "bot"
 
     let matches = rule.evaluate(&mut tx, true);
 

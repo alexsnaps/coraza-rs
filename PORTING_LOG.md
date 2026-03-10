@@ -4,7 +4,7 @@
 
 ## Current Status (as of 2026-03-10)
 
-**Phase 8: SecLang Parser** - In Progress (Step 0/9)
+**Phase 8: SecLang Parser** - In Progress (Step 1/9 complete)
 
 - ✅ **Phase 1:** Foundation types (RuleSeverity, RulePhase, RuleVariable, etc.) - COMPLETE
 - ✅ **Phase 2:** String utilities - COMPLETE
@@ -13,9 +13,9 @@
 - ✅ **Phase 5:** Operators (10 operators: rx, pm, streq, contains, etc.) - COMPLETE
 - ✅ **Phase 6:** Actions (26/26 implemented) - COMPLETE
 - ✅ **Phase 7:** Rule Engine (8/8 steps complete) - COMPLETE
-- 🚧 **Phase 8:** SecLang Parser (0/9 steps complete) - IN PROGRESS
-  - ⏳ Step 1: Parser infrastructure - NEXT
-  - ⏳ Step 2: Directive system
+- 🚧 **Phase 8:** SecLang Parser (1/9 steps complete) - IN PROGRESS
+  - ✅ Step 1: Parser infrastructure - COMPLETE
+  - ⏳ Step 2: Directive system - NEXT
   - ⏳ Step 3: Variable parser
   - ⏳ Step 4: Operator parser
   - ⏳ Step 5: Action parser
@@ -25,8 +25,8 @@
   - ⏳ Step 9: Integration tests
 
 **Quality Metrics:**
-- 719 tests passing total:
-  - 587 unit tests (74 rule engine: 24 variable + 13 transformation + 10 operator + 9 action + 9 rule incl. 3 chain + 9 group)
+- 733 tests passing total:
+  - 601 unit tests (88 parser/rule engine: 14 parser + 24 variable + 13 transformation + 10 operator + 9 action + 9 rule incl. 3 chain + 9 group)
   - 17 integration tests (comprehensive rule engine end-to-end testing)
   - 115 doc tests
 - Clippy clean (0 warnings)
@@ -1578,14 +1578,58 @@ Following Go implementation exactly - no parser library (nom, pest, etc.). The G
 - ✅ Similar performance characteristics to Go
 - Parser is simple enough (~900 lines) that manual parsing is straightforward
 
-**Step 1: Parser Infrastructure (Days 1-2)**
-- [ ] Parser struct with file/line tracking
-- [ ] Line reading with continuation support (`\` at end of line)
-- [ ] Comment handling (`#` lines skipped)
-- [ ] Backtick multi-line support for SecDataset
-- [ ] Directive name extraction and dispatch
-- [ ] Error reporting with file:line context
-- [ ] Tests: Basic parsing, comments, continuations, backticks
+**Step 1: Parser Infrastructure ✅ COMPLETE (2026-03-10)**
+- [x] Parser struct with file/line tracking
+- [x] Line reading with continuation support (`\` at end of line)
+- [x] Comment handling (`#` lines skipped)
+- [x] Backtick multi-line support for SecDataset
+- [x] Directive name extraction and dispatch
+- [x] Error reporting with file:line context
+- [x] Tests: Basic parsing, comments, continuations, backticks
+- [x] **Implementation complete** (~350 lines in `src/seclang/parser.rs`)
+  - ✅ Parser struct with state tracking (current_line, current_file, current_dir)
+  - ✅ Include recursion protection (MAX_INCLUDE_RECURSION = 100)
+  - ✅ ParseError type with file:line context
+  - ✅ DirectiveOptions struct (options passed to directive handlers)
+  - ✅ ParserState struct (parser configuration and state)
+  - ✅ Line-by-line parsing with bufio-style approach
+  - ✅ Continuation support (`\` at end removes backslash and continues)
+  - ✅ Comment skipping (`#` at start of line)
+  - ✅ Backtick block handling (multi-line for SecDataset)
+  - ✅ Case-insensitive directive names
+  - ✅ Quote removal from options (if surrounded by `"`)
+  - ✅ Special handling for Include directive (with recursion protection)
+  - ✅ Directive registry (HashMap of name -> handler function)
+  - ✅ Placeholder SecRuleEngine directive for testing
+- [x] **Tests ported from Go** (14 unit tests)
+  - ✅ test_parser_new - Basic initialization
+  - ✅ test_parse_empty_string - Empty input handling
+  - ✅ test_parse_comment_only - Single comment line
+  - ✅ test_parse_multiple_comments - Multiple comments and indentation
+  - ✅ test_parse_directive_case_insensitive - Case variations (4 checks)
+  - ✅ test_parse_unknown_directive - Error handling
+  - ✅ test_parse_line_continuation - Single continuation
+  - ✅ test_parse_multiple_line_continuations - Multiple backslashes
+  - ✅ test_parse_backticks_unclosed - Error handling
+  - ✅ test_parse_directive_with_quotes - Quote removal
+  - ✅ test_sec_rule_engine_valid_values - On/Off/DetectionOnly
+  - ✅ test_sec_rule_engine_invalid_value - Error handling
+  - ✅ test_sec_rule_engine_no_argument - Error handling
+  - ✅ test_parse_error_includes_line_number - Line tracking
+
+**Quality Metrics - Step 1:**
+- ✅ 14 tests passing (all new)
+- ✅ 601 total tests passing (+14 new)
+- ✅ Clippy clean (0 warnings)
+- ✅ Full documentation with examples
+- ✅ 100% test parity with Go parser infrastructure
+
+**Design Notes:**
+- Hand-rolled parser (no nom/pest) to match Go implementation exactly
+- Simple line-by-line approach, not a full grammar parser
+- State machine for line processing (normal, continuation, backticks)
+- Directive functions use closure/function pointer pattern
+- Parser is framework for Steps 2-8 to build upon
 
 **Step 2: Directive System (Days 3-4)**
 - [ ] Directive trait with execute method
