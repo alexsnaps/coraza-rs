@@ -8,7 +8,7 @@
 //! the last one takes precedence. These actions are NOT executed if
 //! SecRuleEngine is set to DetectionOnly.
 
-use crate::actions::{Action, ActionError, ActionType, RuleMetadata, TransactionState};
+use crate::actions::{Action, ActionError, ActionType, Rule, TransactionState};
 
 /// Allow type for the `allow` action.
 ///
@@ -42,24 +42,24 @@ pub enum AllowType {
 pub struct DenyAction;
 
 impl Action for DenyAction {
-    fn init(&mut self, _rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
         if !data.is_empty() {
             return Err(ActionError::UnexpectedArguments);
         }
         Ok(())
     }
 
-    fn evaluate(&self, rule: &dyn RuleMetadata, tx: &mut dyn TransactionState) {
-        let rule_id = if rule.id() == 0 {
-            rule.parent_id()
+    fn evaluate(&self, rule: &Rule, tx: &mut dyn TransactionState) {
+        let rule_id = if rule.id == 0 {
+            rule.parent_id
         } else {
-            rule.id()
+            rule.id
         };
 
-        let status = if rule.status() == 0 {
+        let status = if rule.status == 0 {
             403 // deny action defaults to status 403
         } else {
-            rule.status()
+            rule.status
         };
 
         tx.interrupt(rule_id, "deny", status, "");
@@ -93,21 +93,21 @@ impl Action for DenyAction {
 pub struct DropAction;
 
 impl Action for DropAction {
-    fn init(&mut self, _rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
         if !data.is_empty() {
             return Err(ActionError::UnexpectedArguments);
         }
         Ok(())
     }
 
-    fn evaluate(&self, rule: &dyn RuleMetadata, tx: &mut dyn TransactionState) {
-        let rule_id = if rule.id() == 0 {
-            rule.parent_id()
+    fn evaluate(&self, rule: &Rule, tx: &mut dyn TransactionState) {
+        let rule_id = if rule.id == 0 {
+            rule.parent_id
         } else {
-            rule.id()
+            rule.id
         };
 
-        tx.interrupt(rule_id, "drop", rule.status(), "");
+        tx.interrupt(rule_id, "drop", rule.status, "");
     }
 
     fn action_type(&self) -> ActionType {
@@ -161,7 +161,7 @@ impl Default for AllowAction {
 }
 
 impl Action for AllowAction {
-    fn init(&mut self, _rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
         self.allow_type = match data {
             "phase" => AllowType::Phase,
             "request" => AllowType::Request,
@@ -176,7 +176,7 @@ impl Action for AllowAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &dyn RuleMetadata, tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &Rule, tx: &mut dyn TransactionState) {
         tx.set_allow_type(self.allow_type);
     }
 
@@ -212,14 +212,14 @@ impl Action for AllowAction {
 pub struct BlockAction;
 
 impl Action for BlockAction {
-    fn init(&mut self, _rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
         if !data.is_empty() {
             return Err(ActionError::UnexpectedArguments);
         }
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &dyn RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
         // This should never run
         // The block action is replaced by SecDefaultAction during rule compilation
     }
@@ -266,7 +266,7 @@ impl Default for RedirectAction {
 }
 
 impl Action for RedirectAction {
-    fn init(&mut self, _rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
@@ -274,15 +274,15 @@ impl Action for RedirectAction {
         Ok(())
     }
 
-    fn evaluate(&self, rule: &dyn RuleMetadata, tx: &mut dyn TransactionState) {
-        let rule_id = if rule.id() == 0 {
-            rule.parent_id()
+    fn evaluate(&self, rule: &Rule, tx: &mut dyn TransactionState) {
+        let rule_id = if rule.id == 0 {
+            rule.parent_id
         } else {
-            rule.id()
+            rule.id
         };
 
-        let status = match rule.status() {
-            301 | 302 | 303 | 307 => rule.status(),
+        let status = match rule.status {
+            301 | 302 | 303 | 307 => rule.status,
             _ => 302, // default redirect status
         };
 
@@ -318,14 +318,14 @@ impl Action for RedirectAction {
 pub struct PassAction;
 
 impl Action for PassAction {
-    fn init(&mut self, _rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
         if !data.is_empty() {
             return Err(ActionError::UnexpectedArguments);
         }
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &dyn RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
         // Pass action doesn't interrupt - it just continues processing
     }
 
@@ -337,65 +337,6 @@ impl Action for PassAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::RuleSeverity;
-    use crate::operators::Macro;
-
-    // Mock RuleMetadata for testing
-    struct MockRule {
-        id: i32,
-        parent_id: i32,
-        status: i32,
-    }
-
-    impl MockRule {
-        fn new() -> Self {
-            Self {
-                id: 0,
-                parent_id: 0,
-                status: 0,
-            }
-        }
-
-        fn with_id(id: i32) -> Self {
-            Self {
-                id,
-                parent_id: 0,
-                status: 0,
-            }
-        }
-
-        fn with_status(status: i32) -> Self {
-            Self {
-                id: 0,
-                parent_id: 0,
-                status,
-            }
-        }
-    }
-
-    impl RuleMetadata for MockRule {
-        fn id(&self) -> i32 {
-            self.id
-        }
-        fn parent_id(&self) -> i32 {
-            self.parent_id
-        }
-        fn status(&self) -> i32 {
-            self.status
-        }
-        fn set_id(&mut self, _id: i32) {}
-        fn set_msg(&mut self, _msg: Macro) {}
-        fn set_severity(&mut self, _severity: RuleSeverity) {}
-        fn set_has_chain(&mut self, _has_chain: bool) {}
-        fn set_rev(&mut self, _rev: String) {}
-        fn set_ver(&mut self, _ver: String) {}
-        fn set_maturity(&mut self, _maturity: u8) {}
-        fn add_tag(&mut self, _tag: String) {}
-        fn set_log_data(&mut self, _log_data: Macro) {}
-        fn set_status(&mut self, _status: i32) {}
-        fn set_log(&mut self, _enabled: bool) {}
-        fn set_audit_log(&mut self, _enabled: bool) {}
-    }
 
     // Mock TransactionState for testing
     struct MockTransaction {
@@ -443,14 +384,14 @@ mod tests {
     #[test]
     fn test_deny_no_arguments() {
         let mut action = DenyAction;
-        assert!(action.init(&mut MockRule::new(), "").is_ok());
+        assert!(action.init(&mut Rule::new(), "").is_ok());
     }
 
     #[test]
     fn test_deny_unexpected_arguments() {
         let mut action = DenyAction;
         assert_eq!(
-            action.init(&mut MockRule::new(), "abc"),
+            action.init(&mut Rule::new(), "abc"),
             Err(ActionError::UnexpectedArguments)
         );
     }
@@ -459,14 +400,14 @@ mod tests {
     #[test]
     fn test_drop_no_arguments() {
         let mut action = DropAction;
-        assert!(action.init(&mut MockRule::new(), "").is_ok());
+        assert!(action.init(&mut Rule::new(), "").is_ok());
     }
 
     #[test]
     fn test_drop_unexpected_arguments() {
         let mut action = DropAction;
         assert_eq!(
-            action.init(&mut MockRule::new(), "abc"),
+            action.init(&mut Rule::new(), "abc"),
             Err(ActionError::UnexpectedArguments)
         );
     }
@@ -475,21 +416,21 @@ mod tests {
     #[test]
     fn test_allow_empty() {
         let mut action = AllowAction::new();
-        assert!(action.init(&mut MockRule::new(), "").is_ok());
+        assert!(action.init(&mut Rule::new(), "").is_ok());
         assert_eq!(action.allow_type, AllowType::All);
     }
 
     #[test]
     fn test_allow_phase() {
         let mut action = AllowAction::new();
-        assert!(action.init(&mut MockRule::new(), "phase").is_ok());
+        assert!(action.init(&mut Rule::new(), "phase").is_ok());
         assert_eq!(action.allow_type, AllowType::Phase);
     }
 
     #[test]
     fn test_allow_request() {
         let mut action = AllowAction::new();
-        assert!(action.init(&mut MockRule::new(), "request").is_ok());
+        assert!(action.init(&mut Rule::new(), "request").is_ok());
         assert_eq!(action.allow_type, AllowType::Request);
     }
 
@@ -497,7 +438,7 @@ mod tests {
     fn test_allow_invalid() {
         let mut action = AllowAction::new();
         assert!(matches!(
-            action.init(&mut MockRule::new(), "response"),
+            action.init(&mut Rule::new(), "response"),
             Err(ActionError::InvalidArguments(_))
         ));
     }
@@ -506,14 +447,14 @@ mod tests {
     #[test]
     fn test_block_no_arguments() {
         let mut action = BlockAction;
-        assert!(action.init(&mut MockRule::new(), "").is_ok());
+        assert!(action.init(&mut Rule::new(), "").is_ok());
     }
 
     #[test]
     fn test_block_unexpected_arguments() {
         let mut action = BlockAction;
         assert_eq!(
-            action.init(&mut MockRule::new(), "abc"),
+            action.init(&mut Rule::new(), "abc"),
             Err(ActionError::UnexpectedArguments)
         );
     }
@@ -523,7 +464,7 @@ mod tests {
     fn test_redirect_no_arguments() {
         let mut action = RedirectAction::new();
         assert_eq!(
-            action.init(&mut MockRule::new(), ""),
+            action.init(&mut Rule::new(), ""),
             Err(ActionError::MissingArguments)
         );
     }
@@ -531,7 +472,7 @@ mod tests {
     #[test]
     fn test_redirect_passed_arguments() {
         let mut action = RedirectAction::new();
-        assert!(action.init(&mut MockRule::new(), "abc").is_ok());
+        assert!(action.init(&mut Rule::new(), "abc").is_ok());
         assert_eq!(action.target, "abc");
     }
 
@@ -539,14 +480,14 @@ mod tests {
     #[test]
     fn test_pass_no_arguments() {
         let mut action = PassAction;
-        assert!(action.init(&mut MockRule::new(), "").is_ok());
+        assert!(action.init(&mut Rule::new(), "").is_ok());
     }
 
     #[test]
     fn test_pass_unexpected_arguments() {
         let mut action = PassAction;
         assert_eq!(
-            action.init(&mut MockRule::new(), "abc"),
+            action.init(&mut Rule::new(), "abc"),
             Err(ActionError::UnexpectedArguments)
         );
     }
@@ -567,7 +508,9 @@ mod tests {
     fn test_deny_evaluate_default_status() {
         let action = DenyAction;
         let mut tx = MockTransaction::new();
-        action.evaluate(&MockRule::with_id(123), &mut tx);
+        let mut rule = Rule::new();
+        rule.id = 123;
+        action.evaluate(&rule, &mut tx);
         assert!(tx.interrupted);
         assert_eq!(tx.interrupt_action, "deny");
         assert_eq!(tx.interrupt_status, 403); // default status
@@ -577,8 +520,9 @@ mod tests {
     fn test_deny_evaluate_custom_status() {
         let action = DenyAction;
         let mut tx = MockTransaction::new();
-        let mut rule = MockRule::with_status(404);
+        let mut rule = Rule::new();
         rule.id = 123;
+        rule.status = 404;
         action.evaluate(&rule, &mut tx);
         assert!(tx.interrupted);
         assert_eq!(tx.interrupt_status, 404);
@@ -587,20 +531,20 @@ mod tests {
     #[test]
     fn test_allow_evaluate() {
         let mut action = AllowAction::new();
-        action.init(&mut MockRule::new(), "phase").unwrap();
+        action.init(&mut Rule::new(), "phase").unwrap();
         let mut tx = MockTransaction::new();
-        action.evaluate(&MockRule::new(), &mut tx);
+        action.evaluate(&Rule::new(), &mut tx);
         assert_eq!(tx.allow_type, AllowType::Phase);
     }
 
     #[test]
     fn test_redirect_evaluate_default_status() {
         let mut action = RedirectAction::new();
-        action
-            .init(&mut MockRule::new(), "http://example.com")
-            .unwrap();
+        action.init(&mut Rule::new(), "http://example.com").unwrap();
         let mut tx = MockTransaction::new();
-        action.evaluate(&MockRule::with_id(123), &mut tx);
+        let mut rule = Rule::new();
+        rule.id = 123;
+        action.evaluate(&rule, &mut tx);
         assert!(tx.interrupted);
         assert_eq!(tx.interrupt_action, "redirect");
         assert_eq!(tx.interrupt_status, 302); // default redirect status
@@ -610,12 +554,11 @@ mod tests {
     #[test]
     fn test_redirect_evaluate_custom_status() {
         let mut action = RedirectAction::new();
-        action
-            .init(&mut MockRule::new(), "http://example.com")
-            .unwrap();
+        action.init(&mut Rule::new(), "http://example.com").unwrap();
         let mut tx = MockTransaction::new();
-        let mut rule = MockRule::with_status(301);
+        let mut rule = Rule::new();
         rule.id = 123;
+        rule.status = 301;
         action.evaluate(&rule, &mut tx);
         assert_eq!(tx.interrupt_status, 301);
     }

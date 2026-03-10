@@ -146,56 +146,66 @@ pub enum ActionType {
     Flow,
 }
 
-/// Rule metadata interface for action initialization.
+/// Rule configuration and metadata.
 ///
-/// This trait provides access to rule properties that actions can read and modify
-/// during initialization. Actions use this to store metadata (id, msg, severity)
-/// or configure rule behavior (chain flags, skip targets).
-pub trait RuleMetadata {
-    /// Get the rule ID.
-    fn id(&self) -> i32;
+/// Stores all metadata and configuration for a single rule. Actions modify
+/// this struct during initialization to set rule properties like ID, message,
+/// severity, and logging flags.
+#[derive(Debug, Clone)]
+pub struct Rule {
+    /// Rule ID (mandatory, set by id action)
+    pub id: i32,
+    /// Parent rule ID (for chained rules)
+    pub parent_id: i32,
+    /// Rule message with macro expansion support
+    pub msg: Option<Macro>,
+    /// Severity level (0-7)
+    pub severity: Option<RuleSeverity>,
+    /// Classification tags
+    pub tags: Vec<String>,
+    /// Revision number
+    pub rev: String,
+    /// Version string
+    pub ver: String,
+    /// Maturity level (1-9)
+    pub maturity: u8,
+    /// Additional log data with macro expansion
+    pub log_data: Option<Macro>,
+    /// HTTP status code for blocking actions
+    pub status: i32,
+    /// Whether to log matches
+    pub log: bool,
+    /// Whether to audit log matches
+    pub audit_log: bool,
+    /// Whether this rule chains to the next
+    pub has_chain: bool,
+}
 
-    /// Get the parent rule ID (for chained rules).
-    fn parent_id(&self) -> i32;
+impl Rule {
+    /// Create a new rule with default values.
+    pub fn new() -> Self {
+        Self {
+            id: 0,
+            parent_id: 0,
+            msg: None,
+            severity: None,
+            tags: Vec::new(),
+            rev: String::new(),
+            ver: String::new(),
+            maturity: 0,
+            log_data: None,
+            status: 0,
+            log: false,
+            audit_log: false,
+            has_chain: false,
+        }
+    }
+}
 
-    /// Get the HTTP status code for blocking actions.
-    fn status(&self) -> i32;
-
-    /// Set the rule ID.
-    fn set_id(&mut self, id: i32);
-
-    /// Set the rule message (with macro expansion support).
-    fn set_msg(&mut self, msg: Macro);
-
-    /// Set the rule severity.
-    fn set_severity(&mut self, severity: RuleSeverity);
-
-    /// Set whether this rule chains to the next rule.
-    fn set_has_chain(&mut self, has_chain: bool);
-
-    /// Set the revision number.
-    fn set_rev(&mut self, rev: String);
-
-    /// Set the version string.
-    fn set_ver(&mut self, ver: String);
-
-    /// Set the maturity level (1-9).
-    fn set_maturity(&mut self, maturity: u8);
-
-    /// Add a classification tag.
-    fn add_tag(&mut self, tag: String);
-
-    /// Set log data (with macro expansion support).
-    fn set_log_data(&mut self, log_data: Macro);
-
-    /// Set the HTTP status code for blocking.
-    fn set_status(&mut self, status: i32);
-
-    /// Set whether logging is enabled for this rule.
-    fn set_log(&mut self, enabled: bool);
-
-    /// Set whether audit logging is enabled for this rule.
-    fn set_audit_log(&mut self, enabled: bool);
+impl Default for Rule {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Transaction state interface for action evaluation.
@@ -212,20 +222,20 @@ pub use crate::operators::TransactionState;
 /// # Examples
 ///
 /// ```
-/// use coraza::actions::{Action, ActionType, ActionError, RuleMetadata, TransactionState};
+/// use coraza::actions::{Action, ActionType, ActionError, Rule, TransactionState};
 ///
 /// // Simple action that requires no parameters
 /// struct DenyAction;
 ///
 /// impl Action for DenyAction {
-///     fn init(&mut self, _rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+///     fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
 ///         if !data.is_empty() {
 ///             return Err(ActionError::UnexpectedArguments);
 ///         }
 ///         Ok(())
 ///     }
 ///
-///     fn evaluate(&self, _rule: &dyn RuleMetadata, _tx: &mut dyn TransactionState) {
+///     fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
 ///         // Execute action logic (e.g., interrupt transaction)
 ///     }
 ///
@@ -243,14 +253,14 @@ pub trait Action: Send + Sync {
     ///
     /// # Arguments
     ///
-    /// * `rule` - Mutable reference to rule metadata for storing action configuration
+    /// * `rule` - Mutable reference to rule for storing action configuration
     /// * `data` - Parameter string for the action (may be empty for parameterless actions)
     ///
     /// # Returns
     ///
     /// * `Ok(())` if initialization succeeded
     /// * `Err(ActionError)` if parameters are invalid
-    fn init(&mut self, rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError>;
+    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError>;
 
     /// Evaluate the action during transaction processing.
     ///
@@ -259,9 +269,9 @@ pub trait Action: Send + Sync {
     ///
     /// # Arguments
     ///
-    /// * `rule` - Immutable reference to rule metadata
+    /// * `rule` - Immutable reference to rule
     /// * `tx` - Mutable reference to transaction state
-    fn evaluate(&self, rule: &dyn RuleMetadata, tx: &mut dyn TransactionState);
+    fn evaluate(&self, rule: &Rule, tx: &mut dyn TransactionState);
 
     /// Return the action type category.
     fn action_type(&self) -> ActionType;
@@ -454,7 +464,7 @@ mod tests {
     }
 
     impl Action for MockAction {
-        fn init(&mut self, _rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+        fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
             if !data.is_empty() {
                 return Err(ActionError::UnexpectedArguments);
             }
@@ -462,44 +472,13 @@ mod tests {
             Ok(())
         }
 
-        fn evaluate(&self, _rule: &dyn RuleMetadata, _tx: &mut dyn TransactionState) {
+        fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
             // Mock evaluation
         }
 
         fn action_type(&self) -> ActionType {
             ActionType::Nondisruptive
         }
-    }
-
-    // Mock RuleMetadata for testing
-    struct MockRule {
-        id: i32,
-    }
-
-    impl RuleMetadata for MockRule {
-        fn id(&self) -> i32 {
-            self.id
-        }
-        fn parent_id(&self) -> i32 {
-            0
-        }
-        fn status(&self) -> i32 {
-            0
-        }
-        fn set_id(&mut self, id: i32) {
-            self.id = id;
-        }
-        fn set_msg(&mut self, _msg: Macro) {}
-        fn set_severity(&mut self, _severity: RuleSeverity) {}
-        fn set_has_chain(&mut self, _has_chain: bool) {}
-        fn set_rev(&mut self, _rev: String) {}
-        fn set_ver(&mut self, _ver: String) {}
-        fn set_maturity(&mut self, _maturity: u8) {}
-        fn add_tag(&mut self, _tag: String) {}
-        fn set_log_data(&mut self, _log_data: Macro) {}
-        fn set_status(&mut self, _status: i32) {}
-        fn set_log(&mut self, _enabled: bool) {}
-        fn set_audit_log(&mut self, _enabled: bool) {}
     }
 
     #[test]
@@ -531,7 +510,7 @@ mod tests {
     #[test]
     fn test_mock_action_init() {
         let mut action = MockAction { initialized: false };
-        let mut rule = MockRule { id: 0 };
+        let mut rule = Rule::new();
 
         // Should succeed with empty data
         assert!(action.init(&mut rule, "").is_ok());

@@ -8,7 +8,7 @@
 //! processing - they only store information that appears in logs and alerts.
 
 use crate::RuleSeverity;
-use crate::actions::{Action, ActionError, ActionType, RuleMetadata, TransactionState};
+use crate::actions::{Action, ActionError, ActionType, Rule, TransactionState};
 use crate::operators::Macro;
 
 /// `id` action - Assigns a unique numeric ID to the rule.
@@ -29,7 +29,7 @@ use crate::operators::Macro;
 pub struct IdAction;
 
 impl Action for IdAction {
-    fn init(&mut self, rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
@@ -45,11 +45,11 @@ impl Action for IdAction {
             )));
         }
 
-        rule.set_id(id);
+        rule.id = id;
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &dyn RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
         // Metadata actions don't execute at runtime
     }
 
@@ -78,7 +78,7 @@ impl Action for IdAction {
 pub struct MsgAction;
 
 impl Action for MsgAction {
-    fn init(&mut self, rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
@@ -86,11 +86,11 @@ impl Action for MsgAction {
         // Remove surrounding quotes if present
         let msg_text = crate::utils::strings::maybe_remove_quotes(data);
         let msg = Macro::new(msg_text)?;
-        rule.set_msg(msg);
+        rule.msg = Some(msg);
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &dyn RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
         // Metadata actions don't execute at runtime
     }
 
@@ -118,16 +118,16 @@ impl Action for MsgAction {
 pub struct TagAction;
 
 impl Action for TagAction {
-    fn init(&mut self, rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
 
-        rule.add_tag(data.to_string());
+        rule.tags.push(data.to_string());
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &dyn RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
         // Metadata actions don't execute at runtime
     }
 
@@ -166,7 +166,7 @@ impl Action for TagAction {
 pub struct SeverityAction;
 
 impl Action for SeverityAction {
-    fn init(&mut self, rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
@@ -175,11 +175,11 @@ impl Action for SeverityAction {
             .parse::<RuleSeverity>()
             .map_err(|e| ActionError::InvalidArguments(e.to_string()))?;
 
-        rule.set_severity(severity);
+        rule.severity = Some(severity);
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &dyn RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
         // Metadata actions don't execute at runtime
     }
 
@@ -206,16 +206,16 @@ impl Action for SeverityAction {
 pub struct RevAction;
 
 impl Action for RevAction {
-    fn init(&mut self, rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
 
-        rule.set_rev(data.to_string());
+        rule.rev = data.to_string();
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &dyn RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
         // Metadata actions don't execute at runtime
     }
 
@@ -242,16 +242,16 @@ impl Action for RevAction {
 pub struct VerAction;
 
 impl Action for VerAction {
-    fn init(&mut self, rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
 
-        rule.set_ver(data.to_string());
+        rule.ver = data.to_string();
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &dyn RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
         // Metadata actions don't execute at runtime
     }
 
@@ -280,7 +280,7 @@ impl Action for VerAction {
 pub struct MaturityAction;
 
 impl Action for MaturityAction {
-    fn init(&mut self, rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
         let maturity = data
             .parse::<u8>()
             .map_err(|e| ActionError::InvalidArguments(format!("invalid maturity: {}", e)))?;
@@ -292,11 +292,11 @@ impl Action for MaturityAction {
             )));
         }
 
-        rule.set_maturity(maturity);
+        rule.maturity = maturity;
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &dyn RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
         // Metadata actions don't execute at runtime
     }
 
@@ -310,73 +310,10 @@ mod tests {
     use super::*;
     use crate::RuleSeverity;
 
-    // Mock RuleMetadata for testing
-    struct MockRule {
-        id: i32,
-        msg: Option<Macro>,
-        severity: Option<RuleSeverity>,
-        tags: Vec<String>,
-        rev: String,
-        ver: String,
-        maturity: u8,
-    }
-
-    impl MockRule {
-        fn new() -> Self {
-            Self {
-                id: 0,
-                msg: None,
-                severity: None,
-                tags: Vec::new(),
-                rev: String::new(),
-                ver: String::new(),
-                maturity: 0,
-            }
-        }
-    }
-
-    impl RuleMetadata for MockRule {
-        fn id(&self) -> i32 {
-            self.id
-        }
-        fn parent_id(&self) -> i32 {
-            0
-        }
-        fn status(&self) -> i32 {
-            0
-        }
-        fn set_id(&mut self, id: i32) {
-            self.id = id;
-        }
-        fn set_msg(&mut self, msg: Macro) {
-            self.msg = Some(msg);
-        }
-        fn set_severity(&mut self, severity: RuleSeverity) {
-            self.severity = Some(severity);
-        }
-        fn set_has_chain(&mut self, _has_chain: bool) {}
-        fn set_rev(&mut self, rev: String) {
-            self.rev = rev;
-        }
-        fn set_ver(&mut self, ver: String) {
-            self.ver = ver;
-        }
-        fn set_maturity(&mut self, maturity: u8) {
-            self.maturity = maturity;
-        }
-        fn add_tag(&mut self, tag: String) {
-            self.tags.push(tag);
-        }
-        fn set_log_data(&mut self, _log_data: Macro) {}
-        fn set_status(&mut self, _status: i32) {}
-        fn set_log(&mut self, _enabled: bool) {}
-        fn set_audit_log(&mut self, _enabled: bool) {}
-    }
-
     // ID Action Tests
     #[test]
     fn test_id_empty() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = IdAction;
         assert_eq!(
             action.init(&mut rule, ""),
@@ -386,7 +323,7 @@ mod tests {
 
     #[test]
     fn test_id_non_numeric() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = IdAction;
         assert!(matches!(
             action.init(&mut rule, "x"),
@@ -396,7 +333,7 @@ mod tests {
 
     #[test]
     fn test_id_zero() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = IdAction;
         assert!(matches!(
             action.init(&mut rule, "0"),
@@ -406,7 +343,7 @@ mod tests {
 
     #[test]
     fn test_id_negative() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = IdAction;
         assert!(matches!(
             action.init(&mut rule, "-10"),
@@ -416,7 +353,7 @@ mod tests {
 
     #[test]
     fn test_id_valid() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = IdAction;
         assert!(action.init(&mut rule, "10").is_ok());
         assert_eq!(rule.id, 10);
@@ -425,7 +362,7 @@ mod tests {
     // MSG Action Tests
     #[test]
     fn test_msg_empty() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = MsgAction;
         assert_eq!(
             action.init(&mut rule, ""),
@@ -435,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_msg_valid() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = MsgAction;
         assert!(action.init(&mut rule, "test message").is_ok());
         assert!(rule.msg.is_some());
@@ -443,7 +380,7 @@ mod tests {
 
     #[test]
     fn test_msg_with_quotes() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = MsgAction;
         assert!(action.init(&mut rule, "'quoted message'").is_ok());
         assert!(rule.msg.is_some());
@@ -452,7 +389,7 @@ mod tests {
     // TAG Action Tests
     #[test]
     fn test_tag_empty() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = TagAction;
         assert_eq!(
             action.init(&mut rule, ""),
@@ -462,7 +399,7 @@ mod tests {
 
     #[test]
     fn test_tag_valid() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = TagAction;
         assert!(action.init(&mut rule, "WEB_ATTACK/XSS").is_ok());
         assert_eq!(rule.tags, vec!["WEB_ATTACK/XSS"]);
@@ -470,7 +407,7 @@ mod tests {
 
     #[test]
     fn test_tag_multiple() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action1 = TagAction;
         let mut action2 = TagAction;
         assert!(action1.init(&mut rule, "TAG1").is_ok());
@@ -493,7 +430,7 @@ mod tests {
         ];
 
         for (name, expected) in test_cases {
-            let mut rule = MockRule::new();
+            let mut rule = Rule::new();
             let mut action = SeverityAction;
             assert!(action.init(&mut rule, name).is_ok(), "Failed for {}", name);
             assert_eq!(rule.severity, Some(expected), "Mismatch for {}", name);
@@ -503,7 +440,7 @@ mod tests {
     #[test]
     fn test_severity_numeric() {
         for i in 0..=7 {
-            let mut rule = MockRule::new();
+            let mut rule = Rule::new();
             let mut action = SeverityAction;
             let data = i.to_string();
             assert!(action.init(&mut rule, &data).is_ok());
@@ -513,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_severity_empty() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = SeverityAction;
         assert_eq!(
             action.init(&mut rule, ""),
@@ -524,7 +461,7 @@ mod tests {
     // REV Action Tests
     #[test]
     fn test_rev_empty() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = RevAction;
         assert_eq!(
             action.init(&mut rule, ""),
@@ -534,7 +471,7 @@ mod tests {
 
     #[test]
     fn test_rev_valid() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = RevAction;
         assert!(action.init(&mut rule, "2.1.3").is_ok());
         assert_eq!(rule.rev, "2.1.3");
@@ -543,7 +480,7 @@ mod tests {
     // VER Action Tests
     #[test]
     fn test_ver_empty() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = VerAction;
         assert_eq!(
             action.init(&mut rule, ""),
@@ -553,7 +490,7 @@ mod tests {
 
     #[test]
     fn test_ver_valid() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = VerAction;
         assert!(action.init(&mut rule, "1.2.3").is_ok());
         assert_eq!(rule.ver, "1.2.3");
@@ -562,7 +499,7 @@ mod tests {
     // MATURITY Action Tests
     #[test]
     fn test_maturity_empty() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = MaturityAction;
         assert!(matches!(
             action.init(&mut rule, ""),
@@ -572,7 +509,7 @@ mod tests {
 
     #[test]
     fn test_maturity_non_numeric() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = MaturityAction;
         assert!(matches!(
             action.init(&mut rule, "abc"),
@@ -582,7 +519,7 @@ mod tests {
 
     #[test]
     fn test_maturity_negative() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = MaturityAction;
         assert!(matches!(
             action.init(&mut rule, "-10"),
@@ -592,7 +529,7 @@ mod tests {
 
     #[test]
     fn test_maturity_zero() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = MaturityAction;
         assert!(matches!(
             action.init(&mut rule, "0"),
@@ -602,7 +539,7 @@ mod tests {
 
     #[test]
     fn test_maturity_valid() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = MaturityAction;
         assert!(action.init(&mut rule, "5").is_ok());
         assert_eq!(rule.maturity, 5);
@@ -610,7 +547,7 @@ mod tests {
 
     #[test]
     fn test_maturity_out_of_range() {
-        let mut rule = MockRule::new();
+        let mut rule = Rule::new();
         let mut action = MaturityAction;
         assert!(matches!(
             action.init(&mut rule, "10"),
