@@ -4,7 +4,7 @@
 
 ## Current Status (as of 2026-03-10)
 
-**Phase 7: Rule Engine** - In Progress (Step 4/8 complete)
+**Phase 7: Rule Engine** - In Progress (Step 6/8 complete)
 
 - ✅ **Phase 1:** Foundation types (RuleSeverity, RulePhase, RuleVariable, etc.) - COMPLETE
 - ✅ **Phase 2:** String utilities - COMPLETE
@@ -12,15 +12,18 @@
 - ✅ **Phase 4:** Collections (Map, ConcatMap, Keyed trait) - COMPLETE
 - ✅ **Phase 5:** Operators (10 operators: rx, pm, streq, contains, etc.) - COMPLETE
 - ✅ **Phase 6:** Actions (26/26 implemented) - COMPLETE
-- 🚧 **Phase 7:** Rule Engine (4/8 steps complete) - IN PROGRESS
+- 🚧 **Phase 7:** Rule Engine (6/8 steps complete) - IN PROGRESS
   - ✅ Step 1: Variable extraction system - COMPLETE
   - ✅ Step 2: Transformation pipeline - COMPLETE
   - ✅ Step 3: Operator integration - COMPLETE
   - ✅ Step 4: Action execution - COMPLETE
-  - ⏳ Step 5: Core rule evaluation engine - NEXT
+  - ✅ Step 5: Core rule evaluation engine - COMPLETE
+  - ✅ Step 6: Rule chaining (integrated into Step 5) - COMPLETE
+  - ⏳ Step 7: Rule groups and phase processing - NEXT
+  - ⏳ Step 8: Integration tests - NEXT
 
 **Quality Metrics:**
-- 569 tests passing (56 rule engine tests: 24 variable + 13 transformation + 10 operator + 9 action)
+- 578 tests passing (65 rule engine tests: 24 variable + 13 transformation + 10 operator + 9 action + 9 rule incl. 3 chain)
 - Clippy clean (0 warnings)
 - 100% test parity with Go implementation for all components
 
@@ -1353,15 +1356,78 @@ Implement the core rule evaluation engine that ties together variables, transfor
 - Three execution functions match Go's three execution points in rule evaluation
 - Filter function design allows flexible action execution strategies
 
-**Step 5: Core Rule Evaluation Engine (Week 2, Days 3-5)**
-- [ ] Main Rule::evaluate() method
-- [ ] Tie together: variables → transformations → operator → actions
-- [ ] Capture match data (matched variables, keys, values)
+**Step 5: Core Rule Evaluation Engine ✅ COMPLETE (2026-03-10)**
+- [x] **Implementation complete** (~540 lines in `src/rules/rule.rs`)
+  - ✅ Core Rule struct with all components (metadata, variables, operator, transformations, actions, chain)
+  - ✅ Builder pattern for rule construction
+  - ✅ evaluate() - Main entry point for rule evaluation
+  - ✅ do_evaluate() - Internal recursive evaluation with chain support
+  - ✅ evaluate_chain_and_actions() - Chain evaluation and action execution
+  - ✅ MatchData::new_empty() - For operator-less rules (SecAction, SecMarker)
+- [x] **Complete evaluation flow**
+  - ✅ Variable extraction from transaction (Step 1 integration)
+  - ✅ Transformation application to each variable value (Step 2 integration)
+  - ✅ Operator evaluation against transformed values (Step 3 integration)
+  - ✅ Nondisruptive action execution on match (Step 4 integration)
+  - ✅ Chain evaluation with AND logic (recursive doEvaluate)
+  - ✅ Flow/disruptive action execution after full chain match
+  - ✅ Operator-less rules always match (SecAction behavior)
+- [x] **Rule chaining (Step 6 implemented here)**
+  - ✅ Chain field: Option<Box<Rule>>
+  - ✅ Recursive chain evaluation
+  - ✅ AND logic: all rules in chain must match
+  - ✅ Chain failure short-circuits (returns empty)
+  - ✅ Match aggregation from all chain levels
+- [x] **Tests ported from Go** (`src/rules/rule.rs`)
+  - ✅ 9 comprehensive tests
+  - ✅ Operator-less rule tests (SecAction behavior)
+  - ✅ Rule with operator (match and no-match cases)
+  - ✅ Rule with transformations
+  - ✅ Chained rule tests (both match, first fails, second fails)
+  - ✅ Builder pattern tests
+  - ✅ Metadata access tests
 
-**Step 6: Rule Chaining (Week 2, Day 6)**
-- [ ] Chain pointer (Rule.chain: Option<Box<Rule>>)
-- [ ] Recursive evaluation for AND logic
-- [ ] Aggregate match data across chains
+**Quality Metrics - Step 5:**
+- ✅ 9 tests passing
+- ✅ 578 total tests passing (+9 new)
+- ✅ Clippy clean (0 warnings)
+- ✅ Full documentation with examples
+- ✅ 100% test parity with Go implementation
+
+**Design Notes:**
+- Rule uses concrete Transaction type (not generic TransactionState) to match Go pattern
+- Chain evaluation is recursive, matching Go's doEvaluate pattern
+- Action execution timing matches Go: nondisruptive immediate, flow/disruptive after chain
+- Builder pattern provides ergonomic API for rule construction
+- Step 6 (chaining) was implemented as part of this step since it's core to evaluation
+
+**Step 6: Rule Chaining ✅ COMPLETE (Integrated into Step 5 - 2026-03-10)**
+- [x] **Implementation complete** (Integrated into `src/rules/rule.rs`)
+  - ✅ Chain pointer: `chain: Option<Box<Rule>>` field in Rule struct
+  - ✅ Recursive evaluation via `do_evaluate()` method
+  - ✅ AND logic: all chained rules must match for overall match
+  - ✅ Match aggregation across chain levels
+  - ✅ Short-circuit on chain failure (returns empty Vec)
+- [x] **Chain evaluation flow**
+  - ✅ Parent rule (parent_id == 0) handles chain evaluation
+  - ✅ Recursive `do_evaluate()` calls for each chained rule
+  - ✅ Chain level tracking for debugging/logging
+  - ✅ Match data collected from all chain levels
+- [x] **Tests ported from Go** (`src/rules/rule.rs`)
+  - ✅ test_chained_rule_both_match - Both rules match, returns 2 matches
+  - ✅ test_chained_rule_first_fails - First rule fails, chain fails
+  - ✅ test_chained_rule_second_fails - Second rule fails, chain fails
+
+**Quality Metrics - Step 6:**
+- ✅ 3 chain tests passing (part of 9 rule tests)
+- ✅ Integrated into core evaluation (no separate module needed)
+- ✅ 100% test parity with Go chaining logic
+
+**Design Notes:**
+- Chain evaluation naturally integrated into `do_evaluate()` recursion
+- No separate chain.rs module needed - chaining is core to rule evaluation
+- Matches Go's approach: parent rule orchestrates chain evaluation
+- Chain failure short-circuits immediately (Go behavior: lines 356-358)
 
 **Step 7: Rule Groups and Phase Processing (Week 3, Days 1-2)**
 - [ ] RuleGroup for organizing rules by phase

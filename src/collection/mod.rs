@@ -62,6 +62,17 @@ impl MatchData {
             value: value.into(),
         }
     }
+
+    /// Create an empty MatchData instance for operator-less rules.
+    ///
+    /// Used for rules without operators (SecAction, SecMarker) that always match.
+    pub fn new_empty() -> Self {
+        Self {
+            variable: RuleVariable::Unknown,
+            key: String::new(),
+            value: String::new(),
+        }
+    }
 }
 
 /// Base trait for all collections.

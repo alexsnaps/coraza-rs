@@ -33,6 +33,7 @@
 
 pub mod action;
 pub mod operator;
+pub mod rule;
 pub mod transformation;
 pub mod variable;
 
@@ -40,5 +41,6 @@ pub use action::{
     RuleAction, execute_actions, execute_flow_and_disruptive_actions, execute_nondisruptive_actions,
 };
 pub use operator::{OperatorEnum, RuleOperator};
+pub use rule::Rule;
 pub use transformation::TransformationChain;
 pub use variable::{VariableException, VariableKey, VariableSpec};
