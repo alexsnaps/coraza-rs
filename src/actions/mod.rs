@@ -59,6 +59,7 @@
 mod disruptive;
 mod logging;
 mod metadata;
+mod variables;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -74,6 +75,7 @@ pub use logging::{AuditlogAction, LogAction, LogdataAction, NoauditlogAction, No
 pub use metadata::{
     IdAction, MaturityAction, MsgAction, RevAction, SeverityAction, TagAction, VerAction,
 };
+pub use variables::SetvarAction;
 
 /// Action execution errors.
 #[derive(Debug, Clone, PartialEq)]
@@ -328,6 +330,9 @@ fn create_redirect() -> Box<dyn Action> {
 fn create_pass() -> Box<dyn Action> {
     Box::new(PassAction)
 }
+fn create_setvar() -> Box<dyn Action> {
+    Box::new(SetvarAction::new())
+}
 
 /// Initialize the action registry with built-in actions.
 fn init_registry() -> HashMap<String, ActionFactory> {
@@ -356,6 +361,9 @@ fn init_registry() -> HashMap<String, ActionFactory> {
     registry.insert("block".to_string(), create_block as ActionFactory);
     registry.insert("redirect".to_string(), create_redirect as ActionFactory);
     registry.insert("pass".to_string(), create_pass as ActionFactory);
+
+    // Variable manipulation actions
+    registry.insert("setvar".to_string(), create_setvar as ActionFactory);
 
     registry
 }
@@ -626,5 +634,22 @@ mod tests {
                 name
             );
         }
+    }
+
+    #[test]
+    fn test_setvar_registered() {
+        // Ensure setvar action is registered
+        assert!(get("setvar").is_ok(), "Action 'setvar' not registered");
+    }
+
+    #[test]
+    fn test_setvar_action_type() {
+        // Verify setvar has Nondisruptive type
+        let action = get("setvar").unwrap();
+        assert_eq!(
+            action.action_type(),
+            ActionType::Nondisruptive,
+            "Action 'setvar' should be Nondisruptive"
+        );
     }
 }

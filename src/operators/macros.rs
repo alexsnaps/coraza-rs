@@ -62,6 +62,23 @@ pub trait TransactionState {
     fn set_allow_type(&mut self, allow_type: crate::actions::AllowType) {
         let _ = allow_type; // Suppress unused warnings for default impl
     }
+
+    /// Get a mutable reference to a collection by variable.
+    ///
+    /// Used by variable manipulation actions like `setvar` to modify collections.
+    ///
+    /// # Arguments
+    /// * `variable` - The variable identifying which collection to retrieve
+    ///
+    /// # Returns
+    /// A mutable reference to the collection, or None if not available
+    fn collection_mut(
+        &mut self,
+        variable: RuleVariable,
+    ) -> Option<&mut dyn crate::collection::MapCollection> {
+        let _ = variable; // Suppress unused warnings for default impl
+        None
+    }
 }
 
 /// A macro that can expand variable references at runtime.
@@ -117,6 +134,17 @@ impl fmt::Display for MacroError {
 impl std::error::Error for MacroError {}
 
 impl Macro {
+    /// Creates an empty macro (no expansion).
+    ///
+    /// Returns a macro that will always expand to an empty string.
+    /// This is useful as a placeholder value.
+    pub fn empty() -> Self {
+        Self {
+            original: String::new(),
+            tokens: vec![],
+        }
+    }
+
     /// Creates a new macro from a string pattern.
     ///
     /// Empty strings are allowed and will be returned unchanged during expansion.
@@ -149,7 +177,7 @@ impl Macro {
     ///
     /// This method uses static dispatch (generics) for zero-overhead abstraction.
     /// The compiler can inline the entire expansion path.
-    pub fn expand<TX: TransactionState>(&self, tx: Option<&TX>) -> String {
+    pub fn expand<TX: TransactionState + ?Sized>(&self, tx: Option<&TX>) -> String {
         // Handle empty macros
         if self.tokens.is_empty() {
             return String::new();
@@ -171,7 +199,7 @@ impl Macro {
         }
     }
 
-    fn expand_token<TX: TransactionState>(tx: &TX, token: &MacroToken) -> String {
+    fn expand_token<TX: TransactionState + ?Sized>(tx: &TX, token: &MacroToken) -> String {
         match (&token.variable, &token.key) {
             (Some(var), key) => {
                 let key_str = key.as_deref();
