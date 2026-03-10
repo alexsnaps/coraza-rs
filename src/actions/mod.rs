@@ -57,6 +57,7 @@
 //! ```
 
 mod disruptive;
+mod flow;
 mod logging;
 mod metadata;
 mod variables;
@@ -71,6 +72,7 @@ use crate::operators::Macro;
 pub use disruptive::{
     AllowAction, AllowType, BlockAction, DenyAction, DropAction, PassAction, RedirectAction,
 };
+pub use flow::{ChainAction, SkipAction, SkipAfterAction};
 pub use logging::{AuditlogAction, LogAction, LogdataAction, NoauditlogAction, NologAction};
 pub use metadata::{
     IdAction, MaturityAction, MsgAction, RevAction, SeverityAction, TagAction, VerAction,
@@ -343,6 +345,15 @@ fn create_pass() -> Box<dyn Action> {
 fn create_setvar() -> Box<dyn Action> {
     Box::new(SetvarAction::new())
 }
+fn create_chain() -> Box<dyn Action> {
+    Box::new(ChainAction)
+}
+fn create_skip() -> Box<dyn Action> {
+    Box::new(SkipAction::new())
+}
+fn create_skipafter() -> Box<dyn Action> {
+    Box::new(SkipAfterAction::new())
+}
 
 /// Initialize the action registry with built-in actions.
 fn init_registry() -> HashMap<String, ActionFactory> {
@@ -374,6 +385,11 @@ fn init_registry() -> HashMap<String, ActionFactory> {
 
     // Variable manipulation actions
     registry.insert("setvar".to_string(), create_setvar as ActionFactory);
+
+    // Flow control actions
+    registry.insert("chain".to_string(), create_chain as ActionFactory);
+    registry.insert("skip".to_string(), create_skip as ActionFactory);
+    registry.insert("skipafter".to_string(), create_skipafter as ActionFactory);
 
     registry
 }
@@ -619,6 +635,30 @@ mod tests {
     fn test_setvar_registered() {
         // Ensure setvar action is registered
         assert!(get("setvar").is_ok(), "Action 'setvar' not registered");
+    }
+
+    #[test]
+    fn test_all_flow_actions_registered() {
+        // Ensure all 3 flow actions are registered
+        let actions = vec!["chain", "skip", "skipafter"];
+        for name in actions {
+            assert!(get(name).is_ok(), "Action '{}' not registered", name);
+        }
+    }
+
+    #[test]
+    fn test_flow_action_types() {
+        // Verify all flow actions have Flow type
+        let actions = vec!["chain", "skip", "skipafter"];
+        for name in actions {
+            let action = get(name).unwrap();
+            assert_eq!(
+                action.action_type(),
+                ActionType::Flow,
+                "Action '{}' should be Flow",
+                name
+            );
+        }
     }
 
     #[test]

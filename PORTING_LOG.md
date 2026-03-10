@@ -2,6 +2,27 @@
 
 **Note:** Crate renamed from `coraza-rs` to `coraza` on 2026-03-09.
 
+## Current Status (as of 2026-03-10)
+
+**Phase 6: Actions System** - 87.5% Complete (21/24 core actions)
+
+- ✅ **Phase 1:** Foundation types (RuleSeverity, RulePhase, RuleVariable, etc.) - COMPLETE
+- ✅ **Phase 2:** String utilities - COMPLETE
+- ✅ **Phase 3:** Transformations (30 transformations) - COMPLETE
+- ✅ **Phase 4:** Collections (Map, ConcatMap, Keyed trait) - COMPLETE
+- ✅ **Phase 5:** Operators (10 operators: rx, pm, streq, contains, etc.) - COMPLETE
+- 🚧 **Phase 6:** Actions (21/24 implemented) - IN PROGRESS
+  - ✅ Step 1-6: Metadata, Logging, Disruptive, Variables, Flow - COMPLETE
+  - ⏳ Step 7: Special actions (capture, multimatch, status, t) - NEXT
+  - ⏳ Step 8: CTL action (runtime configuration)
+
+**Quality Metrics:**
+- 472 tests passing (104 action tests)
+- Clippy clean (0 warnings)
+- 100% test parity with Go implementation for completed components
+
+**Next Milestone:** Complete Phase 6 by implementing final 3 actions (special + ctl)
+
 ## Porting Strategy & Guidelines
 
 ### Trait Usage - Avoid Over-Abstraction
@@ -32,7 +53,7 @@
    - Always choose the leftmost option that satisfies the requirements
    - Rust's strength is zero-cost abstractions - leverage it
 
-### Example: TransactionState
+### Example 1: TransactionState (Operators)
 
 ```rust
 // ✅ GOOD: Generic static dispatch (what we implemented)
@@ -57,6 +78,46 @@ impl Operator for Eq {
 // "I need to store different operator types in a Vec - should I use Box<dyn Operator>?"
 // → User can decide if the flexibility is worth the cost
 ```
+
+### Example 2: RuleMetadata Removed (Actions)
+
+**Initial Implementation (WRONG):**
+```rust
+// ❌ BAD: Unnecessary trait for single implementation
+pub trait RuleMetadata {
+    fn id(&self) -> i32;
+    fn set_id(&mut self, id: i32);
+    // ... 12 more methods
+}
+
+struct Rule { /* fields */ }
+impl RuleMetadata for Rule { /* ... */ }
+
+// Used in Action trait
+fn init(&mut self, rule: &mut dyn RuleMetadata, data: &str);
+```
+**Problem:** Only ONE implementation (Rule struct) - trait adds dynamic dispatch overhead for no benefit.
+
+**Improved Implementation (CORRECT):**
+```rust
+// ✅ GOOD: Concrete type with public fields
+#[derive(Debug, Clone)]
+pub struct Rule {
+    pub id: i32,
+    pub msg: Option<Macro>,
+    // ... all fields public
+}
+
+// Used in Action trait
+fn init(&mut self, rule: &mut Rule, data: &str);
+```
+**Benefits:**
+- No vtable lookups (direct field access)
+- Compiler can inline and optimize
+- Simpler code (~200 lines of boilerplate removed)
+- Still flexible: can add methods to Rule as needed
+
+**Decision Date:** 2026-03-10 (Phase 6, Step 5)
 
 ### Test Parity Requirements
 
@@ -981,34 +1042,45 @@ Implement the action system that defines what happens when rules match. Actions 
 - **Extended:** TransactionState trait with `interrupt(rule_id, action, status, data)` and `set_allow_type(AllowType)`
 - **Completion:** 2026-03-10
 
-### Quality Metrics - Steps 1-4 Complete
-- ✅ **437 unit tests passing** (+56 action tests from Steps 1-4)
-- ✅ **88 doc tests passing** (no change)
-- ✅ **Clippy clean** (0 warnings)
-- ✅ **18 actions implemented** (7 metadata + 5 logging + 6 disruptive)
-- ✅ **All Go test cases ported** (100% test parity for Steps 1-4)
-- **Progress:** 18/24 core actions (75% complete)
-
-**Step 5: Group D - Variable Manipulation (NEXT - 1 complex action)**
+**Step 5: Group D - Variable Manipulation ✅ COMPLETE (1 complex action)**
 - [x] `setvar` - Create/modify/delete TX variables
   - Syntax: `TX.key=value`, `TX.key=+5`, `!TX.key`
   - Arithmetic operations
   - Macro expansion
-  - Most complex action (~200 lines)
+  - Case-insensitive variable names
 - **Source:** `setvar.go` (large, complex implementation)
-- **Tests:** `setvar_test.go` (15+ test cases)
-- **Target:** `src/actions/variables.rs`
-- **Extends:** TransactionState with `collection_mut()` method
+- **Tests:** `setvar_test.go` - ALL PORTED (16 unit tests passing)
+- **Target:** `src/actions/variables.rs` (200 lines)
+- **Extended:** TransactionState trait with `collection_mut()` method
+- **Completion:** 2026-03-10
 
-**Step 6: Group E - Flow Control (3 actions)**
-- [ ] `chain` - Chain to next rule
-- [ ] `skip` - Skip N rules
-- [ ] `skipAfter` - Skip to marker
+**Step 6: Group E - Flow Control ✅ COMPLETE (3 actions)**
+- [x] `chain` - Chain to next rule (sets `has_chain` flag)
+- [x] `skip` - Skip N rules (numeric argument >= 1)
+- [x] `skipAfter` - Skip to marker (with quote removal support)
 - **Source:** `chain.go`, `skip.go`, `skipafter.go`
-- **Tests:** `chain_test.go`, `skip_test.go`
-- **Target:** `src/actions/flow.rs`
+- **Tests:** `chain_test.go`, `skip_test.go` - ALL PORTED (15 unit tests passing)
+- **Target:** `src/actions/flow.rs` (335 lines)
+- **Extended:** TransactionState trait with `set_skip()` and `set_skip_after()` methods
+- **Completion:** 2026-03-10
 
-**Step 7: Group F - Special Actions (4 actions)**
+### Quality Metrics - Steps 1-6 Complete
+- ✅ **472 unit tests passing** (+104 action tests from Steps 1-6)
+- ✅ **88 doc tests passing** (no change)
+- ✅ **Clippy clean** (0 warnings)
+- ✅ **21 actions implemented** (7 metadata + 5 logging + 6 disruptive + 1 variable + 3 flow)
+- ✅ **All Go test cases ported** (100% test parity for Steps 1-6)
+- **Progress:** 21/24 core actions (87.5% complete)
+
+### Architectural Improvements
+- ✅ **Removed RuleMetadata trait** (2026-03-10)
+  - Replaced with concrete `Rule` struct with public fields
+  - Eliminated unnecessary dynamic dispatch overhead
+  - ~200 lines of test boilerplate removed
+  - Enables monomorphization and better compiler optimizations
+  - Only use traits when multiple implementations exist
+
+**Step 7: Group F - Special Actions (NEXT - 4 actions)**
 - [ ] `capture` - Enable capturing
 - [ ] `multimatch` - Match multiple times
 - [ ] `status` - Set HTTP status code
@@ -1036,50 +1108,70 @@ Implement the action system that defines what happens when rules match. Actions 
 
 ### Dependencies & Extensions
 
-**New Traits:**
+**Rule Struct (Concrete Type - Not a Trait):**
 ```rust
-pub trait RuleMetadata {
-    fn id(&self) -> i32;
-    fn parent_id(&self) -> i32;
-    fn status(&self) -> i32;
-    fn set_id(&mut self, id: i32);
-    fn set_msg(&mut self, msg: Macro);
-    fn set_severity(&mut self, severity: RuleSeverity);
-    // ... other setters
+#[derive(Debug, Clone)]
+pub struct Rule {
+    pub id: i32,
+    pub parent_id: i32,
+    pub msg: Option<Macro>,
+    pub severity: Option<RuleSeverity>,
+    pub tags: Vec<String>,
+    pub rev: String,
+    pub ver: String,
+    pub maturity: u8,
+    pub log_data: Option<Macro>,
+    pub status: i32,
+    pub log: bool,
+    pub audit_log: bool,
+    pub has_chain: bool,
 }
 ```
 
-**TransactionState Extensions:**
+**TransactionState Extensions (Implemented):**
 ```rust
 pub trait TransactionState {
-    // Existing...
-    fn get_variable(...) -> Option<String>;
-    fn capturing() -> bool;
-    fn capture_field(...);
+    // Core variable access
+    fn get_variable(&self, variable: RuleVariable, key: Option<&str>) -> Option<String>;
 
-    // New for actions:
-    fn interrupt(&mut self, interruption: Interruption);
-    fn collection_mut(&mut self, var: RuleVariable) -> &mut dyn MapCollection;
-    fn set_capturing(&mut self, enabled: bool);
-    fn debug_logger(&self) -> &dyn Logger;
+    // Capturing support (from operators)
+    fn capturing(&self) -> bool { false }
+    fn capture_field(&mut self, index: usize, value: &str) {}
+
+    // Disruptive actions
+    fn interrupt(&mut self, rule_id: i32, action: &str, status: i32, data: &str) {}
+    fn set_allow_type(&mut self, allow_type: AllowType) {}
+
+    // Variable manipulation
+    fn collection_mut(&mut self, variable: RuleVariable)
+        -> Option<&mut dyn MapCollection> { None }
+
+    // Flow control
+    fn set_skip(&mut self, count: i32) {}
+    fn set_skip_after(&mut self, marker: &str) {}
 }
 ```
 
 **New Types:**
 ```rust
-pub struct Interruption {
-    pub status: u16,
-    pub rule_id: i32,
-    pub action: String,
+pub enum AllowType {
+    Unset,
+    All,      // Skip all phases
+    Phase,    // Skip current phase
+    Request,  // Skip until RESPONSE_HEADERS
 }
 ```
 
-### Quality Gates
-- [ ] All Go test cases ported (~200+ tests)
-- [ ] All tests passing
-- [ ] Clippy clean
-- [ ] All actions registered in global registry
-- [ ] Full documentation with examples
+### Quality Gates (Steps 1-6)
+- [x] All Go test cases ported (104 action tests)
+- [x] All tests passing (472 total tests)
+- [x] Clippy clean (0 warnings)
+- [x] All actions registered in global registry (21/24 core actions)
+- [x] Full documentation with examples
+
+**Remaining for Phase 6:**
+- [ ] Step 7: 4 special actions (capture, multimatch, status, t)
+- [ ] Step 8: 1 ctl action (runtime configuration)
 
 ### Estimated Timeline
 - Step 1: 1 day

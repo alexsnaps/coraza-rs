@@ -79,6 +79,26 @@ pub trait TransactionState {
         let _ = variable; // Suppress unused warnings for default impl
         None
     }
+
+    /// Set the number of rules to skip.
+    ///
+    /// Called by the `skip` action to skip the next N rules in the current phase.
+    ///
+    /// # Arguments
+    /// * `count` - Number of rules to skip (must be >= 1)
+    fn set_skip(&mut self, count: i32) {
+        let _ = count; // Suppress unused warnings for default impl
+    }
+
+    /// Set the marker to skip to.
+    ///
+    /// Called by the `skipAfter` action to skip rules until reaching a marker.
+    ///
+    /// # Arguments
+    /// * `marker` - Marker ID to skip to
+    fn set_skip_after(&mut self, marker: &str) {
+        let _ = marker; // Suppress unused warnings for default impl
+    }
 }
 
 /// A macro that can expand variable references at runtime.
