@@ -4,24 +4,23 @@
 
 ## Current Status (as of 2026-03-10)
 
-**Phase 6: Actions System** - 87.5% Complete (21/24 core actions)
+**Phase 6: Actions System** - 96% Complete (25/26 core actions)
 
 - ✅ **Phase 1:** Foundation types (RuleSeverity, RulePhase, RuleVariable, etc.) - COMPLETE
 - ✅ **Phase 2:** String utilities - COMPLETE
 - ✅ **Phase 3:** Transformations (30 transformations) - COMPLETE
 - ✅ **Phase 4:** Collections (Map, ConcatMap, Keyed trait) - COMPLETE
 - ✅ **Phase 5:** Operators (10 operators: rx, pm, streq, contains, etc.) - COMPLETE
-- 🚧 **Phase 6:** Actions (21/24 implemented) - IN PROGRESS
-  - ✅ Step 1-6: Metadata, Logging, Disruptive, Variables, Flow - COMPLETE
-  - ⏳ Step 7: Special actions (capture, multimatch, status, t) - NEXT
-  - ⏳ Step 8: CTL action (runtime configuration)
+- 🚧 **Phase 6:** Actions (25/26 implemented) - NEARLY COMPLETE
+  - ✅ Step 1-7: Metadata, Logging, Disruptive, Variables, Flow, Special - COMPLETE
+  - ⏳ Step 8: CTL action (runtime configuration) - FINAL ACTION
 
 **Quality Metrics:**
-- 472 tests passing (104 action tests)
+- 491 tests passing (123 action tests)
 - Clippy clean (0 warnings)
 - 100% test parity with Go implementation for completed components
 
-**Next Milestone:** Complete Phase 6 by implementing final 3 actions (special + ctl)
+**Next Milestone:** Complete Phase 6 by implementing CTL action (final action!)
 
 ## Porting Strategy & Guidelines
 
@@ -1064,13 +1063,25 @@ Implement the action system that defines what happens when rules match. Actions 
 - **Extended:** TransactionState trait with `set_skip()` and `set_skip_after()` methods
 - **Completion:** 2026-03-10
 
-### Quality Metrics - Steps 1-6 Complete
-- ✅ **472 unit tests passing** (+104 action tests from Steps 1-6)
+**Step 7: Group F - Special Actions ✅ COMPLETE (4 actions)**
+- [x] `capture` - Enable regex capturing (sets `capture` flag)
+- [x] `multimatch` - Match before/after each transformation (sets `multi_match` flag)
+- [x] `status` - Set HTTP status code for blocking actions
+- [x] `t` - Apply transformations to variables (manages transformation pipeline)
+- **Source:** `capture.go`, `multimatch.go`, `status.go`, `t.go`
+- **Tests:** `capture_test.go`, `multimatch_test.go` - ALL PORTED (17 unit tests passing)
+- **Target:** `src/actions/special.rs` (348 lines)
+- **Extended Rule struct:** Added `capture`, `multi_match`, and `transformations` fields
+- **Note:** `t` action stores transformation names; validation deferred to rule engine (Phase 8)
+- **Completion:** 2026-03-10
+
+### Quality Metrics - Steps 1-7 Complete
+- ✅ **491 unit tests passing** (+123 action tests from Steps 1-7)
 - ✅ **88 doc tests passing** (no change)
 - ✅ **Clippy clean** (0 warnings)
-- ✅ **21 actions implemented** (7 metadata + 5 logging + 6 disruptive + 1 variable + 3 flow)
-- ✅ **All Go test cases ported** (100% test parity for Steps 1-6)
-- **Progress:** 21/24 core actions (87.5% complete)
+- ✅ **25 actions implemented** (7 metadata + 5 logging + 6 disruptive + 1 variable + 3 flow + 4 special)
+- ✅ **All Go test cases ported** (100% test parity for Steps 1-7)
+- **Progress:** 25/26 core actions (96% complete)
 
 ### Architectural Improvements
 - ✅ **Removed RuleMetadata trait** (2026-03-10)
@@ -1080,16 +1091,7 @@ Implement the action system that defines what happens when rules match. Actions 
   - Enables monomorphization and better compiler optimizations
   - Only use traits when multiple implementations exist
 
-**Step 7: Group F - Special Actions (NEXT - 4 actions)**
-- [ ] `capture` - Enable capturing
-- [ ] `multimatch` - Match multiple times
-- [ ] `status` - Set HTTP status code
-- [ ] `t` - Apply transformations (basic stub)
-- **Source:** `capture.go`, `multimatch.go`, `status.go`, `t.go`
-- **Tests:** `capture_test.go`, `multimatch_test.go`
-- **Target:** `src/actions/special.rs`
-
-**Step 8: Group G - CTL Action (1 mega-action)**
+**Step 8: Group G - CTL Action (FINAL ACTION - 1 mega-action)**
 - [ ] `ctl` - Runtime configuration (18+ sub-commands)
   - `ctl:ruleEngine=On/Off/DetectionOnly`
   - `ctl:auditEngine=On/Off/RelevantOnly`
@@ -1125,6 +1127,9 @@ pub struct Rule {
     pub log: bool,
     pub audit_log: bool,
     pub has_chain: bool,
+    pub capture: bool,          // Enable regex capturing
+    pub multi_match: bool,      // Check before/after each transformation
+    pub transformations: Vec<String>,  // Transformation pipeline
 }
 ```
 
@@ -1162,16 +1167,15 @@ pub enum AllowType {
 }
 ```
 
-### Quality Gates (Steps 1-6)
-- [x] All Go test cases ported (104 action tests)
-- [x] All tests passing (472 total tests)
+### Quality Gates (Steps 1-7)
+- [x] All Go test cases ported (123 action tests)
+- [x] All tests passing (491 total tests)
 - [x] Clippy clean (0 warnings)
-- [x] All actions registered in global registry (21/24 core actions)
+- [x] All actions registered in global registry (25/26 core actions)
 - [x] Full documentation with examples
 
 **Remaining for Phase 6:**
-- [ ] Step 7: 4 special actions (capture, multimatch, status, t)
-- [ ] Step 8: 1 ctl action (runtime configuration)
+- [ ] Step 8: 1 ctl action (runtime configuration) - FINAL ACTION!
 
 ### Estimated Timeline
 - Step 1: 1 day

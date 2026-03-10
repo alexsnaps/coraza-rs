@@ -60,6 +60,7 @@ mod disruptive;
 mod flow;
 mod logging;
 mod metadata;
+mod special;
 mod variables;
 
 use std::collections::HashMap;
@@ -77,6 +78,7 @@ pub use logging::{AuditlogAction, LogAction, LogdataAction, NoauditlogAction, No
 pub use metadata::{
     IdAction, MaturityAction, MsgAction, RevAction, SeverityAction, TagAction, VerAction,
 };
+pub use special::{CaptureAction, MultimatchAction, StatusAction, TAction};
 pub use variables::SetvarAction;
 
 /// Action execution errors.
@@ -181,6 +183,12 @@ pub struct Rule {
     pub audit_log: bool,
     /// Whether this rule chains to the next
     pub has_chain: bool,
+    /// Whether to capture regex groups into TX variables
+    pub capture: bool,
+    /// Whether to check variables before/after each transformation
+    pub multi_match: bool,
+    /// Transformation pipeline (name, function)
+    pub transformations: Vec<String>,
 }
 
 impl Rule {
@@ -200,6 +208,9 @@ impl Rule {
             log: false,
             audit_log: false,
             has_chain: false,
+            capture: false,
+            multi_match: false,
+            transformations: Vec::new(),
         }
     }
 }
@@ -354,6 +365,18 @@ fn create_skip() -> Box<dyn Action> {
 fn create_skipafter() -> Box<dyn Action> {
     Box::new(SkipAfterAction::new())
 }
+fn create_capture() -> Box<dyn Action> {
+    Box::new(CaptureAction)
+}
+fn create_multimatch() -> Box<dyn Action> {
+    Box::new(MultimatchAction)
+}
+fn create_status() -> Box<dyn Action> {
+    Box::new(StatusAction)
+}
+fn create_t() -> Box<dyn Action> {
+    Box::new(TAction)
+}
 
 /// Initialize the action registry with built-in actions.
 fn init_registry() -> HashMap<String, ActionFactory> {
@@ -390,6 +413,12 @@ fn init_registry() -> HashMap<String, ActionFactory> {
     registry.insert("chain".to_string(), create_chain as ActionFactory);
     registry.insert("skip".to_string(), create_skip as ActionFactory);
     registry.insert("skipafter".to_string(), create_skipafter as ActionFactory);
+
+    // Special actions
+    registry.insert("capture".to_string(), create_capture as ActionFactory);
+    registry.insert("multimatch".to_string(), create_multimatch as ActionFactory);
+    registry.insert("status".to_string(), create_status as ActionFactory);
+    registry.insert("t".to_string(), create_t as ActionFactory);
 
     registry
 }
@@ -659,6 +688,40 @@ mod tests {
                 name
             );
         }
+    }
+
+    #[test]
+    fn test_all_special_actions_registered() {
+        // Ensure all 4 special actions are registered
+        let actions = vec!["capture", "multimatch", "status", "t"];
+        for name in actions {
+            assert!(get(name).is_ok(), "Action '{}' not registered", name);
+        }
+    }
+
+    #[test]
+    fn test_special_action_types() {
+        // Verify special action types
+        assert_eq!(
+            get("capture").unwrap().action_type(),
+            ActionType::Nondisruptive,
+            "capture should be Nondisruptive"
+        );
+        assert_eq!(
+            get("multimatch").unwrap().action_type(),
+            ActionType::Nondisruptive,
+            "multimatch should be Nondisruptive"
+        );
+        assert_eq!(
+            get("status").unwrap().action_type(),
+            ActionType::Data,
+            "status should be Data"
+        );
+        assert_eq!(
+            get("t").unwrap().action_type(),
+            ActionType::Nondisruptive,
+            "t should be Nondisruptive"
+        );
     }
 
     #[test]
