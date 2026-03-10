@@ -10,6 +10,7 @@
 pub mod actions;
 pub mod collection;
 pub mod operators;
+pub mod rules;
 pub mod transaction;
 pub mod transformations;
 pub mod types;

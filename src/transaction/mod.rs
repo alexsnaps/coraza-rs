@@ -92,6 +92,39 @@ impl Transaction {
         &self.id
     }
 
+    /// Get a collection by variable type.
+    ///
+    /// Returns a reference to the collection trait object for the given variable.
+    /// This is used by rule variable extraction to get the collection to query.
+    ///
+    /// # Arguments
+    ///
+    /// * `variable` - The variable type to get the collection for
+    ///
+    /// # Returns
+    ///
+    /// Option containing a reference to the Collection trait object, or None if
+    /// the variable is not supported or not yet populated.
+    pub fn get_collection(
+        &self,
+        variable: RuleVariable,
+    ) -> Option<&dyn crate::collection::Collection> {
+        use crate::collection::Collection;
+
+        match variable {
+            RuleVariable::Args => Some(&self.args as &dyn Collection),
+            RuleVariable::ArgsGet => Some(&self.args_get as &dyn Collection),
+            RuleVariable::ArgsPost => Some(&self.args_post as &dyn Collection),
+            RuleVariable::RequestHeaders => Some(&self.request_headers as &dyn Collection),
+            RuleVariable::RequestCookies => Some(&self.request_cookies as &dyn Collection),
+            RuleVariable::ResponseHeaders => Some(&self.response_headers as &dyn Collection),
+            RuleVariable::RequestURI => Some(&self.request_uri as &dyn Collection),
+            RuleVariable::RequestMethod => Some(&self.request_method as &dyn Collection),
+            RuleVariable::RemoteAddr => Some(&self.remote_addr as &dyn Collection),
+            _ => None, // Not yet implemented or not available
+        }
+    }
+
     /// Get ARGS (combined GET + POST) collection.
     pub fn args(&self) -> &Map {
         &self.args

@@ -109,6 +109,10 @@ impl Collection for Map {
     fn name(&self) -> &str {
         self.variable.name()
     }
+
+    fn as_keyed(&self) -> Option<&dyn Keyed> {
+        Some(self)
+    }
 }
 
 impl Keyed for Map {

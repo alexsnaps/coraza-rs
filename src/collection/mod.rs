@@ -74,6 +74,14 @@ pub trait Collection {
 
     /// Get the name of this collection (e.g., "REQUEST_HEADERS").
     fn name(&self) -> &str;
+
+    /// Attempt to downcast this collection to a Keyed collection.
+    ///
+    /// Returns Some if this collection supports key-based access (Map collections),
+    /// or None if it doesn't (Single collections).
+    fn as_keyed(&self) -> Option<&dyn Keyed> {
+        None
+    }
 }
 
 /// A collection with a single element.

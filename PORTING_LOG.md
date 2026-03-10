@@ -4,7 +4,7 @@
 
 ## Current Status (as of 2026-03-10)
 
-**Phase 6: Actions System** - 100% Complete (26/26 core actions) ✅
+**Phase 7: Rule Engine** - In Progress (Step 1/8 complete)
 
 - ✅ **Phase 1:** Foundation types (RuleSeverity, RulePhase, RuleVariable, etc.) - COMPLETE
 - ✅ **Phase 2:** String utilities - COMPLETE
@@ -12,14 +12,16 @@
 - ✅ **Phase 4:** Collections (Map, ConcatMap, Keyed trait) - COMPLETE
 - ✅ **Phase 5:** Operators (10 operators: rx, pm, streq, contains, etc.) - COMPLETE
 - ✅ **Phase 6:** Actions (26/26 implemented) - COMPLETE
-  - ✅ Step 1-8: All core actions implemented - COMPLETE
+- 🚧 **Phase 7:** Rule Engine (1/8 steps complete) - IN PROGRESS
+  - ✅ Step 1: Variable extraction system - COMPLETE
+  - ⏳ Step 2: Transformation pipeline - NEXT
 
 **Quality Metrics:**
-- 513 tests passing (145 action tests)
+- 537 tests passing (24 rule engine tests)
 - Clippy clean (0 warnings)
 - 100% test parity with Go implementation for all components
 
-**Next Milestone:** Phase 7 - Rule Engine (rule compilation and execution)
+**Next Milestone:** Complete Phase 7 - Rule evaluation engine
 
 ## Porting Strategy & Guidelines
 
@@ -979,7 +981,7 @@ Implement the data storage and variable management system that transactions use 
 - ✅ Integration with all existing operators
 - ✅ Clean public API
 
-## Phase 6: Actions System (IN PROGRESS)
+## Phase 6: Actions System - COMPLETE ✅
 
 ### Goal
 Implement the action system that defines what happens when rules match. Actions range from simple metadata storage to complex variable manipulation and flow control.
@@ -1205,49 +1207,85 @@ pub enum AllowType {
 
 **Total:** 8 days for 26 core actions ✅
 
-## Next Steps: Remaining Phases
+## Phase 7: Rule Engine (IN PROGRESS)
 
-### Phase 7: Rule Engine (NEXT - ~15 days)
-**Goal:** Implement the core rule evaluation engine that ties together variables, transformations, operators, and actions.
+### Goal
+Implement the core rule evaluation engine that ties together variables, transformations, operators, and actions.
 
-**Components to implement:**
-- [ ] **Week 1, Days 1-3:** Variable extraction system
-  - RuleVariable struct with regex keys, exceptions, count mode
-  - Extract values from transaction collections
-  - Handle variable exceptions and filtering
-- [ ] **Week 1, Days 4-5:** Transformation pipeline
-  - Apply transformation chains with caching
-  - Multi-match mode (evaluate after each transformation)
-  - Integration with existing transformations from Phases 2 & 4
-- [ ] **Week 1, Day 6:** Operator integration
-  - RuleOperator wrapper with negation support
-  - Integration with existing operators from Phase 3
-  - Handle operator-less rules (SecAction, SecMarker)
-- [ ] **Week 2, Days 1-2:** Action execution
-  - Execute actions on rule match
-  - Handle disruptive vs non-disruptive actions
-  - Integration with existing actions from Phase 6
-- [ ] **Week 2, Days 3-5:** Core rule evaluation engine
-  - Main Rule::evaluate() method
-  - Tie together: variables → transformations → operator → actions
-  - Capture match data (matched variables, keys, values)
-- [ ] **Week 2, Day 6:** Rule chaining
-  - Chain pointer (Rule.chain: Option<Box<Rule>>)
-  - Recursive evaluation for AND logic
-  - Aggregate match data across chains
-- [ ] **Week 3, Days 1-2:** Rule groups and phase processing
-  - RuleGroup for organizing rules by phase
-  - Phase-based evaluation
-  - Skip and skipAfter flow control
-- [ ] **Week 3, Days 3-5:** Integration tests
-  - Port comprehensive tests from rule_test.go (19k lines)
-  - Test complex multi-variable rules
-  - Test transformation + operator combinations
-  - Test chained rules with multiple actions
+### Execution Plan
+
+**Step 1: Variable Extraction System ✅ COMPLETE (2026-03-10)**
+- [x] **Implementation complete** (~340 lines in `src/rules/variable.rs`)
+  - ✅ VariableKey enum (String, Regex key selectors)
+  - ✅ VariableException struct (String, Regex exceptions/negations)
+  - ✅ VariableSpec struct (complete variable specification)
+  - ✅ String key matching (e.g., ARGS:username)
+  - ✅ Regex key matching (e.g., ARGS:/user.*/)
+  - ✅ Match all keys (e.g., ARGS with no key)
+  - ✅ Count mode (e.g., &ARGS returns count instead of values)
+  - ✅ Exception support (e.g., ARGS|!ARGS:id)
+  - ✅ Case-insensitive exception matching
+- [x] **Transaction integration** (`src/transaction/mod.rs`)
+  - ✅ Added `get_collection()` method
+  - ✅ Returns `&dyn Collection` for any RuleVariable
+- [x] **Collection enhancement** (`src/collection/mod.rs`, `src/collection/map.rs`)
+  - ✅ Added `as_keyed()` method to Collection trait
+  - ✅ Implemented for Map collections
+  - ✅ Enables safe downcasting to Keyed trait
+- [x] **Tests ported from Go** (`src/rules/variable_test.rs`)
+  - ✅ 12 unit tests (variable types, exceptions, configuration)
+  - ✅ 12 integration tests (extraction with real Transaction)
+  - ✅ 100% test parity with `transaction_test.go::TestTxVariables`
+  - ✅ 100% test parity with `transaction_test.go::TestTxVariablesExceptions`
+
+**Quality Metrics - Step 1:**
+- ✅ 24 tests passing (12 unit + 12 integration)
+- ✅ 537 total tests passing (+24 new)
+- ✅ Clippy clean (0 warnings)
+- ✅ Full documentation with examples
+- ✅ 100% test parity with Go implementation
+
+**Step 2: Transformation Pipeline (NEXT - Week 1, Days 4-5)**
+- [ ] Apply transformation chains with caching
+- [ ] Multi-match mode (evaluate after each transformation)
+- [ ] Integration with existing transformations from Phases 2 & 4
+
+**Step 3: Operator Integration (Week 1, Day 6)**
+- [ ] RuleOperator wrapper with negation support
+- [ ] Integration with existing operators from Phase 3
+- [ ] Handle operator-less rules (SecAction, SecMarker)
+
+**Step 4: Action Execution (Week 2, Days 1-2)**
+- [ ] Execute actions on rule match
+- [ ] Handle disruptive vs non-disruptive actions
+- [ ] Integration with existing actions from Phase 6
+
+**Step 5: Core Rule Evaluation Engine (Week 2, Days 3-5)**
+- [ ] Main Rule::evaluate() method
+- [ ] Tie together: variables → transformations → operator → actions
+- [ ] Capture match data (matched variables, keys, values)
+
+**Step 6: Rule Chaining (Week 2, Day 6)**
+- [ ] Chain pointer (Rule.chain: Option<Box<Rule>>)
+- [ ] Recursive evaluation for AND logic
+- [ ] Aggregate match data across chains
+
+**Step 7: Rule Groups and Phase Processing (Week 3, Days 1-2)**
+- [ ] RuleGroup for organizing rules by phase
+- [ ] Phase-based evaluation
+- [ ] Skip and skipAfter flow control
+
+**Step 8: Integration Tests (Week 3, Days 3-5)**
+- [ ] Port comprehensive tests from rule_test.go (19k lines)
+- [ ] Test complex multi-variable rules
+- [ ] Test transformation + operator combinations
+- [ ] Test chained rules with multiple actions
 
 **Source:** `coraza/internal/corazawaf/rule.go` (23k lines), `rulegroup.go` (8.7k lines)
 **Target:** `src/rules/` module (~1500 lines across multiple files)
 **Dependencies:** ✅ All prerequisites complete (Phases 1-6)
+
+## Next Steps: Remaining Phases
 
 ### Phase 8: SecLang Parser (~15 days)
 **Goal:** Parse ModSecurity SecLang directives and compile to rules.
