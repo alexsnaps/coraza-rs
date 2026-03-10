@@ -38,6 +38,30 @@ pub trait TransactionState {
     fn capture_field(&mut self, index: usize, value: &str) {
         let _ = (index, value); // Suppress unused warnings for default impl
     }
+
+    /// Interrupt the transaction with the given action.
+    ///
+    /// Called by disruptive actions like `deny`, `drop`, and `redirect` to
+    /// stop transaction processing.
+    ///
+    /// # Arguments
+    /// * `rule_id` - ID of the rule that triggered the interruption
+    /// * `action` - Action name (e.g., "deny", "drop", "redirect")
+    /// * `status` - HTTP status code
+    /// * `data` - Additional data (e.g., redirect URL)
+    fn interrupt(&mut self, rule_id: i32, action: &str, status: i32, data: &str) {
+        let _ = (rule_id, action, status, data); // Suppress unused warnings for default impl
+    }
+
+    /// Set the allow type for the transaction.
+    ///
+    /// Called by the `allow` action to control which phases are skipped.
+    ///
+    /// # Arguments
+    /// * `allow_type` - The type of allow (All, Phase, or Request)
+    fn set_allow_type(&mut self, allow_type: crate::actions::AllowType) {
+        let _ = allow_type; // Suppress unused warnings for default impl
+    }
 }
 
 /// A macro that can expand variable references at runtime.

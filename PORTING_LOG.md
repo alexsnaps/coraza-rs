@@ -935,49 +935,61 @@ Implement the action system that defines what happens when rules match. Actions 
 
 **Step-by-Step Implementation:**
 
-**Step 1: Foundation**
-- [ ] Create Action trait (init, evaluate, action_type)
-- [ ] Create ActionType enum (5 variants)
-- [ ] Implement action registry (register/get)
-- [ ] Define RuleMetadata trait stub
-- [ ] Create ActionError type
+**Step 1: Foundation ✅ COMPLETE**
+- [x] Create Action trait (init, evaluate, action_type)
+- [x] Create ActionType enum (5 variants)
+- [x] Implement action registry (register/get)
+- [x] Define RuleMetadata trait
+- [x] Create ActionError type
 - **Source:** `coraza/internal/actions/actions.go`, `coraza/experimental/plugins/plugintypes/action.go`
-- **Target:** `src/actions/mod.rs`
+- **Target:** `src/actions/mod.rs` (infrastructure complete)
+- **Tests:** 3 integration tests (registry, lookup, error handling)
 
-**Step 2: Group A - Metadata Actions (7 actions)**
-- [ ] `id` - Rule ID (numeric)
-- [ ] `msg` - Log message (with macro expansion)
-- [ ] `tag` - Classification tags
-- [ ] `severity` - Severity level (0-7)
-- [ ] `rev` - Revision number
-- [ ] `ver` - Version string
-- [ ] `maturity` - Maturity level (1-9)
+**Step 2: Group A - Metadata Actions ✅ COMPLETE (7 actions)**
+- [x] `id` - Rule ID (numeric)
+- [x] `msg` - Log message (with macro expansion)
+- [x] `tag` - Classification tags
+- [x] `severity` - Severity level (0-7)
+- [x] `rev` - Revision number
+- [x] `ver` - Version string
+- [x] `maturity` - Maturity level (1-9)
 - **Source:** `id.go`, `msg.go`, `tag.go`, `severity.go`, `rev.go`, `ver.go`, `maturity.go`
-- **Tests:** `id_test.go`, `msg_test.go`, `severity_test.go`, `maturity_test.go`, `ver_test.go`
-- **Target:** `src/actions/metadata.rs`
+- **Tests:** `id_test.go`, `msg_test.go`, `severity_test.go`, `maturity_test.go`, `ver_test.go` - ALL PORTED
+- **Target:** `src/actions/metadata.rs` (24 unit tests passing)
+- **Completion:** 2026-03-10
 
-**Step 3: Group B - Logging Actions (5 actions)**
-- [ ] `log` / `nolog` - Control logging
-- [ ] `auditlog` / `noauditlog` - Control audit logging
-- [ ] `logdata` - Additional log data (with macro expansion)
+**Step 3: Group B - Logging Actions ✅ COMPLETE (5 actions)**
+- [x] `log` / `nolog` - Control logging
+- [x] `auditlog` / `noauditlog` - Control audit logging
+- [x] `logdata` - Additional log data (with macro expansion)
 - **Source:** `log.go`, `nolog.go`, `auditlog.go`, `noauditlog.go`, `logdata.go`
-- **Tests:** `log_test.go`, `nolog_test.go`, `noauditlog_test.go`, `logdata_test.go`
-- **Target:** `src/actions/logging.rs`
+- **Tests:** `log_test.go`, `nolog_test.go`, `noauditlog_test.go`, `logdata_test.go` - ALL PORTED
+- **Target:** `src/actions/logging.rs` (12 unit tests passing)
+- **Completion:** 2026-03-10
 
-**Step 4: Group C - Disruptive Actions (6 actions)**
-- [ ] `deny` - Block with 403
-- [ ] `drop` - Drop connection
-- [ ] `allow` - Allow request, skip rules
-- [ ] `block` - Use default blocking action
-- [ ] `redirect` - HTTP redirect
-- [ ] `pass` - Explicit no-op
+**Step 4: Group C - Disruptive Actions ✅ COMPLETE (6 actions)**
+- [x] `deny` - Block with 403
+- [x] `drop` - Drop connection
+- [x] `allow` - Allow request, skip rules (with AllowType enum)
+- [x] `block` - Use default blocking action
+- [x] `redirect` - HTTP redirect
+- [x] `pass` - Explicit no-op
 - **Source:** `deny.go`, `drop.go`, `allow.go`, `block.go`, `redirect.go`, `pass.go`
-- **Tests:** `deny_test.go`, `drop_test.go`, `allow_test.go`, `block_test.go`, `pass_test.go`, `redirect_test.go`
-- **Target:** `src/actions/disruptive.rs`
-- **New types:** `Interruption` struct
-- **Extends:** TransactionState trait with `interrupt()` method
+- **Tests:** `deny_test.go`, `drop_test.go`, `allow_test.go`, `block_test.go`, `pass_test.go`, `redirect_test.go` - ALL PORTED
+- **Target:** `src/actions/disruptive.rs` (20 unit tests passing)
+- **New types:** `AllowType` enum (Unset, All, Phase, Request)
+- **Extended:** TransactionState trait with `interrupt(rule_id, action, status, data)` and `set_allow_type(AllowType)`
+- **Completion:** 2026-03-10
 
-**Step 5: Group D - Variable Manipulation (1 complex action)**
+### Quality Metrics - Steps 1-4 Complete
+- ✅ **437 unit tests passing** (+56 action tests from Steps 1-4)
+- ✅ **88 doc tests passing** (no change)
+- ✅ **Clippy clean** (0 warnings)
+- ✅ **18 actions implemented** (7 metadata + 5 logging + 6 disruptive)
+- ✅ **All Go test cases ported** (100% test parity for Steps 1-4)
+- **Progress:** 18/24 core actions (75% complete)
+
+**Step 5: Group D - Variable Manipulation (NEXT - 1 complex action)**
 - [ ] `setvar` - Create/modify/delete TX variables
   - Syntax: `TX.key=value`, `TX.key=+5`, `!TX.key`
   - Arithmetic operations

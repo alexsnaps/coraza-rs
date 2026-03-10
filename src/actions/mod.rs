@@ -56,6 +56,7 @@
 //! SecRule ARGS "@rx attack" "id:100,deny,log,msg:'Attack detected'"
 //! ```
 
+mod disruptive;
 mod logging;
 mod metadata;
 
@@ -66,6 +67,9 @@ use std::sync::OnceLock;
 use crate::RuleSeverity;
 use crate::operators::Macro;
 
+pub use disruptive::{
+    AllowAction, AllowType, BlockAction, DenyAction, DropAction, PassAction, RedirectAction,
+};
 pub use logging::{AuditlogAction, LogAction, LogdataAction, NoauditlogAction, NologAction};
 pub use metadata::{
     IdAction, MaturityAction, MsgAction, RevAction, SeverityAction, TagAction, VerAction,
@@ -306,6 +310,24 @@ fn create_noauditlog() -> Box<dyn Action> {
 fn create_logdata() -> Box<dyn Action> {
     Box::new(LogdataAction)
 }
+fn create_deny() -> Box<dyn Action> {
+    Box::new(DenyAction)
+}
+fn create_drop() -> Box<dyn Action> {
+    Box::new(DropAction)
+}
+fn create_allow() -> Box<dyn Action> {
+    Box::new(AllowAction::new())
+}
+fn create_block() -> Box<dyn Action> {
+    Box::new(BlockAction)
+}
+fn create_redirect() -> Box<dyn Action> {
+    Box::new(RedirectAction::new())
+}
+fn create_pass() -> Box<dyn Action> {
+    Box::new(PassAction)
+}
 
 /// Initialize the action registry with built-in actions.
 fn init_registry() -> HashMap<String, ActionFactory> {
@@ -326,6 +348,14 @@ fn init_registry() -> HashMap<String, ActionFactory> {
     registry.insert("auditlog".to_string(), create_auditlog as ActionFactory);
     registry.insert("noauditlog".to_string(), create_noauditlog as ActionFactory);
     registry.insert("logdata".to_string(), create_logdata as ActionFactory);
+
+    // Disruptive actions
+    registry.insert("deny".to_string(), create_deny as ActionFactory);
+    registry.insert("drop".to_string(), create_drop as ActionFactory);
+    registry.insert("allow".to_string(), create_allow as ActionFactory);
+    registry.insert("block".to_string(), create_block as ActionFactory);
+    registry.insert("redirect".to_string(), create_redirect as ActionFactory);
+    registry.insert("pass".to_string(), create_pass as ActionFactory);
 
     registry
 }
@@ -569,6 +599,30 @@ mod tests {
                 action.action_type(),
                 ActionType::Nondisruptive,
                 "Action '{}' should be Nondisruptive",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_disruptive_actions_registered() {
+        // Ensure all 6 disruptive actions are registered
+        let actions = vec!["deny", "drop", "allow", "block", "redirect", "pass"];
+        for name in actions {
+            assert!(get(name).is_ok(), "Action '{}' not registered", name);
+        }
+    }
+
+    #[test]
+    fn test_disruptive_action_types() {
+        // Verify all disruptive actions have Disruptive type
+        let actions = vec!["deny", "drop", "allow", "block", "redirect", "pass"];
+        for name in actions {
+            let action = get(name).unwrap();
+            assert_eq!(
+                action.action_type(),
+                ActionType::Disruptive,
+                "Action '{}' should be Disruptive",
                 name
             );
         }
