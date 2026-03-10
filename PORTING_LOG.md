@@ -4,7 +4,7 @@
 
 ## Current Status (as of 2026-03-10)
 
-**Phase 8: SecLang Parser** - In Progress (Step 4/9 complete)
+**Phase 8: SecLang Parser** - In Progress (Step 5/9 complete)
 
 - ✅ **Phase 1:** Foundation types (RuleSeverity, RulePhase, RuleVariable, etc.) - COMPLETE
 - ✅ **Phase 2:** String utilities - COMPLETE
@@ -13,20 +13,20 @@
 - ✅ **Phase 5:** Operators (10 operators: rx, pm, streq, contains, etc.) - COMPLETE
 - ✅ **Phase 6:** Actions (26/26 implemented) - COMPLETE
 - ✅ **Phase 7:** Rule Engine (8/8 steps complete) - COMPLETE
-- 🚧 **Phase 8:** SecLang Parser (4/9 steps complete) - IN PROGRESS
+- 🚧 **Phase 8:** SecLang Parser (5/9 steps complete) - IN PROGRESS
   - ✅ Step 1: Parser infrastructure - COMPLETE
   - ✅ Step 2: Directive system - COMPLETE
   - ✅ Step 3: Variable parser - COMPLETE
   - ✅ Step 4: Operator parser - COMPLETE
-  - ⏳ Step 5: Action parser - NEXT
-  - ⏳ Step 6: SecRule compilation
+  - ✅ Step 5: Action parser - COMPLETE
+  - ⏳ Step 6: SecRule compilation - NEXT
   - ⏳ Step 7: Include and advanced directives
   - ⏳ Step 8: Remaining directives
   - ⏳ Step 9: Integration tests
 
 **Quality Metrics:**
-- 800 tests passing total:
-  - 664 unit tests (155 parser + 509 others: 43 parser + 4 waf_config + 14 variable_parser + 20 operator_parser + 24 rule variable + 13 transformation + 10 operator + 9 action + 9 rule + 9 group + 509 from phases 1-6)
+- 820 tests passing total:
+  - 684 unit tests (175 parser + 509 others: 43 parser + 4 waf_config + 14 variable_parser + 20 operator_parser + 20 action_parser + 24 rule variable + 13 transformation + 10 operator + 9 action + 9 rule + 9 group + 509 from phases 1-6)
   - 17 integration tests (comprehensive rule engine end-to-end testing)
   - 119 doc tests
 - Clippy clean (0 warnings)
@@ -1836,14 +1836,78 @@ Following Go implementation exactly - no parser library (nom, pest, etc.). The G
 - Integration with Phase 5 operators via OperatorEnum
 - Ready for Step 5: Action parser (comma-separated key:value pairs)
 
-**Step 5: Action Parser (Days 10-11)**
-- [ ] Comma-separated action list parsing
-- [ ] Key:value action parsing (`id:123`, `msg:'Attack'`)
-- [ ] Bare action parsing (`log`, `deny`, `pass`)
-- [ ] Quote handling in action values
-- [ ] Action lookup from registry (Phase 6 actions)
-- [ ] Default actions per phase
-- [ ] Tests: All actions, combinations, quoting, defaults
+**Step 5: Action Parser ✅ COMPLETE (2026-03-10)**
+- [x] Comma-separated action list parsing
+- [x] Key:value action parsing (`id:123`, `msg:'Attack'`)
+- [x] Bare action parsing (`log`, `deny`, `pass`)
+- [x] Quote handling in action values (single and double quotes)
+- [x] Action lookup from registry (Phase 6 actions)
+- [x] Disruptive action handling (only one allowed, last wins)
+- [x] Tests: All actions, combinations, quoting, edge cases
+- [x] **Implementation complete** (~435 lines in `src/seclang/action_parser.rs`)
+  - ✅ parse_actions() - Main parsing function
+  - ✅ append_action() - Action list building with disruptive handling
+  - ✅ maybe_remove_quotes() - Quote removal helper
+  - ✅ ParsedAction struct - Contains key, value, action instance, action type
+  - ✅ ActionParseError - Error type with descriptive messages
+  - ✅ Comma-separated parsing with quote tracking:
+    - Start at index 1 (skip opening character)
+    - Track quote state (toggle on `'` unless escaped)
+    - Skip escaped characters (`\` prefix)
+    - Find `:` to separate key from value
+    - Find `,` to separate actions
+    - Process final action at end of string
+  - ✅ Quote handling:
+    - Single quotes (`'value'`)
+    - Double quotes (`"value"`)
+    - Escaped quotes (`O\'Reilly`)
+    - Commas and colons inside quotes preserved
+  - ✅ Special behaviors:
+    - Keys are lowercased and trimmed
+    - Values are trimmed and quotes removed
+    - Only one disruptive action per rule (last one wins)
+    - Unclosed quotes result in error
+  - ✅ Action registry integration:
+    - Uses `actions::get(name)` to instantiate actions
+    - Returns Box<dyn Action> instances
+    - Validates action names at parse time
+- [x] **Tests ported from Go** (20 unit tests)
+  - ✅ test_maybe_remove_quotes_single - 'value' → value
+  - ✅ test_maybe_remove_quotes_double - "value" → value
+  - ✅ test_maybe_remove_quotes_no_quotes - value unchanged
+  - ✅ test_maybe_remove_quotes_mismatched - 'value" unchanged
+  - ✅ test_maybe_remove_quotes_empty - Empty string
+  - ✅ test_maybe_remove_quotes_single_char - Single quote unchanged
+  - ✅ test_parse_single_bare_action - "deny"
+  - ✅ test_parse_single_action_with_value - "id:123"
+  - ✅ test_parse_multiple_actions - "id:1,deny,log"
+  - ✅ test_parse_action_with_quoted_value - "msg:'Attack detected'"
+  - ✅ test_parse_action_with_escaped_quote - "msg:'O\'Reilly'"
+  - ✅ test_parse_action_with_comma_in_quotes - "msg:'Hello, World'"
+  - ✅ test_parse_action_with_colon_in_quotes - "msg:'Error: Bad request'"
+  - ✅ test_parse_unclosed_quotes - Error handling
+  - ✅ test_parse_action_case_insensitive - "DENY,Log,ID:1"
+  - ✅ test_parse_action_with_whitespace - "id : 123 , deny , log"
+  - ✅ test_parse_unknown_action - Error for unknown action
+  - ✅ test_parse_multiple_disruptive_actions_last_wins - deny+drop=drop
+  - ✅ test_parse_empty_action_string - Empty input handling
+  - ✅ test_parse_action_with_double_quotes - "msg:\"Double quoted\""
+
+**Quality Metrics - Step 5:**
+- ✅ 20 tests passing (all new action parser tests)
+- ✅ 684 total tests passing (+20 new)
+- ✅ Clippy clean (0 warnings)
+- ✅ Full documentation with examples
+- ✅ 100% test parity with Go action parser
+
+**Design Notes:**
+- Byte-by-byte parsing matches Go implementation exactly
+- Quote state tracking handles nested quotes and escapes
+- Disruptive action replacement (last wins) matches ModSecurity behavior
+- ParsedAction cannot implement Debug/Clone (contains Box<dyn Action>)
+- Tests use pattern matching instead of unwrap_err() for error cases
+- Integration with Phase 6 actions via actions::get() registry
+- Ready for Step 6: SecRule compilation (combine variables + operator + actions)
 
 **Step 6: SecRule Compilation (Days 12-14)**
 - [ ] SecRule directive implementation

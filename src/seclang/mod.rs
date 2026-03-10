@@ -32,11 +32,13 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+pub mod action_parser;
 pub mod operator_parser;
 pub mod parser;
 pub mod variable_parser;
 pub mod waf_config;
 
+pub use action_parser::parse_actions;
 pub use operator_parser::parse_operator;
 pub use parser::Parser;
 pub use variable_parser::parse_variables;
