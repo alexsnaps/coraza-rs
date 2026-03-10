@@ -771,19 +771,74 @@ impl Operator for Eq {
 
 **All Phase 4 complex text processing transformations complete!**
 
+## Phase 5: Collections & Variables
+
+### Goal
+Implement the data storage and variable management system that transactions use to store and retrieve values during rule evaluation.
+
+#### 1. Collection Types (src/collection/)
+- **Date:** 2026-03-10
+- **Source:**
+  - `coraza/collection/collection.go`
+  - `coraza/internal/collections/map.go` + tests
+  - `coraza/internal/collections/single.go` + tests
+  - `coraza/internal/collections/concat.go` + tests
+  - `coraza/internal/collections/noop.go` + tests
+- **Tests:** 16/16 passing + 362/362 total
+- **Features:**
+  - **Collection Trait Hierarchy:**
+    - `Collection` - Base trait with `find_all()` and `name()`
+    - `SingleCollection` - Collection with a single value
+    - `Keyed` - Collection with key-value pairs (Get, FindRegex, FindString)
+    - `MapCollection` - Keyed + mutation methods (Add, Set, SetIndex, Remove, Reset)
+  - **MatchData struct:**
+    - Metadata about matched variables (variable, key, value)
+    - Used by rule engine for logging and reporting
+  - **Map implementation:**
+    - Case-sensitive and case-insensitive modes
+    - Multiple values per key support
+    - Preserves original key casing even in case-insensitive mode
+    - Regex-based key matching via `find_regex()`
+    - O(1) lookup performance via `HashMap`
+  - **Single implementation:**
+    - Holds a single string value
+    - Used for variables like REQUEST_URI, REQUEST_METHOD
+  - **Noop implementation:**
+    - No-op collection that returns empty results
+    - Used as placeholder when collection unavailable
+  - **ConcatCollection & ConcatKeyed:**
+    - View over multiple collections that combines results
+    - Used for variables like ARGS (combines ARGS_GET + ARGS_POST)
+    - Replaces variable references in returned MatchData
+- **Implementation Notes:**
+  - All collections are NOT thread-safe (per-request/transaction use only)
+  - Map uses `HashMap<String, Vec<KeyValue>>` for storage
+  - `KeyValue` struct preserves original key casing
+  - Case-insensitive mode lowercases lookup keys but preserves original
+  - No dynamic dispatch - all concrete types
+- **Test Coverage:**
+  - **Map (8 tests):** Case-insensitive, case-sensitive, reset, remove, set_index, multiple values, find operations
+  - **Single (5 tests):** New, set, reset, find_all, display
+  - **Noop (1 test):** Empty behavior
+  - **Concat (2 tests):** ConcatCollection, ConcatKeyed with regex
+- **Design Decisions:**
+  - Traits over enums: Allows flexible composition
+  - No trait objects: All usage is generic/static dispatch
+  - Mutable references: Collections modified during transaction processing
+  - Clone on return: MatchData clones values (acceptable for small strings)
+
+### Quality Metrics - Phase 5, Step 1
+- ✅ All tests passing (362/362 unit tests, +16 new collection tests)
+- ✅ Clippy clean (no warnings)
+- ✅ Full documentation with examples
+- ✅ **Phase 5, Step 1 Complete!** Collection types fully implemented
+
 ### Next Steps
-- [ ] **IMPORTANT - Cleanup After Transaction Port:** Once the production `TransactionState` implementation is ported:
-  - Delete `NoTx` struct from `src/operators/macros.rs`
-  - Remove all `#[allow(deprecated)]` attributes from:
-    - `src/operators/macros.rs` (impl block and test module)
-    - `src/operators/mod.rs` (pub use statement)
-    - `src/operators/simple.rs` (test module)
-    - `src/operators/pattern.rs` (test module)
-    - `src/operators/ip.rs` (test module)
-    - `src/operators/validation.rs` (test module)
-  - Update all test code to use the production transaction type instead of `NoTx`
-  - This cleanup is critical to avoid shipping deprecated convenience types
-- [ ] **Phase 4, Group B:** Port escape sequence decoders (escapeSeqDecode, jsDecode, cssDecode - 5 transformations)
-- [ ] **Phase 4, Group C:** Port advanced transformations (cmdLine, removeComments, replaceComments - 3 transformations)
-- [ ] **Phase 5:** Port remaining transformations (urlDecodeUni, utf8ToUnicode - 2 transformations)
-- [ ] **Phase 6:** Begin WAF core (collections, variables, transaction system)
+- [ ] **Phase 5, Step 2:** Variable extraction logic (ARGS, HEADERS, COOKIES, etc.)
+- [ ] **Phase 5, Step 3:** Transaction struct implementing TransactionState
+- [ ] **Phase 5, Step 4:** Delete NoTx and remove `#[allow(deprecated)]` attributes
+- [ ] **Phase 6:** Actions system
+- [ ] **Phase 7:** Body processors (JSON, XML, multipart, urlencoded)
+- [ ] **Phase 8:** Rule engine (compilation and execution)
+- [ ] **Phase 9:** SecLang parser (directive parsing)
+- [ ] **Phase 10:** WAF core and configuration
