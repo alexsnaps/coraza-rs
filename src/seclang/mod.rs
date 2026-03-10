@@ -33,5 +33,7 @@
 //! ```
 
 pub mod parser;
+pub mod waf_config;
 
 pub use parser::Parser;
+pub use waf_config::WafConfig;

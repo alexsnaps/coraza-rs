@@ -14,6 +14,10 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::str::FromStr;
+
+use crate::seclang::WafConfig;
+use crate::types::{BodyLimitAction, RuleEngineStatus};
 
 /// Maximum include recursion depth to prevent DoS attacks
 const MAX_INCLUDE_RECURSION: usize = 100;
@@ -50,12 +54,12 @@ type ParseResult<T> = Result<T, ParseError>;
 ///
 /// Each directive is implemented as a function that takes DirectiveOptions
 /// and modifies WAF state accordingly.
-type DirectiveFn = fn(&mut DirectiveOptions) -> ParseResult<()>;
+type DirectiveFn = fn(&mut DirectiveOptions<'_>) -> ParseResult<()>;
 
 /// Options passed to directive handlers
 ///
 /// Contains parser state and the directive's arguments.
-pub struct DirectiveOptions {
+pub struct DirectiveOptions<'a> {
     /// Raw directive line (for error reporting)
     pub raw: String,
 
@@ -64,8 +68,9 @@ pub struct DirectiveOptions {
 
     /// Current parser state
     pub parser_state: ParserState,
-    // TODO: Reference to WAF instance (will be added when WAF module exists)
-    // For now, we'll use a placeholder
+
+    /// Mutable reference to WAF configuration
+    pub waf_config: &'a mut WafConfig,
 }
 
 /// Parser configuration and state
@@ -95,6 +100,9 @@ pub struct ParserState {
 /// // Parse directives from string
 /// parser.from_string("SecRuleEngine On")?;
 ///
+/// // Get the resulting WAF configuration
+/// let config = parser.config();
+///
 /// // Parse from file (when implemented)
 /// // parser.from_file("rules.conf")?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -108,6 +116,9 @@ pub struct Parser {
 
     /// Directive registry (directive name -> handler function)
     directives: HashMap<String, DirectiveFn>,
+
+    /// WAF configuration (populated by directives)
+    waf_config: WafConfig,
 }
 
 impl Parser {
@@ -117,6 +128,7 @@ impl Parser {
             state: ParserState::default(),
             include_count: 0,
             directives: HashMap::new(),
+            waf_config: WafConfig::new(),
         };
 
         // Register built-in directives
@@ -125,12 +137,47 @@ impl Parser {
         parser
     }
 
+    /// Get reference to the WAF configuration
+    pub fn config(&self) -> &WafConfig {
+        &self.waf_config
+    }
+
+    /// Get mutable reference to the WAF configuration
+    pub fn config_mut(&mut self) -> &mut WafConfig {
+        &mut self.waf_config
+    }
+
     /// Register all built-in directives
     fn register_directives(&mut self) {
-        // TODO: Register actual directives
-        // For now, just register a test directive
+        // Engine configuration directives
         self.directives
             .insert("secruleengine".to_string(), directive_sec_rule_engine);
+        self.directives.insert(
+            "secrequestbodyaccess".to_string(),
+            directive_sec_request_body_access,
+        );
+        self.directives.insert(
+            "secresponsebodyaccess".to_string(),
+            directive_sec_response_body_access,
+        );
+        self.directives.insert(
+            "secrequestbodylimit".to_string(),
+            directive_sec_request_body_limit,
+        );
+        self.directives.insert(
+            "secrequestbodylimitaction".to_string(),
+            directive_sec_request_body_limit_action,
+        );
+        self.directives.insert(
+            "secdebugloglevel".to_string(),
+            directive_sec_debug_log_level,
+        );
+        self.directives
+            .insert("secwebappid".to_string(), directive_sec_web_app_id);
+        self.directives.insert(
+            "seccomponentsignature".to_string(),
+            directive_sec_component_signature,
+        );
     }
 
     /// Parse directives from a string
@@ -295,6 +342,7 @@ impl Parser {
                     raw: line.to_string(),
                     opts,
                     parser_state: self.state.clone(),
+                    waf_config: &mut self.waf_config,
                 };
 
                 func(&mut options).map_err(|e| {
@@ -324,13 +372,22 @@ impl Default for Parser {
 }
 
 // ============================================================================
-// Placeholder Directive Implementations
+// Directive Implementations
 // ============================================================================
-// These are minimal implementations for testing. Full implementations will
-// come in later steps.
 
+/// Helper function to parse boolean values (On/Off)
+fn parse_boolean(value: &str) -> Result<bool, String> {
+    match value {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        _ => Err(format!("expected On or Off, got: {}", value)),
+    }
+}
+
+/// SecRuleEngine On|Off|DetectionOnly
+///
+/// Configures the rules engine.
 fn directive_sec_rule_engine(options: &mut DirectiveOptions) -> ParseResult<()> {
-    // Placeholder implementation
     if options.opts.is_empty() {
         return Err(ParseError::new(
             "SecRuleEngine requires an argument".to_string(),
@@ -339,16 +396,185 @@ fn directive_sec_rule_engine(options: &mut DirectiveOptions) -> ParseResult<()> 
         ));
     }
 
-    // TODO: Actually set WAF rule engine status
-    // For now, just validate the option
-    match options.opts.to_lowercase().as_str() {
-        "on" | "off" | "detectiononly" => Ok(()),
-        _ => Err(ParseError::new(
-            format!("invalid SecRuleEngine value: {}", options.opts),
+    let status = RuleEngineStatus::from_str(&options.opts).map_err(|e| {
+        ParseError::new(
+            e.to_string(),
             options.parser_state.current_line,
             options.parser_state.current_file.clone(),
-        )),
+        )
+    })?;
+
+    options.waf_config.rule_engine = status;
+    Ok(())
+}
+
+/// SecRequestBodyAccess On|Off
+///
+/// Configures whether request bodies will be buffered and processed.
+fn directive_sec_request_body_access(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecRequestBodyAccess requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
     }
+
+    let value = parse_boolean(&options.opts.to_lowercase()).map_err(|e| {
+        ParseError::new(
+            e,
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        )
+    })?;
+
+    options.waf_config.request_body_access = value;
+    Ok(())
+}
+
+/// SecResponseBodyAccess On|Off
+///
+/// Configures whether response bodies will be buffered and processed.
+fn directive_sec_response_body_access(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecResponseBodyAccess requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    let value = parse_boolean(&options.opts.to_lowercase()).map_err(|e| {
+        ParseError::new(
+            e,
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        )
+    })?;
+
+    options.waf_config.response_body_access = value;
+    Ok(())
+}
+
+/// SecRequestBodyLimit [LIMIT_IN_BYTES]
+///
+/// Configures the maximum request body size.
+fn directive_sec_request_body_limit(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecRequestBodyLimit requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    let limit = options.opts.parse::<i64>().map_err(|e| {
+        ParseError::new(
+            format!("invalid limit value: {}", e),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        )
+    })?;
+
+    options.waf_config.request_body_limit = limit;
+    Ok(())
+}
+
+/// SecRequestBodyLimitAction Reject|ProcessPartial
+///
+/// Controls what happens when request body limit is reached.
+fn directive_sec_request_body_limit_action(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecRequestBodyLimitAction requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    let action = match options.opts.to_lowercase().as_str() {
+        "reject" => BodyLimitAction::Reject,
+        "processpartial" => BodyLimitAction::ProcessPartial,
+        _ => {
+            return Err(ParseError::new(
+                format!(
+                    "invalid SecRequestBodyLimitAction value: {} (expected Reject or ProcessPartial)",
+                    options.opts
+                ),
+                options.parser_state.current_line,
+                options.parser_state.current_file.clone(),
+            ));
+        }
+    };
+
+    options.waf_config.request_body_limit_action = action;
+    Ok(())
+}
+
+/// SecDebugLogLevel [0-9]
+///
+/// Configures the verboseness of the debug log.
+fn directive_sec_debug_log_level(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecDebugLogLevel requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    let level = options.opts.parse::<u8>().map_err(|e| {
+        ParseError::new(
+            format!("invalid debug log level: {}", e),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        )
+    })?;
+
+    options.waf_config.set_debug_log_level(level).map_err(|e| {
+        ParseError::new(
+            e,
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        )
+    })?;
+
+    Ok(())
+}
+
+/// SecWebAppId [ID]
+///
+/// Configures the web application ID.
+fn directive_sec_web_app_id(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecWebAppId requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    options.waf_config.web_app_id = options.opts.clone();
+    Ok(())
+}
+
+/// SecComponentSignature "COMPONENT_NAME/X.Y.Z (COMMENT)"
+///
+/// Appends component signature to the Coraza signature.
+fn directive_sec_component_signature(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecComponentSignature requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    options
+        .waf_config
+        .component_names
+        .push(options.opts.clone());
+    Ok(())
 }
 
 #[cfg(test)]
@@ -457,7 +683,8 @@ On
         let result = parser.from_string("SecRuleEngine Invalid");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.message.contains("invalid SecRuleEngine value"));
+        // Error message should indicate invalid value
+        assert!(err.message.to_lowercase().contains("invalid"));
     }
 
     #[test]
@@ -481,5 +708,265 @@ UnknownDirective
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.line, 4); // Comment is line 2, SecRuleEngine is line 3, Unknown is line 4
+    }
+
+    // ========================================================================
+    // SecRequestBodyAccess Tests
+    // ========================================================================
+
+    #[test]
+    fn test_sec_request_body_access_on() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecRequestBodyAccess On").is_ok());
+        assert!(parser.config().request_body_access);
+    }
+
+    #[test]
+    fn test_sec_request_body_access_off() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecRequestBodyAccess Off").is_ok());
+        assert!(!parser.config().request_body_access);
+    }
+
+    #[test]
+    fn test_sec_request_body_access_case_insensitive() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecRequestBodyAccess ON").is_ok());
+        assert!(parser.config().request_body_access);
+    }
+
+    #[test]
+    fn test_sec_request_body_access_invalid() {
+        let mut parser = Parser::new();
+        let result = parser.from_string("SecRequestBodyAccess Invalid");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sec_request_body_access_no_argument() {
+        let mut parser = Parser::new();
+        let result = parser.from_string("SecRequestBodyAccess");
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // SecResponseBodyAccess Tests
+    // ========================================================================
+
+    #[test]
+    fn test_sec_response_body_access_on() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecResponseBodyAccess On").is_ok());
+        assert!(parser.config().response_body_access);
+    }
+
+    #[test]
+    fn test_sec_response_body_access_off() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecResponseBodyAccess Off").is_ok());
+        assert!(!parser.config().response_body_access);
+    }
+
+    // ========================================================================
+    // SecRequestBodyLimit Tests
+    // ========================================================================
+
+    #[test]
+    fn test_sec_request_body_limit_valid() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecRequestBodyLimit 1024").is_ok());
+        assert_eq!(parser.config().request_body_limit, 1024);
+    }
+
+    #[test]
+    fn test_sec_request_body_limit_large() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecRequestBodyLimit 134217728").is_ok());
+        assert_eq!(parser.config().request_body_limit, 134217728);
+    }
+
+    #[test]
+    fn test_sec_request_body_limit_invalid() {
+        let mut parser = Parser::new();
+        let result = parser.from_string("SecRequestBodyLimit abc");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sec_request_body_limit_no_argument() {
+        let mut parser = Parser::new();
+        let result = parser.from_string("SecRequestBodyLimit");
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // SecRequestBodyLimitAction Tests
+    // ========================================================================
+
+    #[test]
+    fn test_sec_request_body_limit_action_reject() {
+        let mut parser = Parser::new();
+        assert!(
+            parser
+                .from_string("SecRequestBodyLimitAction Reject")
+                .is_ok()
+        );
+        assert_eq!(
+            parser.config().request_body_limit_action,
+            BodyLimitAction::Reject
+        );
+    }
+
+    #[test]
+    fn test_sec_request_body_limit_action_process_partial() {
+        let mut parser = Parser::new();
+        assert!(
+            parser
+                .from_string("SecRequestBodyLimitAction ProcessPartial")
+                .is_ok()
+        );
+        assert_eq!(
+            parser.config().request_body_limit_action,
+            BodyLimitAction::ProcessPartial
+        );
+    }
+
+    #[test]
+    fn test_sec_request_body_limit_action_case_insensitive() {
+        let mut parser = Parser::new();
+        assert!(
+            parser
+                .from_string("SecRequestBodyLimitAction REJECT")
+                .is_ok()
+        );
+        assert_eq!(
+            parser.config().request_body_limit_action,
+            BodyLimitAction::Reject
+        );
+    }
+
+    #[test]
+    fn test_sec_request_body_limit_action_invalid() {
+        let mut parser = Parser::new();
+        let result = parser.from_string("SecRequestBodyLimitAction Invalid");
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // SecDebugLogLevel Tests
+    // ========================================================================
+
+    #[test]
+    fn test_sec_debug_log_level_valid_range() {
+        let mut parser = Parser::new();
+        for level in 0..=9 {
+            let directive = format!("SecDebugLogLevel {}", level);
+            assert!(parser.from_string(&directive).is_ok());
+            assert_eq!(parser.config().debug_log_level, level);
+        }
+    }
+
+    #[test]
+    fn test_sec_debug_log_level_out_of_range() {
+        let mut parser = Parser::new();
+        let result = parser.from_string("SecDebugLogLevel 10");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sec_debug_log_level_invalid() {
+        let mut parser = Parser::new();
+        let result = parser.from_string("SecDebugLogLevel abc");
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // SecWebAppId Tests
+    // ========================================================================
+
+    #[test]
+    fn test_sec_web_app_id() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecWebAppId myapp").is_ok());
+        assert_eq!(parser.config().web_app_id, "myapp");
+    }
+
+    #[test]
+    fn test_sec_web_app_id_with_spaces() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecWebAppId my application").is_ok());
+        assert_eq!(parser.config().web_app_id, "my application");
+    }
+
+    #[test]
+    fn test_sec_web_app_id_no_argument() {
+        let mut parser = Parser::new();
+        let result = parser.from_string("SecWebAppId");
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // SecComponentSignature Tests
+    // ========================================================================
+
+    #[test]
+    fn test_sec_component_signature() {
+        let mut parser = Parser::new();
+        assert!(
+            parser
+                .from_string("SecComponentSignature \"OWASP_CRS/4.0.0\"")
+                .is_ok()
+        );
+        assert_eq!(parser.config().component_names.len(), 1);
+        assert_eq!(parser.config().component_names[0], "OWASP_CRS/4.0.0");
+    }
+
+    #[test]
+    fn test_sec_component_signature_multiple() {
+        let mut parser = Parser::new();
+        assert!(
+            parser
+                .from_string("SecComponentSignature \"Component1\"")
+                .is_ok()
+        );
+        assert!(
+            parser
+                .from_string("SecComponentSignature \"Component2\"")
+                .is_ok()
+        );
+        assert_eq!(parser.config().component_names.len(), 2);
+        assert_eq!(parser.config().component_names[0], "Component1");
+        assert_eq!(parser.config().component_names[1], "Component2");
+    }
+
+    #[test]
+    fn test_sec_component_signature_no_argument() {
+        let mut parser = Parser::new();
+        let result = parser.from_string("SecComponentSignature");
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // Integration Tests (multiple directives)
+    // ========================================================================
+
+    #[test]
+    fn test_multiple_directives() {
+        let mut parser = Parser::new();
+        let input = r#"
+SecRuleEngine On
+SecRequestBodyAccess On
+SecResponseBodyAccess Off
+SecRequestBodyLimit 1048576
+SecDebugLogLevel 3
+SecWebAppId production
+"#;
+        assert!(parser.from_string(input).is_ok());
+        assert_eq!(parser.config().rule_engine, RuleEngineStatus::On);
+        assert!(parser.config().request_body_access);
+        assert!(!parser.config().response_body_access);
+        assert_eq!(parser.config().request_body_limit, 1048576);
+        assert_eq!(parser.config().debug_log_level, 3);
+        assert_eq!(parser.config().web_app_id, "production");
     }
 }
