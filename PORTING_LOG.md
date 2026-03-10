@@ -30,6 +30,8 @@
     - ✅ 14 configuration directives implemented
     - ⏳ Rule update directives (deferred to Phase 9/10)
   - ✅ Step 9: Integration tests - COMPLETE
+- 🚧 **Phase 9:** Transaction Enhancements (12 steps planned) - READY TO START
+  - See detailed step-by-step plan below (15 days, 176+ tests)
 
 **Quality Metrics:**
 - 904 tests passing total:
@@ -41,6 +43,7 @@
 - ✅ 100% test parity with Go implementation for all implemented features
 
 **Next Milestone:** Phase 9 - Transaction Enhancements (body processors, variable population, phase-based processing)
+**Detailed Plan:** See "Phase 9: Transaction Enhancements - DETAILED STEP-BY-STEP PLAN" below (12 steps, 15 days, 176+ tests)
 
 ## Porting Strategy & Guidelines
 
@@ -2319,8 +2322,664 @@ The following features were deferred from earlier phases and will be implemented
 - **Efficiency:** Rust port is significantly more concise while maintaining full compatibility
 
 ### Next Milestone
-**Phase 9: Transaction Enhancements** (~15 days)
+**Phase 9: Transaction Enhancements** (~15 days) - DETAILED PLAN BELOW
 - Implement body processors
 - Complete phase-based processing
 - Implement deferred actions and features
 - Add persistence layer for collections
+
+---
+
+## Phase 9: Transaction Enhancements - DETAILED STEP-BY-STEP PLAN
+
+### Goal
+Enhance the basic Transaction struct from Phase 5 to support complete WAF functionality including body processing, variable population, phase-based rule evaluation, and all deferred features from Phases 6-7.
+
+### Overview
+This phase transforms the minimal Transaction into a fully functional WAF transaction processor. We'll implement body processors, variable population, phase processing, CTL action execution, advanced rule evaluation features, and the persistence layer for collections.
+
+**Estimated Timeline:** 15 days (3 weeks)
+
+**Source Files:**
+- `coraza/internal/corazawaf/transaction.go` (78k lines - main transaction logic)
+- `coraza/internal/bodyprocessors/*.go` (~3k lines - body processing)
+- `coraza/internal/collections/named.go` (179 lines - persistent collections)
+- `coraza/internal/actions/exec.go`, `expirevar.go`, `setenv.go`, `initcol.go`
+
+**Target Files:**
+- `src/transaction/mod.rs` - Enhanced Transaction struct
+- `src/transaction/body_processors/` - Body processing modules
+- `src/transaction/variables.rs` - Variable population
+- `src/transaction/phases.rs` - Phase processing
+- `src/actions/ctl_execution.rs` - CTL runtime execution
+- `src/actions/deferred.rs` - Deferred actions (exec, expirevar, setenv, initcol)
+- `src/rules/advanced.rs` - Advanced RuleGroup features
+- `src/collections/persistent.rs` - Persistent collections (IP, SESSION, USER)
+
+---
+
+### Step 1: Body Processor Foundation (Days 1-2)
+
+**Goal:** Create the body processor trait and infrastructure
+
+**Components:**
+- [ ] `BodyProcessor` trait with `process()` method
+- [ ] `BodyBuffer` struct for buffering request/response bodies
+- [ ] Content-Type detection and processor selection
+- [ ] Error types for body processing
+- [ ] Basic RAW processor (pass-through, no parsing)
+
+**Implementation:**
+```rust
+pub trait BodyProcessor: Send + Sync {
+    fn process(&self, body: &[u8], tx: &mut Transaction) -> Result<(), BodyProcessorError>;
+    fn content_types(&self) -> &[&str];
+}
+
+pub struct BodyBuffer {
+    data: Vec<u8>,
+    limit: usize,
+    in_memory_limit: usize,
+    temp_file: Option<TempFile>,
+}
+```
+
+**Source:** `coraza/internal/bodyprocessors/bodyprocessors.go`, `raw.go`
+**Target:** `src/transaction/body_processors/mod.rs`, `raw.rs` (~200 lines)
+**Tests:** 5 tests (buffer limits, temp file creation, RAW pass-through)
+
+**Deliverable:** Body processor infrastructure with RAW processor
+
+---
+
+### Step 2: URL-Encoded Body Processor (Days 2-3)
+
+**Goal:** Parse `application/x-www-form-urlencoded` bodies
+
+**Components:**
+- [ ] URL-encoded parser (key=value&key2=value2)
+- [ ] Populate ARGS_POST collection
+- [ ] Populate ARGS collection (merge with GET args)
+- [ ] Handle percent-encoding
+- [ ] Handle edge cases (empty values, duplicate keys)
+
+**Implementation:**
+Parse body like `username=admin&password=secret` and populate:
+- `ARGS_POST:username` = "admin"
+- `ARGS_POST:password` = "secret"
+- `ARGS:username` = "admin" (merge with ARGS_GET)
+
+**Source:** `coraza/internal/bodyprocessors/urlencoded.go` (44 lines)
+**Target:** `src/transaction/body_processors/urlencoded.rs` (~100 lines)
+**Tests:** 8 tests from `urlencoded_test.go` (encoding, duplicates, edge cases)
+
+**Deliverable:** URL-encoded body processor with full test coverage
+
+---
+
+### Step 3: Multipart Body Processor (Days 3-5)
+
+**Goal:** Parse `multipart/form-data` bodies (file uploads)
+
+**Components:**
+- [ ] Multipart parser with boundary detection
+- [ ] Part header parsing (Content-Disposition, Content-Type)
+- [ ] File upload handling (save to temp directory)
+- [ ] Populate FILES, FILES_NAMES, FILES_SIZES, FILES_TMPNAMES collections
+- [ ] Populate MULTIPART_* variables
+- [ ] Handle upload limits and errors
+- [ ] Temp file cleanup
+
+**Implementation:**
+Parse multipart bodies with file uploads:
+- Extract field values to ARGS_POST
+- Save uploaded files to SecUploadDir
+- Populate FILES:fieldname, FILES_SIZES:fieldname, etc.
+- Track multipart errors (MULTIPART_STRICT_ERROR, etc.)
+
+**Source:** `coraza/internal/bodyprocessors/multipart.go` (127 lines)
+**Target:** `src/transaction/body_processors/multipart.rs` (~300 lines)
+**Tests:** 12 tests from `multipart_test.go` (files, fields, limits, errors)
+
+**Deliverable:** Multipart body processor with file upload support
+
+---
+
+### Step 4: JSON Body Processor (Days 5-6)
+
+**Goal:** Parse `application/json` bodies
+
+**Components:**
+- [ ] JSON parser integration (use `serde_json`)
+- [ ] Flatten JSON to collection (json.user.name → "value")
+- [ ] Populate ARGS_POST with flattened values
+- [ ] Populate JSON collection (for JSON:/* xpath-like queries)
+- [ ] Handle nested objects and arrays
+- [ ] Error handling for malformed JSON
+
+**Implementation:**
+Parse JSON like `{"user": {"name": "admin", "id": 123}}` and populate:
+- `ARGS_POST:user.name` = "admin"
+- `ARGS_POST:user.id` = "123"
+- `JSON:/user/name` = "admin"
+
+**Source:** `coraza/internal/bodyprocessors/json.go` (122 lines)
+**Target:** `src/transaction/body_processors/json.rs` (~200 lines)
+**Tests:** 8 tests from `json_test.go` (nested, arrays, malformed)
+
+**Deliverable:** JSON body processor with flattening
+
+---
+
+### Step 5: XML Body Processor (Days 6-7)
+
+**Goal:** Parse `application/xml` and `text/xml` bodies
+
+**Components:**
+- [ ] XML parser integration (use `roxmltree` or similar)
+- [ ] Flatten XML to collection (//user/@name → "value")
+- [ ] Populate REQUEST_XML collection
+- [ ] Support XPath-like queries
+- [ ] Error handling for malformed XML
+
+**Implementation:**
+Parse XML like `<user><name>admin</name></user>` and populate:
+- `REQUEST_XML://user/name` = "admin"
+- `ARGS_POST` values from XML elements
+
+**Source:** `coraza/internal/bodyprocessors/xml.go` (58 lines)
+**Target:** `src/transaction/body_processors/xml.rs` (~150 lines)
+**Tests:** 6 tests from `xml_test.go` (parsing, xpath, errors)
+
+**Note:** XML processing is less critical than JSON/multipart. Can be simplified or deferred if needed.
+
+**Deliverable:** XML body processor with XPath support
+
+---
+
+### Step 6: Variable Population System (Days 7-9)
+
+**Goal:** Populate transaction variables from HTTP requests
+
+**Components:**
+
+**Phase 1 - Connection Variables:**
+- [ ] REMOTE_ADDR, REMOTE_PORT, REMOTE_HOST
+- [ ] SERVER_ADDR, SERVER_PORT, SERVER_NAME
+- [ ] Populate from connection info
+
+**Phase 2 - Request Header Variables:**
+- [ ] REQUEST_METHOD, REQUEST_PROTOCOL, REQUEST_URI, REQUEST_URI_RAW
+- [ ] REQUEST_BASENAME, REQUEST_FILENAME, REQUEST_LINE
+- [ ] REQUEST_HEADERS, REQUEST_HEADERS_NAMES
+- [ ] REQUEST_COOKIES, REQUEST_COOKIES_NAMES
+- [ ] QUERY_STRING, ARGS_GET, ARGS_GET_NAMES
+- [ ] UNIQUE_ID (generate unique transaction ID)
+- [ ] Parse cookies from Cookie header
+
+**Phase 3 - Request Body Variables:**
+- [ ] REQUEST_BODY, REQUEST_BODY_LENGTH
+- [ ] ARGS_POST, ARGS_POST_NAMES (from body processor)
+- [ ] ARGS (combined GET + POST)
+- [ ] ARGS_NAMES (combined GET + POST)
+- [ ] FILES* (from multipart processor)
+
+**Phase 4 - Response Header Variables:**
+- [ ] RESPONSE_STATUS, RESPONSE_PROTOCOL
+- [ ] RESPONSE_HEADERS, RESPONSE_HEADERS_NAMES
+- [ ] RESPONSE_CONTENT_LENGTH, RESPONSE_CONTENT_TYPE
+
+**Phase 5 - Response Body Variables:**
+- [ ] RESPONSE_BODY
+
+**Implementation:**
+```rust
+impl Transaction {
+    pub fn process_connection(&mut self, remote_addr: &str, remote_port: u16,
+                               server_addr: &str, server_port: u16);
+    pub fn process_request_headers(&mut self);
+    pub fn process_request_body(&mut self, body: &[u8], content_type: &str);
+    pub fn process_response_headers(&mut self);
+    pub fn process_response_body(&mut self, body: &[u8]);
+}
+```
+
+**Source:** `coraza/internal/corazawaf/transaction.go` (variable population methods)
+**Target:** `src/transaction/variables.rs` (~600 lines)
+**Tests:** 30+ tests (one per variable group, edge cases)
+
+**Deliverable:** Complete variable population for all phases
+
+---
+
+### Step 7: Phase Processing with Rule Evaluation (Days 9-11)
+
+**Goal:** Implement phase-based rule evaluation with interruption handling
+
+**Components:**
+
+**Phase Processing:**
+- [ ] ProcessConnection() - Phase 1
+- [ ] ProcessRequestHeaders() - Phase 2
+- [ ] ProcessRequestBody() - Phase 3
+- [ ] ProcessResponseHeaders() - Phase 4
+- [ ] ProcessResponseBody() - Phase 5
+- [ ] ProcessLogging() - Phase 6
+
+**Rule Evaluation Integration:**
+- [ ] Call RuleGroup.eval() for each phase
+- [ ] Handle allow action (skip remaining phases)
+- [ ] Handle SkipAfter flow control
+- [ ] Collect matched rules
+- [ ] Build audit log
+
+**Interruption Handling (deferred from Phase 7):**
+- [ ] Detect disruptive actions (deny, drop, redirect, allow)
+- [ ] Return Interruption struct with status code and action
+- [ ] Stop processing on interruption
+- [ ] Support allow types (phase, request, all)
+
+**Implementation:**
+```rust
+pub struct Interruption {
+    pub status: u16,
+    pub action: DisruptiveAction,
+    pub rule_id: usize,
+}
+
+impl Transaction {
+    pub fn process_request_headers(&mut self) -> Option<Interruption> {
+        self.populate_request_header_variables();
+        self.evaluate_phase(RulePhase::RequestHeaders)
+    }
+
+    fn evaluate_phase(&mut self, phase: RulePhase) -> Option<Interruption> {
+        // Check allow status
+        // Evaluate rules for phase
+        // Check for interruption
+        // Return interruption if present
+    }
+}
+```
+
+**Source:** `coraza/internal/corazawaf/transaction.go` (phase processing methods)
+**Target:** `src/transaction/phases.rs` (~400 lines)
+**Tests:** 20 tests (each phase, interruption, allow, skip)
+
+**Deliverable:** Complete phase processing with rule evaluation and interruption
+
+---
+
+### Step 8: CTL Action Execution (Days 11-12)
+
+**Goal:** Implement runtime configuration changes via CTL action
+
+**Components:**
+- [ ] Execute CTL action during rule evaluation (not just parse)
+- [ ] Implement 20 CTL sub-commands:
+  - `ruleEngine` - Change rule engine status
+  - `requestBodyAccess` - Toggle request body inspection
+  - `responseBodyAccess` - Toggle response body inspection
+  - `requestBodyLimit` - Change body size limit
+  - `responseBodyLimit` - Change response body limit
+  - `requestBodyProcessor` - Select body processor
+  - `forceRequestBodyVariable` - Force REQUEST_BODY population
+  - `forceResponseBodyVariable` - Force RESPONSE_BODY population
+  - `auditEngine` - Toggle audit logging
+  - `auditLogParts` - Select audit log parts
+  - `ruleRemoveById` - Remove rule by ID
+  - `ruleRemoveByTag` - Remove rule by tag
+  - `ruleRemoveTargetById` - Remove target from rule
+  - `ruleRemoveTargetByTag` - Remove target from rule
+  - `hashEngine` - Toggle hash verification
+  - `hashEnforcement` - Toggle hash enforcement
+  - Plus 4 more (see ctl.go)
+- [ ] Modify Transaction fields based on CTL command
+- [ ] Apply changes immediately for current transaction
+
+**Implementation:**
+```rust
+impl CtlAction {
+    pub fn execute(&self, tx: &mut Transaction) -> Result<(), ActionError> {
+        match self.command.as_str() {
+            "ruleEngine" => {
+                tx.rule_engine = RuleEngineStatus::from_str(&self.value)?;
+            }
+            "requestBodyAccess" => {
+                tx.request_body_access = parse_boolean(&self.value)?;
+            }
+            // ... 18 more commands
+        }
+        Ok(())
+    }
+}
+```
+
+**Source:** `coraza/internal/actions/ctl.go` (486 lines)
+**Target:** `src/actions/ctl_execution.rs` (~300 lines)
+**Tests:** 29 tests from Phase 6 + 10 new execution tests
+
+**Deliverable:** Full CTL action execution with all 20 sub-commands
+
+---
+
+### Step 9: Advanced RuleGroup Features (Days 12-13)
+
+**Goal:** Implement deferred RuleGroup features from Phase 7
+
+**Components:**
+
+**Skip/SkipAfter Flow Control:**
+- [ ] Implement `skip` action - skip N rules
+- [ ] Implement `skipAfter` action - skip to SecMarker
+- [ ] Track skip count in Transaction
+- [ ] Handle skip in RuleGroup.eval()
+
+**Phase Filtering:**
+- [ ] RuleGroup.eval() accepts phase parameter
+- [ ] Only evaluate rules matching the phase
+- [ ] Respect rule.phase field
+
+**Interruption Handling (integrated with Step 7):**
+- [ ] Detect disruptive actions during evaluation
+- [ ] Stop evaluation on interruption
+- [ ] Return interruption to caller
+
+**Implementation:**
+```rust
+impl RuleGroup {
+    pub fn eval_phase(&self, tx: &mut Transaction, phase: RulePhase)
+                     -> Result<Option<Interruption>, RuleError> {
+        let mut skip_count = 0;
+
+        for rule in &self.rules {
+            // Check phase filter
+            if rule.phase != phase {
+                continue;
+            }
+
+            // Check skip count
+            if skip_count > 0 {
+                skip_count -= 1;
+                continue;
+            }
+
+            // Check skipAfter marker
+            if !tx.skip_after.is_empty() && rule.is_marker(&tx.skip_after) {
+                tx.skip_after.clear();
+                continue;
+            }
+
+            // Evaluate rule
+            if let Some(interruption) = rule.evaluate(tx)? {
+                return Ok(Some(interruption));
+            }
+
+            // Check for skip actions
+            if let Some(n) = tx.get_skip_count() {
+                skip_count = n;
+            }
+        }
+
+        Ok(None)
+    }
+}
+```
+
+**Source:** `coraza/internal/corazawaf/rulegroup.go`, `transaction.go`
+**Target:** `src/rules/advanced.rs` (~200 lines)
+**Tests:** 15 tests (skip, skipAfter, phase filtering, interruption)
+
+**Deliverable:** Advanced rule evaluation with full flow control
+
+---
+
+### Step 10: Deferred Actions Implementation (Days 13-14)
+
+**Goal:** Implement 4 deferred actions from Phase 6
+
+**Actions to Implement:**
+
+**1. exec Action:**
+- [ ] Execute external command/script
+- [ ] Pass transaction data as arguments
+- [ ] Security validation (allowed commands, sandboxing)
+- [ ] Error handling for failed execution
+- [ ] Note: Consider security implications carefully
+
+**2. expirevar Action:**
+- [ ] Mark variable for expiration after N seconds
+- [ ] Track expiration time in persistent collection
+- [ ] Clean up expired variables
+- [ ] Integration with persistence layer
+
+**3. setenv Action:**
+- [ ] Set environment variable for external processors
+- [ ] Store in ENV collection
+- [ ] Available to exec action and logging
+
+**4. initcol Action:**
+- [ ] Initialize persistent collection (IP, SESSION, USER)
+- [ ] Load collection from storage
+- [ ] Create collection if doesn't exist
+- [ ] Integration with persistence layer
+
+**Implementation:**
+```rust
+pub struct ExecAction {
+    command: String,
+}
+
+impl Action for ExecAction {
+    fn evaluate(&self, rule: &Rule, tx: &mut Transaction) -> Result<(), ActionError> {
+        // Security check: validate command is allowed
+        // Build command with transaction variables
+        // Execute command
+        // Handle output/errors
+    }
+}
+
+pub struct Expirev arAction {
+    variable: String,
+    seconds: i64,
+}
+
+impl Action for ExpirevarAction {
+    fn evaluate(&self, rule: &Rule, tx: &mut Transaction) -> Result<(), ActionError> {
+        let expiry_time = current_time() + self.seconds;
+        tx.persistent_collection.set_expiry(&self.variable, expiry_time);
+        Ok(())
+    }
+}
+```
+
+**Source:**
+- `coraza/internal/actions/exec.go` (exec)
+- `coraza/internal/actions/expirevar.go` (expirevar)
+- `coraza/internal/actions/setenv.go` (setenv)
+- `coraza/internal/actions/initcol.go` (initcol)
+
+**Target:** `src/actions/deferred.rs` (~400 lines total)
+**Tests:** 20 tests (5 per action - from Go test files)
+
+**Security Note:** exec action should be disabled by default and require explicit configuration to enable.
+
+**Deliverable:** 4 deferred actions with full test coverage
+
+---
+
+### Step 11: Persistence Layer for Collections (Day 14)
+
+**Goal:** Implement persistent collections for IP, SESSION, USER
+
+**Components:**
+- [ ] PersistentCollection struct (wraps NamedCollection)
+- [ ] Time-based expiration tracking
+- [ ] Collection storage interface (in-memory for now)
+- [ ] IP collection (keyed by IP address)
+- [ ] SESSION collection (keyed by session ID)
+- [ ] USER collection (keyed by user ID)
+- [ ] Integration with initcol and expirevar actions
+- [ ] Cleanup of expired entries
+
+**Implementation:**
+```rust
+pub struct PersistentCollection {
+    data: HashMap<String, HashMap<String, PersistentValue>>,
+    timeout: i64, // from SecCollectionTimeout
+}
+
+pub struct PersistentValue {
+    value: String,
+    created: i64,
+    expires: Option<i64>,
+}
+
+impl PersistentCollection {
+    pub fn get(&self, collection: &str, key: &str) -> Option<&str>;
+    pub fn set(&mut self, collection: &str, key: &str, value: String);
+    pub fn set_expiry(&mut self, var: &str, expiry: i64);
+    pub fn cleanup_expired(&mut self);
+}
+```
+
+**Source:** `coraza/internal/collections/named.go`, transaction storage logic
+**Target:** `src/collections/persistent.rs` (~300 lines)
+**Tests:** 12 tests (creation, expiry, cleanup, IP/SESSION/USER)
+
+**Note:** Phase 10 will add actual persistence (disk/database). Phase 9 implements in-memory persistence.
+
+**Deliverable:** Persistent collection infrastructure with expiration
+
+---
+
+### Step 12: Integration Tests & Documentation (Day 15)
+
+**Goal:** Comprehensive integration tests and documentation
+
+**Test Categories:**
+
+**End-to-End Transaction Tests:**
+- [ ] Full request/response cycle with all phases
+- [ ] Body processing (URL-encoded, multipart, JSON, XML)
+- [ ] Variable population (all phases)
+- [ ] Rule evaluation with interruption
+- [ ] CTL action execution
+- [ ] Skip/skipAfter flow control
+- [ ] Persistent collections
+- [ ] Deferred actions
+
+**Real-World Scenarios:**
+- [ ] File upload with size limits
+- [ ] JSON API request with nested data
+- [ ] SQL injection detection with interruption
+- [ ] XSS attack blocking
+- [ ] Rate limiting with IP collections
+- [ ] Session tracking with expirevar
+
+**Performance Tests:**
+- [ ] Large body processing (streaming)
+- [ ] Many rules per phase
+- [ ] Collection performance
+
+**Implementation:**
+```rust
+// tests/transaction_e2e.rs
+#[test]
+fn test_full_transaction_cycle() {
+    let mut tx = Transaction::new();
+
+    // Phase 1: Connection
+    tx.process_connection("192.168.1.1", 12345, "10.0.0.1", 80);
+
+    // Phase 2: Request Headers
+    tx.add_request_header("Host", "example.com");
+    tx.add_request_header("User-Agent", "Mozilla/5.0");
+    let interruption = tx.process_request_headers();
+    assert!(interruption.is_none());
+
+    // Phase 3: Request Body
+    let body = b"username=admin&password=secret";
+    tx.process_request_body(body, "application/x-www-form-urlencoded");
+
+    // Verify ARGS_POST populated
+    assert_eq!(tx.get_variable("ARGS_POST:username"), Some("admin"));
+
+    // ... test all phases
+}
+```
+
+**Documentation:**
+- [ ] Transaction API documentation
+- [ ] Body processor usage examples
+- [ ] Variable reference
+- [ ] Phase processing guide
+- [ ] CTL action reference
+- [ ] Persistence guide
+
+**Source:** `coraza/internal/corazawaf/transaction_test.go` (test patterns)
+**Target:** `tests/transaction_e2e.rs` (~800 lines)
+**Tests:** 30+ integration tests
+
+**Deliverable:** Comprehensive test suite and documentation
+
+---
+
+## Phase 9 Quality Gates
+
+### Must-Have Features:
+- [x] All 5 body processors implemented (RAW, URL-encoded, multipart, JSON, XML)
+- [x] Complete variable population for all 6 phases
+- [x] Phase-based rule evaluation with interruption handling
+- [x] CTL action execution (all 20 sub-commands)
+- [x] Advanced RuleGroup features (skip, skipAfter, phase filtering)
+- [x] 4 deferred actions (exec, expirevar, setenv, initcol)
+- [x] Persistent collections (IP, SESSION, USER)
+- [x] All Go tests ported (from body processor and transaction tests)
+- [x] Clippy clean (0 warnings)
+- [x] Full documentation with examples
+
+### Test Coverage:
+- [ ] 150+ unit tests (body processors, variables, phases, actions)
+- [ ] 30+ integration tests (end-to-end scenarios)
+- [ ] Performance benchmarks (body processing, rule evaluation)
+- [ ] 100% test parity with Go implementation
+
+### Performance Targets:
+- [ ] Body processing: <10ms for 1MB body
+- [ ] Rule evaluation: <1ms per rule
+- [ ] Phase processing: <5ms overhead per phase
+
+## Phase 9 Dependencies
+
+**Prerequisites (all complete):**
+- ✅ Phase 5: Transaction struct and collections
+- ✅ Phase 6: Actions system
+- ✅ Phase 7: Rule engine
+- ✅ Phase 8: SecLang parser
+
+**Enables:**
+- Phase 10: WAF Core (needs transaction processing)
+- Phase 11: CRS v4 testing (needs full transaction cycle)
+
+## Phase 9 Timeline Summary
+
+| Step | Days | Component | Tests |
+|------|------|-----------|-------|
+| 1 | 1-2 | Body Processor Foundation | 5 |
+| 2 | 2-3 | URL-Encoded Processor | 8 |
+| 3 | 3-5 | Multipart Processor | 12 |
+| 4 | 5-6 | JSON Processor | 8 |
+| 5 | 6-7 | XML Processor | 6 |
+| 6 | 7-9 | Variable Population | 30 |
+| 7 | 9-11 | Phase Processing | 20 |
+| 8 | 11-12 | CTL Execution | 10 |
+| 9 | 12-13 | Advanced RuleGroup | 15 |
+| 10 | 13-14 | Deferred Actions | 20 |
+| 11 | 14 | Persistence Layer | 12 |
+| 12 | 15 | Integration Tests | 30 |
+| **Total** | **15 days** | **Complete Transaction** | **176+ tests** |
+
+**Estimated Completion:** ~3 weeks from start
+
+---
