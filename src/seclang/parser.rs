@@ -852,6 +852,15 @@ fn directive_sec_arguments_limit(options: &mut DirectiveOptions) -> ParseResult<
         )
     })?;
 
+    // Validate limit is > 0
+    if limit == 0 {
+        return Err(ParseError::new(
+            "arguments limit must be greater than 0".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
     options.waf_config.argument_limit = limit;
     Ok(())
 }
@@ -863,6 +872,16 @@ fn directive_sec_upload_dir(options: &mut DirectiveOptions) -> ParseResult<()> {
     if options.opts.is_empty() {
         return Err(ParseError::new(
             "SecUploadDir requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    // Validate directory exists
+    let dir_path = Path::new(&options.opts);
+    if !dir_path.is_dir() {
+        return Err(ParseError::new(
+            format!("upload directory does not exist: {}", options.opts),
             options.parser_state.current_line,
             options.parser_state.current_file.clone(),
         ));
