@@ -638,6 +638,89 @@ impl Operator for Eq {
 - ✅ Full documentation with examples
 - ✅ **Phase 4, Group A Complete!** HTML entity decode and path normalization fully implemented
 
+#### Group B: Escape Sequence Decoders (src/transformations/escape.rs)
+- **Date:** 2026-03-10
+- **Source:**
+  - `coraza/internal/transformations/escape_seq_decode.go`
+  - `coraza/internal/transformations/js_decode.go`
+  - `coraza/internal/transformations/css_decode.go`
+  - `coraza/internal/transformations/url_decode_uni.go`
+  - `coraza/internal/transformations/utf8_to_unicode.go`
+  - Test data from `testdata/*.json` files
+- **Tests:** 47/47 passing (10 + 12 + 9 + 10 + 6) + 306/306 total
+- **Features:**
+  - **`escape_seq_decode` transformation:**
+    - C-style escape sequences: `\n`, `\t`, `\r`, `\a`, `\b`, `\f`, `\v`, `\\`, `\?`, `\'`, `\"`
+    - Hex escapes: `\xHH` (exactly 2 hex digits)
+    - Octal escapes: `\OOO` (up to 3 octal digits, max value `\377`)
+    - Handles invalid sequences (e.g., `\8`, `\9`, `\xag`) by skipping backslash
+    - Uses byte-level processing for efficiency
+    - **10 test cases ported from JSON**
+  - **`js_decode` transformation:**
+    - Unicode escapes: `\uHHHH` (uses lower byte only, last 2 hex digits)
+    - Hex escapes: `\xHH` (exactly 2 hex digits)
+    - Octal escapes: `\OOO` (up to 3 octal digits, max value `\377`)
+    - Simple C-style escapes: `\a`, `\b`, `\f`, `\n`, `\r`, `\t`, `\v`, `\\`, etc.
+    - **Full-width ASCII handling:** U+FF01 to U+FF5E converted to regular ASCII (add 0x20)
+    - Incomplete sequences: removes backslash, keeps rest (e.g., `\u123x` → `u123x`)
+    - **12 test cases ported from JSON**
+  - **`css_decode` transformation:**
+    - CSS hex escapes: `\HHHHHH` (1-6 hex digits)
+    - Uses lower byte only (last 2 hex digits)
+    - Ignores single whitespace after hex escape
+    - Backslash before newline: both removed
+    - Backslash before non-hex: removes backslash, keeps character
+    - **Full-width ASCII handling:** U+FF01 to U+FF5E converted (4+ hex digits)
+    - **9 test cases ported from JSON**
+  - **`url_decode_uni` transformation:**
+    - Standard URL encoding: `%HH` (2 hex digits)
+    - IIS Unicode encoding: `%uHHHH` (4 hex digits, uses lower byte)
+    - Plus to space conversion: `+` → ` `
+    - **Full-width ASCII handling:** %uFF01 to %uFF5E converted
+    - Invalid sequences: keeps as-is (e.g., `%GG`, `%u12`)
+    - **10 test cases ported from JSON**
+  - **`utf8_to_unicode` transformation:**
+    - Converts non-ASCII UTF-8 to `%uHHHH` format (IIS-style)
+    - ASCII characters (< 0x80) unchanged
+    - Zero-copy for ASCII-only strings (early return)
+    - Handles all Unicode code points up to U+FFFF
+    - **6 test cases ported from JSON**
+- **Implementation Notes:**
+  - All use byte-level processing for performance
+  - Early returns when no escape sequences found
+  - `escape_seq_decode`: Fast path optimization (finds first backslash, then processes from there)
+  - `js_decode`: Fixed octal overflow handling (e.g., `\777` → uses 2 digits)
+  - `css_decode`: Complex logic for 1-6 hex digit handling with full-width check
+  - `url_decode_uni`: Dual-mode percent encoding (standard `%HH` and IIS `%uHHHH`)
+  - `utf8_to_unicode`: Efficient string formatting with pre-allocated capacity
+  - All return `(String, bool)` tuple (output, changed)
+- **Test Coverage:**
+  - **escape_seq_decode (10 tests):** Empty, no escapes, null bytes, comprehensive escapes, invalid sequences, octal variants, trailing backslash, escaped backslash
+  - **js_decode (12 tests):** Empty, no escapes, null bytes, Unicode escapes, hex escapes, octal escapes, simple escapes, full-width ASCII, mixed escapes, incomplete sequences, octal overflow
+  - **css_decode (9 tests):** Empty, no escapes, null bytes, hex escapes (1-6 digits), whitespace after hex, full-width ASCII, backslash-newline, backslash-non-hex, trailing backslash
+  - **url_decode_uni (10 tests):** Empty, no encoding, null bytes, standard percent, plus-to-space, IIS Unicode, full-width ASCII, invalid percent, invalid Unicode, mixed encoding
+  - **utf8_to_unicode (6 tests):** Empty, ASCII-only, null bytes, Latin chars (café), Chinese chars, mixed ASCII/Unicode
+- **Performance:**
+  - Zero-copy when unchanged (early returns)
+  - Byte-level processing (no UTF-8 overhead for ASCII)
+  - Pre-allocated result buffers
+  - Fast path for ASCII-only strings
+
+### Quality Metrics - Phase 4, Group B
+- ✅ All tests passing (306/306 unit tests, +47 new escape decoder tests)
+- ✅ Doc tests passing (79/79, +5 new examples)
+- ✅ Clippy clean (no warnings)
+- ✅ Full documentation with examples
+- ✅ **Phase 4, Group B Complete!** All 5 escape sequence decoders fully implemented
+
+### Phase 4 Summary (So Far)
+**Transformations Ported:** 8 total
+- Group A (Simple): 3 (html_entity_decode, normalise_path, normalise_path_win)
+- Group B (Escape Decoders): 5 (escape_seq_decode, js_decode, css_decode, url_decode_uni, utf8_to_unicode)
+
+**Still Remaining:**
+- Group C: cmdLine, removeComments, replaceComments (3 transformations)
+
 ### Next Steps
 - [ ] **IMPORTANT - Cleanup After Transaction Port:** Once the production `TransactionState` implementation is ported:
   - Delete `NoTx` struct from `src/operators/macros.rs`

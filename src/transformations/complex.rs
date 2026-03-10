@@ -3,6 +3,8 @@
 //! This module provides advanced transformations for decoding various formats
 //! and normalizing file paths.
 
+// Note: This module doesn't use string utils directly, but escape.rs does
+
 /// HTML entity decoding transformation.
 ///
 /// Decodes HTML entities (both named entities like `&lt;` and numeric entities
