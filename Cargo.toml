@@ -17,3 +17,9 @@ aho-corasick = "1.1"
 
 # IP address and network utilities
 ipnet = "2.9"
+
+# HTML entity decoding
+htmlescape = "0.3"
+
+# Path normalization
+path-clean = "1.0"

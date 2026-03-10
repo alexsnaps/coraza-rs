@@ -579,6 +579,65 @@ impl Operator for Eq {
 - @rbl (need DNS lookup)
 - @inspectFile, @validateSchema (need file/schema infrastructure)
 
+### Phase 4: Complex Text Processing Transformations
+
+#### Group A: Simple Transformations (src/transformations/complex.rs)
+- **Date:** 2026-03-10
+- **Source:**
+  - `coraza/internal/transformations/html_entity_decode.go`
+  - `coraza/internal/transformations/normalise_path.go`
+  - `coraza/internal/transformations/normalise_path_win.go`
+  - Test data from `testdata/*.json` files
+- **Tests:** 68/68 passing (3 + 30 + 30 + 5 additional edge cases) + 259/259 total
+- **Dependencies Added:**
+  - `htmlescape = "0.3"` - HTML entity decoding
+  - `path-clean = "1.0"` - Path normalization
+- **Features:**
+  - **`html_entity_decode` transformation:**
+    - Decodes HTML entities (named: `&lt;`, numeric: `&#60;`, hex: `&#x3C;`)
+    - Uses `htmlescape::decode_html()` (Rust standard library equivalent)
+    - Simple delegation - only 3 lines of implementation
+    - **3 test cases ported from JSON**
+  - **`normalise_path` transformation:**
+    - Unix-style path normalization
+    - Removes redundant slashes (`//` → `/`)
+    - Resolves `.` and `..` (current/parent directory)
+    - Special case: `.` → empty string (ModSecurity behavior)
+    - Preserves trailing slashes
+    - Uses `path-clean` crate for robust normalization
+    - **30 test cases ported from JSON**
+  - **`normalise_path_win` transformation:**
+    - Windows-style path normalization
+    - Converts backslashes to forward slashes (`\` → `/`)
+    - Then delegates to `normalise_path`
+    - Correctly tracks changes from both backslash conversion AND path normalization
+    - **30 test cases ported from JSON**
+- **Implementation Notes:**
+  - `html_entity_decode`: Direct delegation to `htmlescape` crate
+  - `normalise_path`: Uses `path-clean::clean()` + special handling for `.` and trailing `/`
+  - `normalise_path_win`: Tracks changes from backslash conversion OR normalization (both can happen)
+  - All return `(String, bool)` tuple (output, changed)
+- **Test Coverage:**
+  - HTML entity decode: Empty, no entities, with null byte, named entities, numeric entities, hex entities
+  - Normalise path: 30 comprehensive tests covering:
+    - Empty input, simple paths, null bytes
+    - `.` and `..` resolution
+    - Double slashes, parent directory traversal
+    - Complex nested paths with multiple `./` and `../`
+    - Path traversal attacks (e.g., `/.../../etc/passwd`)
+  - Normalise path Win: All 30 Unix tests with backslash variants
+- **Performance:**
+  - Zero-copy where possible (no transformation if unchanged)
+  - Early return on empty input
+  - Efficient path cleaning via `path-clean` crate
+
+### Quality Metrics - Phase 4, Group A
+- ✅ All tests passing (259/259 unit tests, +68 new transformation tests)
+- ✅ Doc tests passing (74/74, +3 new examples)
+- ✅ Clippy clean (no warnings)
+- ✅ Full documentation with examples
+- ✅ **Phase 4, Group A Complete!** HTML entity decode and path normalization fully implemented
+
 ### Next Steps
 - [ ] **IMPORTANT - Cleanup After Transaction Port:** Once the production `TransactionState` implementation is ported:
   - Delete `NoTx` struct from `src/operators/macros.rs`
@@ -591,6 +650,7 @@ impl Operator for Eq {
     - `src/operators/validation.rs` (test module)
   - Update all test code to use the production transaction type instead of `NoTx`
   - This cleanup is critical to avoid shipping deprecated convenience types
-- [ ] **Phase 4:** Port complex text processing transformations (cmd_line, css_decode, js_decode, html_entity_decode, escape sequences)
-- [ ] **Phase 5:** Port remaining simple transformations if any
+- [ ] **Phase 4, Group B:** Port escape sequence decoders (escapeSeqDecode, jsDecode, cssDecode - 5 transformations)
+- [ ] **Phase 4, Group C:** Port advanced transformations (cmdLine, removeComments, replaceComments - 3 transformations)
+- [ ] **Phase 5:** Port remaining transformations (urlDecodeUni, utf8ToUnicode - 2 transformations)
 - [ ] **Phase 6:** Begin WAF core (collections, variables, transaction system)
