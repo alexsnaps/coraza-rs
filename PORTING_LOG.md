@@ -833,6 +833,49 @@ Implement the data storage and variable management system that transactions use 
 - ✅ Full documentation with examples
 - ✅ **Phase 5, Step 1 Complete!** Collection types fully implemented
 
+#### 2. Transaction Structure (src/transaction/)
+- **Date:** 2026-03-10
+- **Source:** `coraza/internal/corazawaf/transaction.go` (TransactionVariables struct)
+- **Tests:** 6/6 passing + 368/368 total
+- **Features:**
+  - **Transaction struct:**
+    - Holds all per-request data in collections
+    - Transaction ID tracking
+    - Essential collections: ARGS, ARGS_GET, ARGS_POST, REQUEST_HEADERS, REQUEST_COOKIES, RESPONSE_HEADERS
+    - Single-value variables: REQUEST_URI, REQUEST_METHOD, REMOTE_ADDR
+    - Capturing support for operators (regex groups, pattern matches)
+  - **TransactionState implementation:**
+    - `get_variable()` - Retrieve variable values by RuleVariable and optional key
+    - `capturing()` - Check if capturing is enabled
+    - `capture_field()` - Store captured values from operators
+  - **Accessor methods:**
+    - Immutable and mutable access to all collections
+    - Type-safe collection retrieval
+  - **Variables module (src/transaction/variables.rs):**
+    - Placeholder for future variable extraction logic
+    - Will contain: parse_query_string, parse_cookies, parse_request_line, etc.
+- **Implementation Notes:**
+  - Minimal viable transaction for Phase 5
+  - Only implements collections needed for operator testing
+  - Case-sensitive ARGS collections (ARGS, ARGS_GET, ARGS_POST)
+  - Case-insensitive header/cookie collections
+  - Captures stored as `Vec<Option<String>>` with sparse indexing support
+  - Not thread-safe (per-request isolation)
+- **Test Coverage:**
+  - **Transaction (6 tests):** New, args, headers, single values, get_variable, capturing
+  - All tests validate TransactionState trait implementation
+- **Design Decisions:**
+  - Concrete type, not a trait (only one implementation)
+  - Public accessor methods for ergonomic use
+  - Mutable references for collection modification
+  - Captures cleared when disabling capturing
+
+### Quality Metrics - Phase 5, Step 2
+- ✅ All tests passing (368/368 unit tests, +6 new transaction tests)
+- ✅ Clippy clean (no warnings)
+- ✅ Full documentation with examples
+- ✅ **Phase 5, Step 2 Complete!** Basic Transaction structure implemented
+
 ### Next Steps
 - [ ] **Phase 5, Step 2:** Variable extraction logic (ARGS, HEADERS, COOKIES, etc.)
 - [ ] **Phase 5, Step 3:** Transaction struct implementing TransactionState

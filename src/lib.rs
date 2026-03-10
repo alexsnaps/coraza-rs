@@ -9,6 +9,7 @@
 
 pub mod collection;
 pub mod operators;
+pub mod transaction;
 pub mod transformations;
 pub mod types;
 pub mod utils;
