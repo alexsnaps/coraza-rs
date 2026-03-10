@@ -56,6 +56,7 @@
 //! SecRule ARGS "@rx attack" "id:100,deny,log,msg:'Attack detected'"
 //! ```
 
+mod ctl;
 mod disruptive;
 mod flow;
 mod logging;
@@ -70,6 +71,7 @@ use std::sync::OnceLock;
 use crate::RuleSeverity;
 use crate::operators::Macro;
 
+pub use ctl::CtlAction;
 pub use disruptive::{
     AllowAction, AllowType, BlockAction, DenyAction, DropAction, PassAction, RedirectAction,
 };
@@ -377,6 +379,9 @@ fn create_status() -> Box<dyn Action> {
 fn create_t() -> Box<dyn Action> {
     Box::new(TAction)
 }
+fn create_ctl() -> Box<dyn Action> {
+    Box::new(CtlAction::new())
+}
 
 /// Initialize the action registry with built-in actions.
 fn init_registry() -> HashMap<String, ActionFactory> {
@@ -419,6 +424,7 @@ fn init_registry() -> HashMap<String, ActionFactory> {
     registry.insert("multimatch".to_string(), create_multimatch as ActionFactory);
     registry.insert("status".to_string(), create_status as ActionFactory);
     registry.insert("t".to_string(), create_t as ActionFactory);
+    registry.insert("ctl".to_string(), create_ctl as ActionFactory);
 
     registry
 }
@@ -692,8 +698,8 @@ mod tests {
 
     #[test]
     fn test_all_special_actions_registered() {
-        // Ensure all 4 special actions are registered
-        let actions = vec!["capture", "multimatch", "status", "t"];
+        // Ensure all 5 special actions are registered (4 + ctl)
+        let actions = vec!["capture", "multimatch", "status", "t", "ctl"];
         for name in actions {
             assert!(get(name).is_ok(), "Action '{}' not registered", name);
         }
@@ -721,6 +727,11 @@ mod tests {
             get("t").unwrap().action_type(),
             ActionType::Nondisruptive,
             "t should be Nondisruptive"
+        );
+        assert_eq!(
+            get("ctl").unwrap().action_type(),
+            ActionType::Nondisruptive,
+            "ctl should be Nondisruptive"
         );
     }
 
