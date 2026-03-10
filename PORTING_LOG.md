@@ -4,7 +4,7 @@
 
 ## Current Status (as of 2026-03-10)
 
-**Phase 7: Rule Engine** - In Progress (Step 2/8 complete)
+**Phase 7: Rule Engine** - In Progress (Step 3/8 complete)
 
 - ✅ **Phase 1:** Foundation types (RuleSeverity, RulePhase, RuleVariable, etc.) - COMPLETE
 - ✅ **Phase 2:** String utilities - COMPLETE
@@ -12,13 +12,14 @@
 - ✅ **Phase 4:** Collections (Map, ConcatMap, Keyed trait) - COMPLETE
 - ✅ **Phase 5:** Operators (10 operators: rx, pm, streq, contains, etc.) - COMPLETE
 - ✅ **Phase 6:** Actions (26/26 implemented) - COMPLETE
-- 🚧 **Phase 7:** Rule Engine (2/8 steps complete) - IN PROGRESS
+- 🚧 **Phase 7:** Rule Engine (3/8 steps complete) - IN PROGRESS
   - ✅ Step 1: Variable extraction system - COMPLETE
   - ✅ Step 2: Transformation pipeline - COMPLETE
-  - ⏳ Step 3: Operator integration - NEXT
+  - ✅ Step 3: Operator integration - COMPLETE
+  - ⏳ Step 4: Action execution - NEXT
 
 **Quality Metrics:**
-- 550 tests passing (37 rule engine tests: 24 variable + 13 transformation)
+- 560 tests passing (47 rule engine tests: 24 variable + 13 transformation + 10 operator)
 - Clippy clean (0 warnings)
 - 100% test parity with Go implementation for all components
 
@@ -1276,10 +1277,41 @@ Implement the core rule evaluation engine that ties together variables, transfor
 - Zero runtime overhead compared to Go's implementation
 - Multi-match mode enables "test original + all transformed values" behavior
 
-**Step 3: Operator Integration (Week 1, Day 6)**
-- [ ] RuleOperator wrapper with negation support
-- [ ] Integration with existing operators from Phase 3
-- [ ] Handle operator-less rules (SecAction, SecMarker)
+**Step 3: Operator Integration ✅ COMPLETE (2026-03-10)**
+- [x] **Implementation complete** (~470 lines in `src/rules/operator.rs`)
+  - ✅ OperatorEnum - Enum of all operator types for static dispatch
+  - ✅ RuleOperator wrapper with metadata (function name, data, negation)
+  - ✅ Negation detection from function name prefix (e.g., "!@rx")
+  - ✅ Negation evaluation (inverts operator result)
+  - ✅ Zero-cost abstraction - no dynamic dispatch, compile-time enum dispatch
+  - ✅ From impls for all 18 operator types
+- [x] **Integration with existing operators**
+  - ✅ All Phase 5 operators supported (rx, pm, streq, eq, contains, etc.)
+  - ✅ Static dispatch via enum eliminates vtable overhead
+  - ✅ Pattern matching optimized to jump table by compiler
+- [x] **Operator-less rules support**
+  - ✅ RuleOperator is Optional (Option<RuleOperator>)
+  - ✅ None = operator-less rules (SecAction, SecMarker)
+  - ✅ Documented in implementation
+- [x] **Tests ported from Go** (`src/rules/operator.rs`)
+  - ✅ 10 comprehensive tests covering all functionality
+  - ✅ Negation detection and evaluation tests
+  - ✅ Multiple operator type tests (rx, contains, eq, streq)
+  - ✅ Metadata storage tests (function name, data)
+  - ✅ Edge cases (empty function name, etc.)
+
+**Quality Metrics - Step 3:**
+- ✅ 10 tests passing
+- ✅ 560 total tests passing (+10 new)
+- ✅ Clippy clean (0 warnings)
+- ✅ Full documentation with examples
+- ✅ 100% test parity with Go implementation
+
+**Design Notes:**
+- Chose enum over Box<dyn Operator> to avoid heap allocation and vtable overhead
+- Static dispatch via pattern matching is zero-cost and inlined
+- Negation is detected at construction time (not per-evaluation)
+- Function name and data stored for debugging/logging (matches Go design)
 
 **Step 4: Action Execution (Week 2, Days 1-2)**
 - [ ] Execute actions on rule match

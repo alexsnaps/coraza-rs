@@ -31,8 +31,10 @@
 //! 4. If match: execute deny, log, and msg actions
 //! ```
 
+pub mod operator;
 pub mod transformation;
 pub mod variable;
 
+pub use operator::{OperatorEnum, RuleOperator};
 pub use transformation::TransformationChain;
 pub use variable::{VariableException, VariableKey, VariableSpec};

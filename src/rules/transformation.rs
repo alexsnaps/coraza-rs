@@ -104,7 +104,8 @@ impl TransformationChain {
             return Err("transformation name cannot be empty".to_string());
         }
 
-        self.transformations.push(NamedTransformation { name, function });
+        self.transformations
+            .push(NamedTransformation { name, function });
         Ok(())
     }
 
@@ -152,7 +153,10 @@ impl TransformationChain {
     /// assert_eq!(chain.names(), vec!["lowercase", "urlDecode"]);
     /// ```
     pub fn names(&self) -> Vec<&str> {
-        self.transformations.iter().map(|t| t.name.as_str()).collect()
+        self.transformations
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect()
     }
 
     /// Apply all transformations in the chain sequentially.
@@ -314,10 +318,7 @@ mod tests {
         let result = chain.add("", append_a);
 
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            "transformation name cannot be empty"
-        );
+        assert_eq!(result.unwrap_err(), "transformation name cannot be empty");
     }
 
     // Ported from: coraza/internal/corazawaf/rule_test.go::TestClearTransformation
