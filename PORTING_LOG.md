@@ -990,7 +990,7 @@ Implement the action system that defines what happens when rules match. Actions 
 - **Progress:** 18/24 core actions (75% complete)
 
 **Step 5: Group D - Variable Manipulation (NEXT - 1 complex action)**
-- [ ] `setvar` - Create/modify/delete TX variables
+- [x] `setvar` - Create/modify/delete TX variables
   - Syntax: `TX.key=value`, `TX.key=+5`, `!TX.key`
   - Arithmetic operations
   - Macro expansion
