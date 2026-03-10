@@ -191,6 +191,8 @@ pub struct Rule {
     pub multi_match: bool,
     /// Transformation pipeline (name, function)
     pub transformations: Vec<String>,
+    /// SecMarker label (for flow control markers)
+    pub sec_mark: Option<String>,
 }
 
 impl Rule {
@@ -213,6 +215,7 @@ impl Rule {
             capture: false,
             multi_match: false,
             transformations: Vec::new(),
+            sec_mark: None,
         }
     }
 }

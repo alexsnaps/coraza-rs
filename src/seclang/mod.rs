@@ -35,11 +35,13 @@
 pub mod action_parser;
 pub mod operator_parser;
 pub mod parser;
+pub mod rule_compiler;
 pub mod variable_parser;
 pub mod waf_config;
 
 pub use action_parser::parse_actions;
 pub use operator_parser::parse_operator;
 pub use parser::Parser;
+pub use rule_compiler::{compile_sec_action, compile_sec_marker, compile_sec_rule};
 pub use variable_parser::parse_variables;
 pub use waf_config::WafConfig;
