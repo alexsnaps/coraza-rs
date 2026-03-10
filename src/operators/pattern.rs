@@ -23,15 +23,15 @@ use regex::Regex;
 /// # Examples
 ///
 /// ```
-/// use coraza::operators::{NoTx, Operator, rx};
+/// use coraza::{transaction::Transaction, Operator, rx};
 ///
 /// let op = rx("som(.*)ta").unwrap();
-/// assert!(op.evaluate(None::<&mut NoTx>, "somedata"));
-/// assert!(!op.evaluate(None::<&mut NoTx>, "notdata"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "somedata"));
+/// assert!(!op.evaluate(None::<&mut Transaction>, "notdata"));
 ///
 /// // Unicode support
 /// let op = rx("ハロー").unwrap();
-/// assert!(op.evaluate(None::<&mut NoTx>, "ハローワールド"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "ハローワールド"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Rx {
@@ -125,12 +125,12 @@ pub fn rx(pattern: &str) -> Result<Rx, Box<dyn std::error::Error>> {
 /// # Examples
 ///
 /// ```
-/// use coraza::operators::{NoTx, Operator, pm};
+/// use coraza::{transaction::Transaction, Operator, pm};
 ///
 /// let op = pm("WebZIP WebCopier Webster").unwrap();
-/// assert!(op.evaluate(None::<&mut NoTx>, "User-Agent: WebZIP/1.0"));
-/// assert!(op.evaluate(None::<&mut NoTx>, "WEBZIP is here")); // Case-insensitive
-/// assert!(!op.evaluate(None::<&mut NoTx>, "Mozilla/5.0"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "User-Agent: WebZIP/1.0"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "WEBZIP is here")); // Case-insensitive
+/// assert!(!op.evaluate(None::<&mut Transaction>, "Mozilla/5.0"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Pm {
@@ -225,18 +225,18 @@ pub fn pm(patterns: &str) -> Result<Pm, MacroError> {
 /// # Examples
 ///
 /// ```
-/// use coraza::operators::{NoTx, Operator, within};
+/// use coraza::{transaction::Transaction, Operator, within};
 ///
 /// // Check if input is within allowed values
 /// let op = within("GET,POST,HEAD").unwrap();
-/// assert!(op.evaluate(None::<&mut NoTx>, "GET"));
-/// assert!(op.evaluate(None::<&mut NoTx>, "POST"));
-/// assert!(!op.evaluate(None::<&mut NoTx>, "DELETE"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "GET"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "POST"));
+/// assert!(!op.evaluate(None::<&mut Transaction>, "DELETE"));
 ///
 /// // Works with any haystack
 /// let op = within("abcdefghij").unwrap();
-/// assert!(op.evaluate(None::<&mut NoTx>, "def"));
-/// assert!(!op.evaluate(None::<&mut NoTx>, "xyz"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "def"));
+/// assert!(!op.evaluate(None::<&mut Transaction>, "xyz"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Within {
@@ -271,11 +271,11 @@ pub fn within(haystack: &str) -> Result<Within, MacroError> {
 /// # Examples
 ///
 /// ```
-/// use coraza::operators::{NoTx, Operator, strmatch};
+/// use coraza::{transaction::Transaction, Operator, strmatch};
 ///
 /// let op = strmatch("WebZIP").unwrap();
-/// assert!(op.evaluate(None::<&mut NoTx>, "User-Agent: WebZIP/1.0"));
-/// assert!(!op.evaluate(None::<&mut NoTx>, "User-Agent: webzip")); // Case-sensitive
+/// assert!(op.evaluate(None::<&mut Transaction>, "User-Agent: WebZIP/1.0"));
+/// assert!(!op.evaluate(None::<&mut Transaction>, "User-Agent: webzip")); // Case-sensitive
 /// ```
 #[derive(Debug, Clone)]
 pub struct StrMatch {
@@ -301,10 +301,9 @@ pub fn strmatch(pattern: &str) -> Result<StrMatch, MacroError> {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::operators::NoTx;
+    use crate::transaction::Transaction;
     use crate::types::RuleVariable;
 
     // Mock transaction state for testing macro expansion
@@ -325,46 +324,46 @@ mod tests {
     #[test]
     fn test_rx_basic() {
         let op = rx("som(.*)ta").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "somedata"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "notdata"));
+        assert!(op.evaluate(None::<&mut Transaction>, "somedata"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "notdata"));
     }
 
     #[test]
     fn test_rx_unicode() {
         let op = rx("ハロー").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "ハローワールド"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "グッバイワールド"));
+        assert!(op.evaluate(None::<&mut Transaction>, "ハローワールド"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "グッバイワールド"));
     }
 
     #[test]
     fn test_rx_dotall_mode() {
         // Dotall mode enabled by default - . matches newlines
         let op = rx("hello.*world").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "hello\nworld"));
-        assert!(op.evaluate(None::<&mut NoTx>, "hello world"));
+        assert!(op.evaluate(None::<&mut Transaction>, "hello\nworld"));
+        assert!(op.evaluate(None::<&mut Transaction>, "hello world"));
     }
 
     #[test]
     fn test_rx_case_sensitive() {
         let op = rx("test").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "test"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "TEST"));
+        assert!(op.evaluate(None::<&mut Transaction>, "test"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "TEST"));
 
         // Case-insensitive with flag
         let op = rx("(?i)test").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "test"));
-        assert!(op.evaluate(None::<&mut NoTx>, "TEST"));
+        assert!(op.evaluate(None::<&mut Transaction>, "test"));
+        assert!(op.evaluate(None::<&mut Transaction>, "TEST"));
     }
 
     #[test]
     fn test_rx_anchors() {
         let op = rx("^GET").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "GET /index.html"));
-        assert!(!op.evaluate(None::<&mut NoTx>, " GET /index.html"));
+        assert!(op.evaluate(None::<&mut Transaction>, "GET /index.html"));
+        assert!(!op.evaluate(None::<&mut Transaction>, " GET /index.html"));
 
         let op = rx("\\.php$").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "/index.php"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "/index.php?id=1"));
+        assert!(op.evaluate(None::<&mut Transaction>, "/index.php"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "/index.php?id=1"));
     }
 
     #[test]
@@ -386,41 +385,41 @@ mod tests {
     #[test]
     fn test_pm_basic() {
         let op = pm("WebZIP WebCopier Webster").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "User-Agent: WebZIP/1.0"));
-        assert!(op.evaluate(None::<&mut NoTx>, "WebCopier tool"));
-        assert!(op.evaluate(None::<&mut NoTx>, "Webster here"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "Mozilla/5.0"));
+        assert!(op.evaluate(None::<&mut Transaction>, "User-Agent: WebZIP/1.0"));
+        assert!(op.evaluate(None::<&mut Transaction>, "WebCopier tool"));
+        assert!(op.evaluate(None::<&mut Transaction>, "Webster here"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "Mozilla/5.0"));
     }
 
     #[test]
     fn test_pm_case_insensitive() {
         let op = pm("WebZIP").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "WEBZIP"));
-        assert!(op.evaluate(None::<&mut NoTx>, "webzip"));
-        assert!(op.evaluate(None::<&mut NoTx>, "WebZIP"));
-        assert!(op.evaluate(None::<&mut NoTx>, "WeBzIp"));
+        assert!(op.evaluate(None::<&mut Transaction>, "WEBZIP"));
+        assert!(op.evaluate(None::<&mut Transaction>, "webzip"));
+        assert!(op.evaluate(None::<&mut Transaction>, "WebZIP"));
+        assert!(op.evaluate(None::<&mut Transaction>, "WeBzIp"));
     }
 
     #[test]
     fn test_pm_multiple_matches() {
         let op = pm("<script> javascript: onerror=").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "<script>alert(1)</script>"));
-        assert!(op.evaluate(None::<&mut NoTx>, "javascript:void(0)"));
-        assert!(op.evaluate(None::<&mut NoTx>, "<img onerror=alert(1)>"));
+        assert!(op.evaluate(None::<&mut Transaction>, "<script>alert(1)</script>"));
+        assert!(op.evaluate(None::<&mut Transaction>, "javascript:void(0)"));
+        assert!(op.evaluate(None::<&mut Transaction>, "<img onerror=alert(1)>"));
     }
 
     #[test]
     fn test_pm_single_pattern() {
         let op = pm("malware").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "this is malware"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "this is safe"));
+        assert!(op.evaluate(None::<&mut Transaction>, "this is malware"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "this is safe"));
     }
 
     #[test]
     fn test_pm_empty_pattern() {
         let op = pm("").unwrap();
         // Empty pattern matches empty string in input
-        assert!(op.evaluate(None::<&mut NoTx>, "anything"));
+        assert!(op.evaluate(None::<&mut Transaction>, "anything"));
     }
 
     #[test]
@@ -437,40 +436,40 @@ mod tests {
     #[test]
     fn test_within_basic() {
         let op = within("GET,POST,HEAD").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "GET"));
-        assert!(op.evaluate(None::<&mut NoTx>, "POST"));
-        assert!(op.evaluate(None::<&mut NoTx>, "HEAD"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "DELETE"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "PUT"));
+        assert!(op.evaluate(None::<&mut Transaction>, "GET"));
+        assert!(op.evaluate(None::<&mut Transaction>, "POST"));
+        assert!(op.evaluate(None::<&mut Transaction>, "HEAD"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "DELETE"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "PUT"));
     }
 
     #[test]
     fn test_within_substring() {
         let op = within("abcdefghij").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "abc"));
-        assert!(op.evaluate(None::<&mut NoTx>, "def"));
-        assert!(op.evaluate(None::<&mut NoTx>, "j"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "xyz"));
+        assert!(op.evaluate(None::<&mut Transaction>, "abc"));
+        assert!(op.evaluate(None::<&mut Transaction>, "def"));
+        assert!(op.evaluate(None::<&mut Transaction>, "j"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "xyz"));
     }
 
     #[test]
     fn test_within_exact_match() {
         let op = within("exact").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "exact"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "not exact"));
+        assert!(op.evaluate(None::<&mut Transaction>, "exact"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "not exact"));
     }
 
     #[test]
     fn test_within_empty_input() {
         let op = within("GET,POST").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "")); // Empty string is in any string
+        assert!(op.evaluate(None::<&mut Transaction>, "")); // Empty string is in any string
     }
 
     #[test]
     fn test_within_case_sensitive() {
         let op = within("GET,POST").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "GET"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "get")); // Case-sensitive
+        assert!(op.evaluate(None::<&mut Transaction>, "GET"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "get")); // Case-sensitive
     }
 
     #[test]
@@ -486,22 +485,22 @@ mod tests {
     #[test]
     fn test_strmatch_basic() {
         let op = strmatch("WebZIP").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "User-Agent: WebZIP/1.0"));
-        assert!(op.evaluate(None::<&mut NoTx>, "WebZIP"));
+        assert!(op.evaluate(None::<&mut Transaction>, "User-Agent: WebZIP/1.0"));
+        assert!(op.evaluate(None::<&mut Transaction>, "WebZIP"));
     }
 
     #[test]
     fn test_strmatch_case_sensitive() {
         let op = strmatch("WebZIP").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "WebZIP"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "webzip")); // Case-sensitive
+        assert!(op.evaluate(None::<&mut Transaction>, "WebZIP"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "webzip")); // Case-sensitive
     }
 
     #[test]
     fn test_strmatch_path_traversal() {
         let op = strmatch("../../../").unwrap();
-        assert!(op.evaluate(None::<&mut NoTx>, "GET /../../../etc/passwd"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "GET /index.html"));
+        assert!(op.evaluate(None::<&mut Transaction>, "GET /../../../etc/passwd"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "GET /index.html"));
     }
 
     #[test]

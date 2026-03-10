@@ -19,3 +19,14 @@ pub use types::{
     AuditEngineStatus, AuditLogPart, AuditLogParts, BodyLimitAction, RuleEngineStatus, RulePhase,
     RuleSeverity, RuleVariable, apply_audit_log_parts, parse_audit_log_parts,
 };
+
+// Re-export operator trait and functions
+pub use operators::{
+    Operator,
+    // Simple operators
+    eq, gt, ge, lt, le, streq, contains, begins_with, ends_with,
+    // Pattern operators
+    rx, pm, within, strmatch,
+    // IP operators
+    ip_match,
+};

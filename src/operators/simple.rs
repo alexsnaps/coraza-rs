@@ -19,12 +19,12 @@ use crate::operators::{Macro, MacroError, Operator, TransactionState};
 /// # Examples
 ///
 /// ```
-/// use coraza::operators::{NoTx, Operator, eq};
+/// use coraza::{transaction::Transaction, Operator, eq};
 ///
 /// let op = eq("15").unwrap();
-/// assert!(op.evaluate(None::<&mut NoTx>, "15"));
-/// assert!(op.evaluate(None::<&mut NoTx>, "015")); // Leading zeros ignored
-/// assert!(!op.evaluate(None::<&mut NoTx>, "16"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "15"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "015")); // Leading zeros ignored
+/// assert!(!op.evaluate(None::<&mut Transaction>, "16"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Eq {
@@ -61,12 +61,12 @@ pub fn eq(parameter: &str) -> Result<Eq, MacroError> {
 /// # Examples
 ///
 /// ```
-/// use coraza::operators::{NoTx, Operator, gt};
+/// use coraza::{transaction::Transaction, Operator, gt};
 ///
 /// let op = gt("10").unwrap();
-/// assert!(op.evaluate(None::<&mut NoTx>, "15"));
-/// assert!(!op.evaluate(None::<&mut NoTx>, "10"));
-/// assert!(!op.evaluate(None::<&mut NoTx>, "5"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "15"));
+/// assert!(!op.evaluate(None::<&mut Transaction>, "10"));
+/// assert!(!op.evaluate(None::<&mut Transaction>, "5"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Gt {
@@ -102,12 +102,12 @@ pub fn gt(parameter: &str) -> Result<Gt, MacroError> {
 /// # Examples
 ///
 /// ```
-/// use coraza::operators::{NoTx, Operator, ge};
+/// use coraza::{transaction::Transaction, Operator, ge};
 ///
 /// let op = ge("10").unwrap();
-/// assert!(op.evaluate(None::<&mut NoTx>, "15"));
-/// assert!(op.evaluate(None::<&mut NoTx>, "10"));
-/// assert!(!op.evaluate(None::<&mut NoTx>, "5"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "15"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "10"));
+/// assert!(!op.evaluate(None::<&mut Transaction>, "5"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Ge {
@@ -143,12 +143,12 @@ pub fn ge(parameter: &str) -> Result<Ge, MacroError> {
 /// # Examples
 ///
 /// ```
-/// use coraza::operators::{NoTx, Operator, lt};
+/// use coraza::{transaction::Transaction, Operator, lt};
 ///
 /// let op = lt("10").unwrap();
-/// assert!(op.evaluate(None::<&mut NoTx>, "5"));
-/// assert!(!op.evaluate(None::<&mut NoTx>, "10"));
-/// assert!(!op.evaluate(None::<&mut NoTx>, "15"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "5"));
+/// assert!(!op.evaluate(None::<&mut Transaction>, "10"));
+/// assert!(!op.evaluate(None::<&mut Transaction>, "15"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Lt {
@@ -184,12 +184,12 @@ pub fn lt(parameter: &str) -> Result<Lt, MacroError> {
 /// # Examples
 ///
 /// ```
-/// use coraza::operators::{NoTx, Operator, le};
+/// use coraza::{transaction::Transaction, Operator, le};
 ///
 /// let op = le("10").unwrap();
-/// assert!(op.evaluate(None::<&mut NoTx>, "5"));
-/// assert!(op.evaluate(None::<&mut NoTx>, "10"));
-/// assert!(!op.evaluate(None::<&mut NoTx>, "15"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "5"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "10"));
+/// assert!(!op.evaluate(None::<&mut Transaction>, "15"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Le {
@@ -226,12 +226,12 @@ pub fn le(parameter: &str) -> Result<Le, MacroError> {
 /// # Examples
 ///
 /// ```
-/// use coraza::operators::{NoTx, Operator, streq};
+/// use coraza::{transaction::Transaction, Operator, streq};
 ///
 /// let op = streq("POST").unwrap();
-/// assert!(op.evaluate(None::<&mut NoTx>, "POST"));
-/// assert!(!op.evaluate(None::<&mut NoTx>, "post"));
-/// assert!(!op.evaluate(None::<&mut NoTx>, "GET"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "POST"));
+/// assert!(!op.evaluate(None::<&mut Transaction>, "post"));
+/// assert!(!op.evaluate(None::<&mut Transaction>, "GET"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct StrEq {
@@ -265,12 +265,12 @@ pub fn streq(parameter: &str) -> Result<StrEq, MacroError> {
 /// # Examples
 ///
 /// ```
-/// use coraza::operators::{NoTx, Operator, contains};
+/// use coraza::{transaction::Transaction, Operator, contains};
 ///
 /// let op = contains(".php").unwrap();
-/// assert!(op.evaluate(None::<&mut NoTx>, "/index.php"));
-/// assert!(op.evaluate(None::<&mut NoTx>, "test.php?id=1"));
-/// assert!(!op.evaluate(None::<&mut NoTx>, "/index.html"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "/index.php"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "test.php?id=1"));
+/// assert!(!op.evaluate(None::<&mut Transaction>, "/index.html"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Contains {
@@ -304,11 +304,11 @@ pub fn contains(parameter: &str) -> Result<Contains, MacroError> {
 /// # Examples
 ///
 /// ```
-/// use coraza::operators::{NoTx, Operator, begins_with};
+/// use coraza::{transaction::Transaction, Operator, begins_with};
 ///
 /// let op = begins_with("GET").unwrap();
-/// assert!(op.evaluate(None::<&mut NoTx>, "GET /index.html HTTP/1.1"));
-/// assert!(!op.evaluate(None::<&mut NoTx>, "POST /index.html HTTP/1.1"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "GET /index.html HTTP/1.1"));
+/// assert!(!op.evaluate(None::<&mut Transaction>, "POST /index.html HTTP/1.1"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct BeginsWith {
@@ -342,12 +342,12 @@ pub fn begins_with(parameter: &str) -> Result<BeginsWith, MacroError> {
 /// # Examples
 ///
 /// ```
-/// use coraza::operators::{NoTx, Operator, ends_with};
+/// use coraza::{transaction::Transaction, Operator, ends_with};
 ///
 /// let op = ends_with(".exe").unwrap();
-/// assert!(op.evaluate(None::<&mut NoTx>, "malware.exe"));
-/// assert!(op.evaluate(None::<&mut NoTx>, "C:\\Windows\\system32\\cmd.exe"));
-/// assert!(!op.evaluate(None::<&mut NoTx>, "document.pdf"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "malware.exe"));
+/// assert!(op.evaluate(None::<&mut Transaction>, "C:\\Windows\\system32\\cmd.exe"));
+/// assert!(!op.evaluate(None::<&mut Transaction>, "document.pdf"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct EndsWith {
@@ -373,10 +373,9 @@ pub fn ends_with(parameter: &str) -> Result<EndsWith, MacroError> {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::operators::NoTx;
+    use crate::transaction::Transaction;
     use crate::types::RuleVariable;
 
     // Mock transaction state for testing macro expansion
@@ -397,29 +396,29 @@ mod tests {
     fn test_eq_valid_values() {
         let op = eq("1").unwrap();
 
-        assert!(op.evaluate(None::<&mut NoTx>, "1"));
-        assert!(op.evaluate(None::<&mut NoTx>, "01")); // Leading zeros
-        assert!(!op.evaluate(None::<&mut NoTx>, "1.0")); // Float parsing fails, becomes 0
-        assert!(!op.evaluate(None::<&mut NoTx>, "2"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "0"));
+        assert!(op.evaluate(None::<&mut Transaction>, "1"));
+        assert!(op.evaluate(None::<&mut Transaction>, "01")); // Leading zeros
+        assert!(!op.evaluate(None::<&mut Transaction>, "1.0")); // Float parsing fails, becomes 0
+        assert!(!op.evaluate(None::<&mut Transaction>, "2"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "0"));
     }
 
     #[test]
     fn test_eq_invalid_values_return_zero() {
         let op = eq("a").unwrap(); // Invalid, becomes 0
 
-        assert!(op.evaluate(None::<&mut NoTx>, "a")); // Also becomes 0
-        assert!(op.evaluate(None::<&mut NoTx>, "b")); // Also becomes 0
-        assert!(op.evaluate(None::<&mut NoTx>, "0")); // Explicitly 0
-        assert!(!op.evaluate(None::<&mut NoTx>, "1"));
+        assert!(op.evaluate(None::<&mut Transaction>, "a")); // Also becomes 0
+        assert!(op.evaluate(None::<&mut Transaction>, "b")); // Also becomes 0
+        assert!(op.evaluate(None::<&mut Transaction>, "0")); // Explicitly 0
+        assert!(!op.evaluate(None::<&mut Transaction>, "1"));
     }
 
     #[test]
     fn test_eq_edge_cases() {
-        assert!(eq("0").unwrap().evaluate(None::<&mut NoTx>, ""));
-        assert!(eq("0").unwrap().evaluate(None::<&mut NoTx>, "invalid"));
-        assert!(eq("123").unwrap().evaluate(None::<&mut NoTx>, "123"));
-        assert!(eq("-5").unwrap().evaluate(None::<&mut NoTx>, "-5"));
+        assert!(eq("0").unwrap().evaluate(None::<&mut Transaction>, ""));
+        assert!(eq("0").unwrap().evaluate(None::<&mut Transaction>, "invalid"));
+        assert!(eq("123").unwrap().evaluate(None::<&mut Transaction>, "123"));
+        assert!(eq("-5").unwrap().evaluate(None::<&mut Transaction>, "-5"));
     }
 
     #[test]
@@ -436,11 +435,11 @@ mod tests {
     fn test_gt() {
         let op = gt("10").unwrap();
 
-        assert!(op.evaluate(None::<&mut NoTx>, "15"));
-        assert!(op.evaluate(None::<&mut NoTx>, "11"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "10"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "9"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "0"));
+        assert!(op.evaluate(None::<&mut Transaction>, "15"));
+        assert!(op.evaluate(None::<&mut Transaction>, "11"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "10"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "9"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "0"));
     }
 
     #[test]
@@ -458,51 +457,51 @@ mod tests {
     fn test_ge() {
         let op = ge("10").unwrap();
 
-        assert!(op.evaluate(None::<&mut NoTx>, "15"));
-        assert!(op.evaluate(None::<&mut NoTx>, "11"));
-        assert!(op.evaluate(None::<&mut NoTx>, "10"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "9"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "0"));
+        assert!(op.evaluate(None::<&mut Transaction>, "15"));
+        assert!(op.evaluate(None::<&mut Transaction>, "11"));
+        assert!(op.evaluate(None::<&mut Transaction>, "10"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "9"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "0"));
     }
 
     #[test]
     fn test_lt() {
         let op = lt("10").unwrap();
 
-        assert!(op.evaluate(None::<&mut NoTx>, "9"));
-        assert!(op.evaluate(None::<&mut NoTx>, "0"));
-        assert!(op.evaluate(None::<&mut NoTx>, "-5"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "10"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "11"));
+        assert!(op.evaluate(None::<&mut Transaction>, "9"));
+        assert!(op.evaluate(None::<&mut Transaction>, "0"));
+        assert!(op.evaluate(None::<&mut Transaction>, "-5"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "10"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "11"));
     }
 
     #[test]
     fn test_le() {
         let op = le("10").unwrap();
 
-        assert!(op.evaluate(None::<&mut NoTx>, "9"));
-        assert!(op.evaluate(None::<&mut NoTx>, "10"));
-        assert!(op.evaluate(None::<&mut NoTx>, "0"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "11"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "15"));
+        assert!(op.evaluate(None::<&mut Transaction>, "9"));
+        assert!(op.evaluate(None::<&mut Transaction>, "10"));
+        assert!(op.evaluate(None::<&mut Transaction>, "0"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "11"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "15"));
     }
 
     #[test]
     fn test_streq() {
         let op = streq("POST").unwrap();
 
-        assert!(op.evaluate(None::<&mut NoTx>, "POST"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "post")); // Case sensitive
-        assert!(!op.evaluate(None::<&mut NoTx>, "GET"));
-        assert!(!op.evaluate(None::<&mut NoTx>, ""));
+        assert!(op.evaluate(None::<&mut Transaction>, "POST"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "post")); // Case sensitive
+        assert!(!op.evaluate(None::<&mut Transaction>, "GET"));
+        assert!(!op.evaluate(None::<&mut Transaction>, ""));
     }
 
     #[test]
     fn test_streq_empty() {
         let op = streq("").unwrap();
 
-        assert!(op.evaluate(None::<&mut NoTx>, ""));
-        assert!(!op.evaluate(None::<&mut NoTx>, "anything"));
+        assert!(op.evaluate(None::<&mut Transaction>, ""));
+        assert!(!op.evaluate(None::<&mut Transaction>, "anything"));
     }
 
     #[test]
@@ -519,11 +518,11 @@ mod tests {
     fn test_contains() {
         let op = contains(".php").unwrap();
 
-        assert!(op.evaluate(None::<&mut NoTx>, "/index.php"));
-        assert!(op.evaluate(None::<&mut NoTx>, "test.php?id=1"));
-        assert!(op.evaluate(None::<&mut NoTx>, ".php"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "/index.html"));
-        assert!(!op.evaluate(None::<&mut NoTx>, ""));
+        assert!(op.evaluate(None::<&mut Transaction>, "/index.php"));
+        assert!(op.evaluate(None::<&mut Transaction>, "test.php?id=1"));
+        assert!(op.evaluate(None::<&mut Transaction>, ".php"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "/index.html"));
+        assert!(!op.evaluate(None::<&mut Transaction>, ""));
     }
 
     #[test]
@@ -531,8 +530,8 @@ mod tests {
         let op = contains("").unwrap();
 
         // Empty string is contained in everything
-        assert!(op.evaluate(None::<&mut NoTx>, "anything"));
-        assert!(op.evaluate(None::<&mut NoTx>, ""));
+        assert!(op.evaluate(None::<&mut Transaction>, "anything"));
+        assert!(op.evaluate(None::<&mut Transaction>, ""));
     }
 
     #[test]
@@ -549,11 +548,11 @@ mod tests {
     fn test_begins_with() {
         let op = begins_with("GET").unwrap();
 
-        assert!(op.evaluate(None::<&mut NoTx>, "GET /index.html HTTP/1.1"));
-        assert!(op.evaluate(None::<&mut NoTx>, "GET"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "POST /index.html HTTP/1.1"));
-        assert!(!op.evaluate(None::<&mut NoTx>, " GET"));
-        assert!(!op.evaluate(None::<&mut NoTx>, ""));
+        assert!(op.evaluate(None::<&mut Transaction>, "GET /index.html HTTP/1.1"));
+        assert!(op.evaluate(None::<&mut Transaction>, "GET"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "POST /index.html HTTP/1.1"));
+        assert!(!op.evaluate(None::<&mut Transaction>, " GET"));
+        assert!(!op.evaluate(None::<&mut Transaction>, ""));
     }
 
     #[test]
@@ -561,19 +560,19 @@ mod tests {
         let op = begins_with("").unwrap();
 
         // Everything starts with empty string
-        assert!(op.evaluate(None::<&mut NoTx>, "anything"));
-        assert!(op.evaluate(None::<&mut NoTx>, ""));
+        assert!(op.evaluate(None::<&mut Transaction>, "anything"));
+        assert!(op.evaluate(None::<&mut Transaction>, ""));
     }
 
     #[test]
     fn test_ends_with() {
         let op = ends_with(".exe").unwrap();
 
-        assert!(op.evaluate(None::<&mut NoTx>, "malware.exe"));
-        assert!(op.evaluate(None::<&mut NoTx>, ".exe"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "document.pdf"));
-        assert!(!op.evaluate(None::<&mut NoTx>, ".exe.txt"));
-        assert!(!op.evaluate(None::<&mut NoTx>, ""));
+        assert!(op.evaluate(None::<&mut Transaction>, "malware.exe"));
+        assert!(op.evaluate(None::<&mut Transaction>, ".exe"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "document.pdf"));
+        assert!(!op.evaluate(None::<&mut Transaction>, ".exe.txt"));
+        assert!(!op.evaluate(None::<&mut Transaction>, ""));
     }
 
     #[test]
@@ -581,27 +580,27 @@ mod tests {
         let op = ends_with("").unwrap();
 
         // Everything ends with empty string
-        assert!(op.evaluate(None::<&mut NoTx>, "anything"));
-        assert!(op.evaluate(None::<&mut NoTx>, ""));
+        assert!(op.evaluate(None::<&mut Transaction>, "anything"));
+        assert!(op.evaluate(None::<&mut Transaction>, ""));
     }
 
     #[test]
     fn test_numeric_operators_with_negatives() {
-        assert!(gt("-5").unwrap().evaluate(None::<&mut NoTx>, "0"));
-        assert!(gt("-10").unwrap().evaluate(None::<&mut NoTx>, "-5"));
-        assert!(!gt("5").unwrap().evaluate(None::<&mut NoTx>, "-10"));
+        assert!(gt("-5").unwrap().evaluate(None::<&mut Transaction>, "0"));
+        assert!(gt("-10").unwrap().evaluate(None::<&mut Transaction>, "-5"));
+        assert!(!gt("5").unwrap().evaluate(None::<&mut Transaction>, "-10"));
 
-        assert!(ge("-5").unwrap().evaluate(None::<&mut NoTx>, "-5"));
-        assert!(lt("0").unwrap().evaluate(None::<&mut NoTx>, "-1"));
-        assert!(le("0").unwrap().evaluate(None::<&mut NoTx>, "0"));
+        assert!(ge("-5").unwrap().evaluate(None::<&mut Transaction>, "-5"));
+        assert!(lt("0").unwrap().evaluate(None::<&mut Transaction>, "-1"));
+        assert!(le("0").unwrap().evaluate(None::<&mut Transaction>, "0"));
     }
 
     #[test]
     fn test_numeric_operators_with_invalid_input() {
         // Invalid input becomes 0
-        assert!(eq("0").unwrap().evaluate(None::<&mut NoTx>, "invalid"));
-        assert!(gt("-1").unwrap().evaluate(None::<&mut NoTx>, "abc")); // abc becomes 0, 0 > -1
-        assert!(!gt("1").unwrap().evaluate(None::<&mut NoTx>, "xyz")); // xyz becomes 0, 0 > 1 is false
+        assert!(eq("0").unwrap().evaluate(None::<&mut Transaction>, "invalid"));
+        assert!(gt("-1").unwrap().evaluate(None::<&mut Transaction>, "abc")); // abc becomes 0, 0 > -1
+        assert!(!gt("1").unwrap().evaluate(None::<&mut Transaction>, "xyz")); // xyz becomes 0, 0 > 1 is false
     }
 
     #[test]

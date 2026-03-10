@@ -242,7 +242,7 @@ mod tests {
 
         assert_eq!(map.get("user"), vec!["value"]);
         assert_eq!(map.get("USER"), vec!["value"]); // Case-insensitive
-        assert!(map.find_all().len() > 0);
+        assert!(!map.find_all().is_empty());
         assert!(map.find_string("a").is_empty());
 
         let regex = Regex::new("user.*").unwrap();
@@ -263,7 +263,7 @@ mod tests {
 
         assert_eq!(map.get("key"), vec!["value"]);
         assert!(map.get("KEY").is_empty()); // Case-sensitive
-        assert!(map.find_all().len() > 0);
+        assert!(!map.find_all().is_empty());
         assert!(map.find_string("a").is_empty());
 
         let regex = Regex::new("k.*").unwrap();

@@ -40,36 +40,6 @@ pub trait TransactionState {
     }
 }
 
-/// Empty transaction state that returns None for all variable lookups.
-///
-/// **Deprecated:** This is a temporary convenience type for testing and examples.
-/// In production code, you should use your actual transaction type or `None` with
-/// appropriate type annotations. This type will be removed once a production
-/// `TransactionState` implementation is available.
-///
-/// # Example
-/// ```
-/// # #![allow(deprecated)]
-/// use coraza::operators::{NoTx, Operator, eq};
-///
-/// let op = eq("42").unwrap();
-/// // Instead of NoTx, you'll use your real transaction type in production
-/// assert!(op.evaluate(None::<&mut NoTx>, "42"));
-/// ```
-#[deprecated(
-    since = "0.1.0",
-    note = "Use your concrete TransactionState type or None with type annotations instead"
-)]
-#[derive(Debug, Clone, Copy)]
-pub struct NoTx;
-
-#[allow(deprecated)]
-impl TransactionState for NoTx {
-    fn get_variable(&self, _variable: RuleVariable, _key: Option<&str>) -> Option<String> {
-        None
-    }
-}
-
 /// A macro that can expand variable references at runtime.
 ///
 /// Macros parse strings like `"value is %{TX.count}"` and can expand them
@@ -303,16 +273,16 @@ impl Macro {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
+    use crate::transaction::Transaction;
 
     #[test]
     fn test_new_macro_empty() {
         // Empty strings are allowed
         let m = Macro::new("").unwrap();
         assert_eq!(m.as_str(), "");
-        assert_eq!(m.expand(None::<&NoTx>), "");
+        assert_eq!(m.expand(None::<&Transaction>), "");
     }
 
     #[test]
@@ -324,7 +294,7 @@ mod tests {
     #[test]
     fn test_compile_single_percent() {
         let m = Macro::new("%").unwrap();
-        assert!(m.expand(None::<&NoTx>).contains('%'));
+        assert!(m.expand(None::<&Transaction>).contains('%'));
     }
 
     #[test]
@@ -387,10 +357,10 @@ mod tests {
     #[test]
     fn test_expand_no_tx() {
         let m = Macro::new("static text").unwrap();
-        assert_eq!(m.expand(None::<&NoTx>), "static text");
+        assert_eq!(m.expand(None::<&Transaction>), "static text");
 
         let m = Macro::new("%{TX.score}").unwrap();
-        assert_eq!(m.expand(None::<&NoTx>), "%{TX.score}");
+        assert_eq!(m.expand(None::<&Transaction>), "%{TX.score}");
     }
 
     // Mock transaction state for testing

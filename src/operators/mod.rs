@@ -13,8 +13,7 @@ mod simple;
 pub mod validation;
 
 pub use ip::{IpMatch, ip_match};
-#[allow(deprecated)]
-pub use macros::{Macro, MacroError, NoTx, TransactionState};
+pub use macros::{Macro, MacroError, TransactionState};
 pub use pattern::{Pm, Rx, StrMatch, Within, pm, rx, strmatch, within};
 pub use simple::{
     BeginsWith, Contains, EndsWith, Eq, Ge, Gt, Le, Lt, StrEq, begins_with, contains, ends_with,

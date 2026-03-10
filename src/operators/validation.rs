@@ -27,8 +27,8 @@ use crate::operators::macros::TransactionState;
 /// # use coraza::operators::Operator;
 /// // Always execute action
 /// let op = unconditional_match();
-/// assert!(op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "any input"));
-/// assert!(op.evaluate(None::<&mut coraza::operators::macros::NoTx>, ""));
+/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "any input"));
+/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, ""));
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct UnconditionalMatch;
@@ -47,7 +47,7 @@ impl Operator for UnconditionalMatch {
 /// # use coraza::operators::validation::unconditional_match;
 /// # use coraza::operators::Operator;
 /// let op = unconditional_match();
-/// assert!(op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "test"));
+/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "test"));
 /// ```
 pub fn unconditional_match() -> UnconditionalMatch {
     UnconditionalMatch
@@ -74,8 +74,8 @@ pub fn unconditional_match() -> UnconditionalMatch {
 /// # use coraza::operators::Operator;
 /// // Never matches
 /// let op = no_match();
-/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "any input"));
-/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, ""));
+/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "any input"));
+/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, ""));
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct NoMatch;
@@ -94,7 +94,7 @@ impl Operator for NoMatch {
 /// # use coraza::operators::validation::no_match;
 /// # use coraza::operators::Operator;
 /// let op = no_match();
-/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "test"));
+/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "test"));
 /// ```
 pub fn no_match() -> NoMatch {
     NoMatch
@@ -122,12 +122,12 @@ pub fn no_match() -> NoMatch {
 /// # use coraza::operators::Operator;
 /// // Allow only printable ASCII
 /// let op = validate_byte_range("32-126").unwrap();
-/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "Hello World")); // Valid
-/// assert!(op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "Hello\x00World")); // Invalid (null byte)
+/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "Hello World")); // Valid
+/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "Hello\x00World")); // Invalid (null byte)
 ///
 /// // Allow printable ASCII plus newline/tab
 /// let op = validate_byte_range("10,13,32-126").unwrap();
-/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "Hello\nWorld"));
+/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "Hello\nWorld"));
 /// ```
 #[derive(Debug, Clone)]
 pub struct ValidateByteRange {
@@ -221,7 +221,7 @@ impl Operator for ValidateByteRange {
 /// # use coraza::operators::validation::validate_byte_range;
 /// # use coraza::operators::Operator;
 /// let op = validate_byte_range("32-126").unwrap();
-/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "valid ASCII"));
+/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "valid ASCII"));
 /// ```
 pub fn validate_byte_range(ranges: &str) -> Result<ValidateByteRange, String> {
     ValidateByteRange::new(ranges)
@@ -249,14 +249,14 @@ pub fn validate_byte_range(ranges: &str) -> Result<ValidateByteRange, String> {
 /// let op = validate_url_encoding();
 ///
 /// // Valid encodings
-/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "/path"));
-/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "/path%20with%20spaces"));
-/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "%2Fpath%3Ftest"));
+/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "/path"));
+/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "/path%20with%20spaces"));
+/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "%2Fpath%3Ftest"));
 ///
 /// // Invalid encodings
-/// assert!(op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "/path%2")); // Incomplete
-/// assert!(op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "/path%ZZ")); // Non-hex
-/// assert!(op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "/path%2G")); // Non-hex
+/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "/path%2")); // Incomplete
+/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "/path%ZZ")); // Non-hex
+/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "/path%2G")); // Non-hex
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct ValidateUrlEncoding;
@@ -312,8 +312,8 @@ impl Operator for ValidateUrlEncoding {
 /// # use coraza::operators::validation::validate_url_encoding;
 /// # use coraza::operators::Operator;
 /// let op = validate_url_encoding();
-/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "/valid%20path"));
-/// assert!(op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "/invalid%2"));
+/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "/valid%20path"));
+/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "/invalid%2"));
 /// ```
 pub fn validate_url_encoding() -> ValidateUrlEncoding {
     ValidateUrlEncoding
@@ -341,10 +341,10 @@ pub fn validate_url_encoding() -> ValidateUrlEncoding {
 /// let op = validate_utf8_encoding();
 ///
 /// // Valid UTF-8 (Rust &str is always valid UTF-8)
-/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "Hello"));
-/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "Hello 世界"));
-/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, ""));
-/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "🦀"));
+/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "Hello"));
+/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "Hello 世界"));
+/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, ""));
+/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "🦀"));
 ///
 /// // Note: Cannot test invalid UTF-8 with &str since Rust guarantees &str is valid UTF-8
 /// ```
@@ -377,34 +377,33 @@ impl Operator for ValidateUtf8Encoding {
 /// # use coraza::operators::validation::validate_utf8_encoding;
 /// # use coraza::operators::Operator;
 /// let op = validate_utf8_encoding();
-/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "valid UTF-8 ✓"));
+/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "valid UTF-8 ✓"));
 /// ```
 pub fn validate_utf8_encoding() -> ValidateUtf8Encoding {
     ValidateUtf8Encoding
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::operators::macros::NoTx;
+    use crate::transaction::Transaction;
 
     #[test]
     fn test_unconditional_match() {
         let op = unconditional_match();
 
-        assert!(op.evaluate(None::<&mut NoTx>, "test"));
-        assert!(op.evaluate(None::<&mut NoTx>, ""));
-        assert!(op.evaluate(None::<&mut NoTx>, "anything"));
+        assert!(op.evaluate(None::<&mut Transaction>, "test"));
+        assert!(op.evaluate(None::<&mut Transaction>, ""));
+        assert!(op.evaluate(None::<&mut Transaction>, "anything"));
     }
 
     #[test]
     fn test_no_match() {
         let op = no_match();
 
-        assert!(!op.evaluate(None::<&mut NoTx>, "test"));
-        assert!(!op.evaluate(None::<&mut NoTx>, ""));
-        assert!(!op.evaluate(None::<&mut NoTx>, "anything"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "test"));
+        assert!(!op.evaluate(None::<&mut Transaction>, ""));
+        assert!(!op.evaluate(None::<&mut Transaction>, "anything"));
     }
 
     #[test]
@@ -414,7 +413,7 @@ mod tests {
 
         // Cyrillic "А" (U+0410) encoded as UTF-8: 0xD0 0x90
         // Both bytes are within 0-255, so should be valid (no violation)
-        assert!(!op.evaluate(None::<&mut NoTx>, "\u{0410}"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "\u{0410}"));
     }
 
     #[test]
@@ -424,7 +423,7 @@ mod tests {
 
         // Contains \ufffd (U+FFFD) which in UTF-8 is 0xEF 0xBF 0xBD
         // All these bytes are in the allowed range, so should be valid
-        assert!(!op.evaluate(None::<&mut NoTx>, "/\u{FFFD}index.html?test=test1"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "/\u{FFFD}index.html?test=test1"));
     }
 
     #[test]
@@ -432,14 +431,14 @@ mod tests {
         let op = validate_byte_range("32-126").unwrap();
 
         // Valid printable ASCII
-        assert!(!op.evaluate(None::<&mut NoTx>, "Hello World"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "test123!@#"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "Hello World"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "test123!@#"));
 
         // Invalid: contains null byte
-        assert!(op.evaluate(None::<&mut NoTx>, "Hello\x00World"));
+        assert!(op.evaluate(None::<&mut Transaction>, "Hello\x00World"));
 
         // Invalid: contains control character
-        assert!(op.evaluate(None::<&mut NoTx>, "Hello\x01World"));
+        assert!(op.evaluate(None::<&mut Transaction>, "Hello\x01World"));
     }
 
     #[test]
@@ -447,12 +446,12 @@ mod tests {
         let op = validate_byte_range("9,10,13,32-126").unwrap();
 
         // Valid: tab (9), newline (10), carriage return (13)
-        assert!(!op.evaluate(None::<&mut NoTx>, "Hello\tWorld"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "Hello\nWorld"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "Hello\rWorld"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "Hello\tWorld"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "Hello\nWorld"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "Hello\rWorld"));
 
         // Invalid: null byte
-        assert!(op.evaluate(None::<&mut NoTx>, "Hello\x00World"));
+        assert!(op.evaluate(None::<&mut Transaction>, "Hello\x00World"));
     }
 
     #[test]
@@ -460,7 +459,7 @@ mod tests {
         let op = validate_byte_range("32-126").unwrap();
 
         // Empty input is valid (no bytes to violate)
-        assert!(!op.evaluate(None::<&mut NoTx>, ""));
+        assert!(!op.evaluate(None::<&mut Transaction>, ""));
     }
 
     #[test]
@@ -468,8 +467,8 @@ mod tests {
         let op = validate_byte_range("0-255").unwrap();
 
         // All bytes allowed
-        assert!(!op.evaluate(None::<&mut NoTx>, "anything goes"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "test\x00null")); // with null byte
+        assert!(!op.evaluate(None::<&mut Transaction>, "anything goes"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "test\x00null")); // with null byte
     }
 
     #[test]
@@ -477,16 +476,16 @@ mod tests {
         let op = validate_byte_range("").unwrap();
 
         // Empty spec means all bytes valid
-        assert!(!op.evaluate(None::<&mut NoTx>, "anything"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "test\x00data"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "anything"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "test\x00data"));
     }
 
     #[test]
     fn test_validate_byte_range_individual_bytes() {
         let op = validate_byte_range("65,66,67").unwrap(); // A, B, C
 
-        assert!(!op.evaluate(None::<&mut NoTx>, "ABC"));
-        assert!(op.evaluate(None::<&mut NoTx>, "ABCD")); // D not allowed
+        assert!(!op.evaluate(None::<&mut Transaction>, "ABC"));
+        assert!(op.evaluate(None::<&mut Transaction>, "ABCD")); // D not allowed
     }
 
     #[test]
@@ -494,18 +493,18 @@ mod tests {
         let op = validate_url_encoding();
 
         // No percent encoding
-        assert!(!op.evaluate(None::<&mut NoTx>, "/path/to/resource"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "/path/to/resource"));
 
         // Valid percent encoding
-        assert!(!op.evaluate(None::<&mut NoTx>, "/path%20with%20spaces"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "%2Fpath%3Ftest"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "/test%20%21%22"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "/path%20with%20spaces"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "%2Fpath%3Ftest"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "/test%20%21%22"));
 
         // Mixed case hex
-        assert!(!op.evaluate(None::<&mut NoTx>, "%2f%2F%aA%Aa"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "%2f%2F%aA%Aa"));
 
         // Empty input
-        assert!(!op.evaluate(None::<&mut NoTx>, ""));
+        assert!(!op.evaluate(None::<&mut Transaction>, ""));
     }
 
     #[test]
@@ -513,15 +512,15 @@ mod tests {
         let op = validate_url_encoding();
 
         // Incomplete sequences
-        assert!(op.evaluate(None::<&mut NoTx>, "/path%2"));
-        assert!(op.evaluate(None::<&mut NoTx>, "/path%"));
-        assert!(op.evaluate(None::<&mut NoTx>, "%2"));
+        assert!(op.evaluate(None::<&mut Transaction>, "/path%2"));
+        assert!(op.evaluate(None::<&mut Transaction>, "/path%"));
+        assert!(op.evaluate(None::<&mut Transaction>, "%2"));
 
         // Non-hex characters
-        assert!(op.evaluate(None::<&mut NoTx>, "/path%ZZ"));
-        assert!(op.evaluate(None::<&mut NoTx>, "/path%2G"));
-        assert!(op.evaluate(None::<&mut NoTx>, "/path%G2"));
-        assert!(op.evaluate(None::<&mut NoTx>, "/path% 2"));
+        assert!(op.evaluate(None::<&mut Transaction>, "/path%ZZ"));
+        assert!(op.evaluate(None::<&mut Transaction>, "/path%2G"));
+        assert!(op.evaluate(None::<&mut Transaction>, "/path%G2"));
+        assert!(op.evaluate(None::<&mut Transaction>, "/path% 2"));
     }
 
     #[test]
@@ -529,10 +528,10 @@ mod tests {
         let op = validate_utf8_encoding();
 
         // Valid UTF-8 (Rust &str is always valid UTF-8)
-        assert!(!op.evaluate(None::<&mut NoTx>, "Hello"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "Hello 世界"));
-        assert!(!op.evaluate(None::<&mut NoTx>, "🦀 Rust"));
-        assert!(!op.evaluate(None::<&mut NoTx>, ""));
+        assert!(!op.evaluate(None::<&mut Transaction>, "Hello"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "Hello 世界"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "🦀 Rust"));
+        assert!(!op.evaluate(None::<&mut Transaction>, ""));
 
         // Note: We cannot easily test invalid UTF-8 with &str
         // since Rust guarantees &str is always valid UTF-8
