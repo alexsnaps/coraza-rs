@@ -416,7 +416,11 @@ mod tests {
     #[test]
     fn test_eq_edge_cases() {
         assert!(eq("0").unwrap().evaluate(None::<&mut Transaction>, ""));
-        assert!(eq("0").unwrap().evaluate(None::<&mut Transaction>, "invalid"));
+        assert!(
+            eq("0")
+                .unwrap()
+                .evaluate(None::<&mut Transaction>, "invalid")
+        );
         assert!(eq("123").unwrap().evaluate(None::<&mut Transaction>, "123"));
         assert!(eq("-5").unwrap().evaluate(None::<&mut Transaction>, "-5"));
     }
@@ -598,7 +602,11 @@ mod tests {
     #[test]
     fn test_numeric_operators_with_invalid_input() {
         // Invalid input becomes 0
-        assert!(eq("0").unwrap().evaluate(None::<&mut Transaction>, "invalid"));
+        assert!(
+            eq("0")
+                .unwrap()
+                .evaluate(None::<&mut Transaction>, "invalid")
+        );
         assert!(gt("-1").unwrap().evaluate(None::<&mut Transaction>, "abc")); // abc becomes 0, 0 > -1
         assert!(!gt("1").unwrap().evaluate(None::<&mut Transaction>, "xyz")); // xyz becomes 0, 0 > 1 is false
     }

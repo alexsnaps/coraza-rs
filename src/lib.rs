@@ -7,6 +7,7 @@
 //! It is an enterprise-grade, high-performance WAF that supports ModSecurity
 //! SecLang rulesets and is 100% compatible with the OWASP Core Rule Set v4.
 
+pub mod actions;
 pub mod collection;
 pub mod operators;
 pub mod transaction;
@@ -23,10 +24,21 @@ pub use types::{
 // Re-export operator trait and functions
 pub use operators::{
     Operator,
+    begins_with,
+    contains,
+    ends_with,
     // Simple operators
-    eq, gt, ge, lt, le, streq, contains, begins_with, ends_with,
-    // Pattern operators
-    rx, pm, within, strmatch,
+    eq,
+    ge,
+    gt,
     // IP operators
     ip_match,
+    le,
+    lt,
+    pm,
+    // Pattern operators
+    rx,
+    streq,
+    strmatch,
+    within,
 };

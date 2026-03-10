@@ -1,0 +1,453 @@
+// Copyright 2022 Juan Pablo Tosso and the OWASP Coraza contributors
+// SPDX-License-Identifier: Apache-2.0
+
+//! Rule actions for WAF processing.
+//!
+//! Actions define how the system handles HTTP requests when rule conditions match.
+//! Actions are defined as part of a SecRule or as parameters for SecAction or SecDefaultAction.
+//! A rule can have no or several actions which need to be separated by a comma.
+//!
+//! # Action Categories
+//!
+//! Actions are categorized into five types:
+//!
+//! ## 1. Disruptive Actions
+//!
+//! Trigger WAF operations such as blocking or allowing transactions.
+//! Only one disruptive action per rule applies; if multiple are specified,
+//! the last one takes precedence. Disruptive actions will NOT be executed
+//! if SecRuleEngine is set to DetectionOnly.
+//!
+//! Examples: deny, drop, redirect, allow, block, pass
+//!
+//! ## 2. Non-disruptive Actions
+//!
+//! Perform operations without affecting rule flow, such as variable modifications,
+//! logging, or setting metadata. These actions execute regardless of SecRuleEngine mode.
+//!
+//! Examples: log, nolog, setvar, msg, logdata, severity, tag
+//!
+//! ## 3. Flow Actions
+//!
+//! Control rule processing and execution flow. These actions determine which rules
+//! are evaluated and in what order.
+//!
+//! Examples: chain, skip, skipAfter
+//!
+//! ## 4. Meta-data Actions
+//!
+//! Provide information about rules, such as identification, versioning, and classification.
+//! These actions do not affect transaction processing.
+//!
+//! Examples: id, rev, msg, tag, severity, maturity, ver
+//!
+//! ## 5. Data Actions
+//!
+//! Containers that hold data for use by other actions, such as status codes
+//! for blocking responses.
+//!
+//! Examples: status (used with deny/redirect)
+//!
+//! # Usage
+//!
+//! Actions are specified in SecRule directives as comma-separated values:
+//!
+//! ```text
+//! SecRule ARGS "@rx attack" "id:100,deny,log,msg:'Attack detected'"
+//! ```
+
+use std::collections::HashMap;
+use std::fmt;
+use std::sync::OnceLock;
+
+use crate::RuleSeverity;
+use crate::operators::Macro;
+
+/// Action execution errors.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ActionError {
+    /// Action requires arguments but none were provided.
+    MissingArguments,
+    /// Action does not accept arguments but some were provided.
+    UnexpectedArguments,
+    /// Action arguments have invalid syntax.
+    InvalidArguments(String),
+    /// Action name is unknown/not registered.
+    UnknownAction(String),
+    /// Macro expansion error in action parameter.
+    MacroError(String),
+}
+
+impl fmt::Display for ActionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ActionError::MissingArguments => write!(f, "missing arguments"),
+            ActionError::UnexpectedArguments => write!(f, "unexpected arguments"),
+            ActionError::InvalidArguments(msg) => write!(f, "invalid arguments: {}", msg),
+            ActionError::UnknownAction(name) => write!(f, "unknown action: {}", name),
+            ActionError::MacroError(msg) => write!(f, "macro error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for ActionError {}
+
+impl From<crate::operators::MacroError> for ActionError {
+    fn from(err: crate::operators::MacroError) -> Self {
+        ActionError::MacroError(err.to_string())
+    }
+}
+
+/// Action type categories.
+///
+/// Actions are categorized into five types that define when and how they execute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ActionType {
+    /// Metadata actions provide information about rules.
+    ///
+    /// Examples: id, rev, msg, tag, severity, maturity, ver
+    Metadata,
+
+    /// Disruptive actions trigger WAF operations like blocking.
+    ///
+    /// Only one disruptive action per rule applies. These actions are NOT
+    /// executed if SecRuleEngine is set to DetectionOnly.
+    ///
+    /// Examples: deny, drop, redirect, allow, block, pass
+    Disruptive,
+
+    /// Data actions are containers that hold data for use by other actions.
+    ///
+    /// Examples: status (used with deny/redirect)
+    Data,
+
+    /// Non-disruptive actions perform operations without affecting rule flow.
+    ///
+    /// Examples: log, nolog, setvar, msg, logdata, severity, tag
+    Nondisruptive,
+
+    /// Flow actions control rule processing and execution flow.
+    ///
+    /// Examples: chain, skip, skipAfter
+    Flow,
+}
+
+/// Rule metadata interface for action initialization.
+///
+/// This trait provides access to rule properties that actions can read and modify
+/// during initialization. Actions use this to store metadata (id, msg, severity)
+/// or configure rule behavior (chain flags, skip targets).
+pub trait RuleMetadata {
+    /// Get the rule ID.
+    fn id(&self) -> i32;
+
+    /// Get the parent rule ID (for chained rules).
+    fn parent_id(&self) -> i32;
+
+    /// Get the HTTP status code for blocking actions.
+    fn status(&self) -> i32;
+
+    /// Set the rule ID.
+    fn set_id(&mut self, id: i32);
+
+    /// Set the rule message (with macro expansion support).
+    fn set_msg(&mut self, msg: Macro);
+
+    /// Set the rule severity.
+    fn set_severity(&mut self, severity: RuleSeverity);
+
+    /// Set whether this rule chains to the next rule.
+    fn set_has_chain(&mut self, has_chain: bool);
+
+    /// Set the revision number.
+    fn set_rev(&mut self, rev: String);
+
+    /// Set the version string.
+    fn set_ver(&mut self, ver: String);
+
+    /// Set the maturity level (1-9).
+    fn set_maturity(&mut self, maturity: u8);
+
+    /// Add a classification tag.
+    fn add_tag(&mut self, tag: String);
+
+    /// Set log data (with macro expansion support).
+    fn set_log_data(&mut self, log_data: Macro);
+
+    /// Set the HTTP status code for blocking.
+    fn set_status(&mut self, status: i32);
+
+    /// Set whether logging is enabled for this rule.
+    fn set_log(&mut self, enabled: bool);
+
+    /// Set whether audit logging is enabled for this rule.
+    fn set_audit_log(&mut self, enabled: bool);
+}
+
+/// Transaction state interface for action evaluation.
+///
+/// Re-exported from operators module to avoid duplication.
+pub use crate::operators::TransactionState;
+
+/// Rule action trait.
+///
+/// Actions define what happens when a rule matches. Each action implements this trait
+/// with two key methods: `init()` for parsing parameters during rule compilation, and
+/// `evaluate()` for executing the action during transaction processing.
+///
+/// # Examples
+///
+/// ```
+/// use coraza::actions::{Action, ActionType, ActionError, RuleMetadata, TransactionState};
+///
+/// // Simple action that requires no parameters
+/// struct DenyAction;
+///
+/// impl Action for DenyAction {
+///     fn init(&mut self, _rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+///         if !data.is_empty() {
+///             return Err(ActionError::UnexpectedArguments);
+///         }
+///         Ok(())
+///     }
+///
+///     fn evaluate(&self, _rule: &dyn RuleMetadata, _tx: &mut dyn TransactionState) {
+///         // Execute action logic (e.g., interrupt transaction)
+///     }
+///
+///     fn action_type(&self) -> ActionType {
+///         ActionType::Disruptive
+///     }
+/// }
+/// ```
+pub trait Action: Send + Sync {
+    /// Initialize the action with parameters from the rule.
+    ///
+    /// This method is called during rule compilation to parse and validate
+    /// action parameters. Actions can modify the rule metadata during initialization
+    /// (e.g., storing the rule ID, message, or severity).
+    ///
+    /// # Arguments
+    ///
+    /// * `rule` - Mutable reference to rule metadata for storing action configuration
+    /// * `data` - Parameter string for the action (may be empty for parameterless actions)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if initialization succeeded
+    /// * `Err(ActionError)` if parameters are invalid
+    fn init(&mut self, rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError>;
+
+    /// Evaluate the action during transaction processing.
+    ///
+    /// This method is called when a rule matches and the action should execute.
+    /// Actions can modify transaction state, log messages, interrupt processing, etc.
+    ///
+    /// # Arguments
+    ///
+    /// * `rule` - Immutable reference to rule metadata
+    /// * `tx` - Mutable reference to transaction state
+    fn evaluate(&self, rule: &dyn RuleMetadata, tx: &mut dyn TransactionState);
+
+    /// Return the action type category.
+    fn action_type(&self) -> ActionType;
+}
+
+/// Action factory function type.
+///
+/// The registry stores factory functions that create new action instances.
+type ActionFactory = fn() -> Box<dyn Action>;
+
+/// Global action registry.
+static ACTION_REGISTRY: OnceLock<HashMap<String, ActionFactory>> = OnceLock::new();
+
+/// Initialize the action registry with built-in actions.
+fn init_registry() -> HashMap<String, ActionFactory> {
+    // Actions will be registered here as they're implemented
+    // Example:
+    // let mut registry = HashMap::new();
+    // registry.insert("deny".to_string(), || Box::new(DenyAction));
+    // registry
+
+    HashMap::new()
+}
+
+/// Register a new action in the global registry.
+///
+/// This function can be used to register both built-in and plugin actions.
+/// If an action with the same name already exists, it will be overwritten.
+///
+/// # Arguments
+///
+/// * `name` - Action name (case-insensitive)
+/// * `factory` - Factory function that creates new action instances
+///
+/// # Examples
+///
+/// ```no_run
+/// use coraza::actions::{register, Action, ActionType, ActionError, RuleMetadata, TransactionState};
+///
+/// struct CustomAction;
+///
+/// impl Action for CustomAction {
+///     fn init(&mut self, _rule: &mut dyn RuleMetadata, _data: &str) -> Result<(), ActionError> {
+///         Ok(())
+///     }
+///
+///     fn evaluate(&self, _rule: &dyn RuleMetadata, _tx: &mut dyn TransactionState) {
+///         // Custom action logic
+///     }
+///
+///     fn action_type(&self) -> ActionType {
+///         ActionType::Nondisruptive
+///     }
+/// }
+///
+/// // Register the custom action
+/// register("mycustom", || Box::new(CustomAction));
+/// ```
+pub fn register(name: &str, factory: ActionFactory) {
+    // For now, we can't modify the static registry after initialization
+    // This will be improved when we implement the actual registry
+    // For testing, we'll need a different approach
+    let _ = (name, factory);
+    todo!("Action registration not yet implemented - requires mutable static or lazy_static")
+}
+
+/// Get an action by name from the registry.
+///
+/// Returns a new instance of the requested action, or an error if the action
+/// is not registered.
+///
+/// # Arguments
+///
+/// * `name` - Action name (case-insensitive)
+///
+/// # Returns
+///
+/// * `Ok(Box<dyn Action>)` - New action instance
+/// * `Err(ActionError::UnknownAction)` - Action not found in registry
+///
+/// # Examples
+///
+/// ```no_run
+/// use coraza::actions::get;
+///
+/// // Get a built-in action (when implemented)
+/// let action = get("deny").unwrap();
+/// ```
+pub fn get(name: &str) -> Result<Box<dyn Action>, ActionError> {
+    let registry = ACTION_REGISTRY.get_or_init(init_registry);
+    let name_lower = name.to_lowercase();
+
+    registry
+        .get(&name_lower)
+        .map(|factory| factory())
+        .ok_or_else(|| ActionError::UnknownAction(name.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Mock action for testing
+    struct MockAction {
+        initialized: bool,
+    }
+
+    impl Action for MockAction {
+        fn init(&mut self, _rule: &mut dyn RuleMetadata, data: &str) -> Result<(), ActionError> {
+            if !data.is_empty() {
+                return Err(ActionError::UnexpectedArguments);
+            }
+            self.initialized = true;
+            Ok(())
+        }
+
+        fn evaluate(&self, _rule: &dyn RuleMetadata, _tx: &mut dyn TransactionState) {
+            // Mock evaluation
+        }
+
+        fn action_type(&self) -> ActionType {
+            ActionType::Nondisruptive
+        }
+    }
+
+    // Mock RuleMetadata for testing
+    struct MockRule {
+        id: i32,
+    }
+
+    impl RuleMetadata for MockRule {
+        fn id(&self) -> i32 {
+            self.id
+        }
+        fn parent_id(&self) -> i32 {
+            0
+        }
+        fn status(&self) -> i32 {
+            0
+        }
+        fn set_id(&mut self, id: i32) {
+            self.id = id;
+        }
+        fn set_msg(&mut self, _msg: Macro) {}
+        fn set_severity(&mut self, _severity: RuleSeverity) {}
+        fn set_has_chain(&mut self, _has_chain: bool) {}
+        fn set_rev(&mut self, _rev: String) {}
+        fn set_ver(&mut self, _ver: String) {}
+        fn set_maturity(&mut self, _maturity: u8) {}
+        fn add_tag(&mut self, _tag: String) {}
+        fn set_log_data(&mut self, _log_data: Macro) {}
+        fn set_status(&mut self, _status: i32) {}
+        fn set_log(&mut self, _enabled: bool) {}
+        fn set_audit_log(&mut self, _enabled: bool) {}
+    }
+
+    #[test]
+    fn test_action_type_categories() {
+        assert_eq!(ActionType::Metadata, ActionType::Metadata);
+        assert_ne!(ActionType::Metadata, ActionType::Disruptive);
+    }
+
+    #[test]
+    fn test_action_error_display() {
+        assert_eq!(
+            ActionError::MissingArguments.to_string(),
+            "missing arguments"
+        );
+        assert_eq!(
+            ActionError::UnexpectedArguments.to_string(),
+            "unexpected arguments"
+        );
+        assert_eq!(
+            ActionError::InvalidArguments("bad syntax".to_string()).to_string(),
+            "invalid arguments: bad syntax"
+        );
+        assert_eq!(
+            ActionError::UnknownAction("foo".to_string()).to_string(),
+            "unknown action: foo"
+        );
+    }
+
+    #[test]
+    fn test_mock_action_init() {
+        let mut action = MockAction { initialized: false };
+        let mut rule = MockRule { id: 0 };
+
+        // Should succeed with empty data
+        assert!(action.init(&mut rule, "").is_ok());
+        assert!(action.initialized);
+
+        // Should fail with non-empty data
+        let mut action2 = MockAction { initialized: false };
+        let result = action2.init(&mut rule, "unexpected");
+        assert_eq!(result, Err(ActionError::UnexpectedArguments));
+    }
+
+    #[test]
+    fn test_get_unknown_action() {
+        let result = get("nonexistent_action");
+        assert!(matches!(result, Err(ActionError::UnknownAction(_))));
+    }
+}

@@ -920,8 +920,168 @@ Implement the data storage and variable management system that transactions use 
 - ✅ Integration with all existing operators
 - ✅ Clean public API
 
-### Next Steps
-- [ ] **Phase 6:** Actions system (deny, drop, redirect, log, setvar, etc.)
+## Phase 6: Actions System (IN PROGRESS)
+
+### Goal
+Implement the action system that defines what happens when rules match. Actions range from simple metadata storage to complex variable manipulation and flow control.
+
+### Execution Plan
+
+**Architecture:**
+- 29 total actions in Go codebase
+- 5 action categories: Metadata, Disruptive, Data, Nondisruptive, Flow
+- Trait-based plugin system with global registry
+- ~24 core actions to implement (5 deferred to Phase 8+)
+
+**Step-by-Step Implementation:**
+
+**Step 1: Foundation**
+- [ ] Create Action trait (init, evaluate, action_type)
+- [ ] Create ActionType enum (5 variants)
+- [ ] Implement action registry (register/get)
+- [ ] Define RuleMetadata trait stub
+- [ ] Create ActionError type
+- **Source:** `coraza/internal/actions/actions.go`, `coraza/experimental/plugins/plugintypes/action.go`
+- **Target:** `src/actions/mod.rs`
+
+**Step 2: Group A - Metadata Actions (7 actions)**
+- [ ] `id` - Rule ID (numeric)
+- [ ] `msg` - Log message (with macro expansion)
+- [ ] `tag` - Classification tags
+- [ ] `severity` - Severity level (0-7)
+- [ ] `rev` - Revision number
+- [ ] `ver` - Version string
+- [ ] `maturity` - Maturity level (1-9)
+- **Source:** `id.go`, `msg.go`, `tag.go`, `severity.go`, `rev.go`, `ver.go`, `maturity.go`
+- **Tests:** `id_test.go`, `msg_test.go`, `severity_test.go`, `maturity_test.go`, `ver_test.go`
+- **Target:** `src/actions/metadata.rs`
+
+**Step 3: Group B - Logging Actions (5 actions)**
+- [ ] `log` / `nolog` - Control logging
+- [ ] `auditlog` / `noauditlog` - Control audit logging
+- [ ] `logdata` - Additional log data (with macro expansion)
+- **Source:** `log.go`, `nolog.go`, `auditlog.go`, `noauditlog.go`, `logdata.go`
+- **Tests:** `log_test.go`, `nolog_test.go`, `noauditlog_test.go`, `logdata_test.go`
+- **Target:** `src/actions/logging.rs`
+
+**Step 4: Group C - Disruptive Actions (6 actions)**
+- [ ] `deny` - Block with 403
+- [ ] `drop` - Drop connection
+- [ ] `allow` - Allow request, skip rules
+- [ ] `block` - Use default blocking action
+- [ ] `redirect` - HTTP redirect
+- [ ] `pass` - Explicit no-op
+- **Source:** `deny.go`, `drop.go`, `allow.go`, `block.go`, `redirect.go`, `pass.go`
+- **Tests:** `deny_test.go`, `drop_test.go`, `allow_test.go`, `block_test.go`, `pass_test.go`, `redirect_test.go`
+- **Target:** `src/actions/disruptive.rs`
+- **New types:** `Interruption` struct
+- **Extends:** TransactionState trait with `interrupt()` method
+
+**Step 5: Group D - Variable Manipulation (1 complex action)**
+- [ ] `setvar` - Create/modify/delete TX variables
+  - Syntax: `TX.key=value`, `TX.key=+5`, `!TX.key`
+  - Arithmetic operations
+  - Macro expansion
+  - Most complex action (~200 lines)
+- **Source:** `setvar.go` (large, complex implementation)
+- **Tests:** `setvar_test.go` (15+ test cases)
+- **Target:** `src/actions/variables.rs`
+- **Extends:** TransactionState with `collection_mut()` method
+
+**Step 6: Group E - Flow Control (3 actions)**
+- [ ] `chain` - Chain to next rule
+- [ ] `skip` - Skip N rules
+- [ ] `skipAfter` - Skip to marker
+- **Source:** `chain.go`, `skip.go`, `skipafter.go`
+- **Tests:** `chain_test.go`, `skip_test.go`
+- **Target:** `src/actions/flow.rs`
+
+**Step 7: Group F - Special Actions (4 actions)**
+- [ ] `capture` - Enable capturing
+- [ ] `multimatch` - Match multiple times
+- [ ] `status` - Set HTTP status code
+- [ ] `t` - Apply transformations (basic stub)
+- **Source:** `capture.go`, `multimatch.go`, `status.go`, `t.go`
+- **Tests:** `capture_test.go`, `multimatch_test.go`
+- **Target:** `src/actions/special.rs`
+
+**Step 8: Group G - CTL Action (1 mega-action)**
+- [ ] `ctl` - Runtime configuration (18+ sub-commands)
+  - `ctl:ruleEngine=On/Off/DetectionOnly`
+  - `ctl:auditEngine=On/Off/RelevantOnly`
+  - `ctl:ruleRemoveById=123`
+  - Many more...
+- **Source:** `ctl.go` (~500 lines)
+- **Tests:** `ctl_test.go` (20+ test cases)
+- **Target:** `src/actions/ctl.rs`
+
+**Deferred to Phase 8+ (5 actions):**
+- `exec` - Execute external program (security concern)
+- `expirevar` - Variable expiration (needs persistence)
+- `setenv` - Environment variables (needs env integration)
+- `initcol` - Persistent collections (needs persistence)
+- `phase` - Rule phase (needs rule engine)
+
+### Dependencies & Extensions
+
+**New Traits:**
+```rust
+pub trait RuleMetadata {
+    fn id(&self) -> i32;
+    fn parent_id(&self) -> i32;
+    fn status(&self) -> i32;
+    fn set_id(&mut self, id: i32);
+    fn set_msg(&mut self, msg: Macro);
+    fn set_severity(&mut self, severity: RuleSeverity);
+    // ... other setters
+}
+```
+
+**TransactionState Extensions:**
+```rust
+pub trait TransactionState {
+    // Existing...
+    fn get_variable(...) -> Option<String>;
+    fn capturing() -> bool;
+    fn capture_field(...);
+
+    // New for actions:
+    fn interrupt(&mut self, interruption: Interruption);
+    fn collection_mut(&mut self, var: RuleVariable) -> &mut dyn MapCollection;
+    fn set_capturing(&mut self, enabled: bool);
+    fn debug_logger(&self) -> &dyn Logger;
+}
+```
+
+**New Types:**
+```rust
+pub struct Interruption {
+    pub status: u16,
+    pub rule_id: i32,
+    pub action: String,
+}
+```
+
+### Quality Gates
+- [ ] All Go test cases ported (~200+ tests)
+- [ ] All tests passing
+- [ ] Clippy clean
+- [ ] All actions registered in global registry
+- [ ] Full documentation with examples
+
+### Estimated Timeline
+- Step 1: 1 day
+- Step 2: 2 days
+- Step 3: 1 day
+- Step 4: 2 days
+- Step 5: 2 days
+- Step 6: 1 day
+- Step 7: 1 day
+- Step 8: 2 days
+
+**Total:** ~12 days for 24 core actions
+
+### Next Steps (After Phase 6)
 - [ ] **Phase 7:** Body processors (JSON, XML, multipart, urlencoded)
 - [ ] **Phase 8:** Rule engine (compilation and execution)
 - [ ] **Phase 9:** SecLang parser (directive parsing)
