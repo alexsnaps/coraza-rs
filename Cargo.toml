@@ -23,3 +23,6 @@ htmlescape = "0.3"
 
 # Path normalization
 path-clean = "1.0"
+
+# Glob pattern matching for file includes
+glob = "0.3"

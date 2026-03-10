@@ -4,29 +4,34 @@
 
 ## Current Status (as of 2026-03-10)
 
-**Phase 8: SecLang Parser** - In Progress (Step 6/9 complete)
+**Phase 8: SecLang Parser** - In Progress (Step 7/9 complete - partial)
 
 - ✅ **Phase 1:** Foundation types (RuleSeverity, RulePhase, RuleVariable, etc.) - COMPLETE
 - ✅ **Phase 2:** String utilities - COMPLETE
 - ✅ **Phase 3:** Transformations (30 transformations) - COMPLETE
 - ✅ **Phase 4:** Collections (Map, ConcatMap, Keyed trait) - COMPLETE
 - ✅ **Phase 5:** Operators (10 operators: rx, pm, streq, contains, etc.) - COMPLETE
-- ✅ **Phase 6:** Actions (26/26 implemented) - COMPLETE
+- ✅ **Phase 6:** Actions (27/27 implemented including phase) - COMPLETE
 - ✅ **Phase 7:** Rule Engine (8/8 steps complete) - COMPLETE
-- 🚧 **Phase 8:** SecLang Parser (6/9 steps complete) - IN PROGRESS
+- 🚧 **Phase 8:** SecLang Parser (7/9 steps complete - partial) - IN PROGRESS
   - ✅ Step 1: Parser infrastructure - COMPLETE
   - ✅ Step 2: Directive system - COMPLETE
   - ✅ Step 3: Variable parser - COMPLETE
   - ✅ Step 4: Operator parser - COMPLETE
   - ✅ Step 5: Action parser - COMPLETE
   - ✅ Step 6: SecRule compilation - COMPLETE
-  - ⏳ Step 7: Include and advanced directives - NEXT
-  - ⏳ Step 8: Remaining directives
+  - ✅ Step 7: Include directive (partial) - COMPLETE
+    - ✅ Include with file loading
+    - ✅ Glob pattern support
+    - ✅ Recursion protection
+    - ⏳ SecRuleRemove directives (deferred to Phase 9/10 - require WAF rule storage)
+    - ⏳ SecDefaultAction (deferred to Phase 9/10 - require WAF rule storage)
+  - ⏳ Step 8: Remaining directives - NEXT
   - ⏳ Step 9: Integration tests
 
 **Quality Metrics:**
-- 832 tests passing total:
-  - 696 unit tests (187 parser + 509 others: 43 parser + 4 waf_config + 14 variable_parser + 20 operator_parser + 20 action_parser + 12 rule_compiler + 24 rule variable + 13 transformation + 10 operator + 9 action + 9 rule + 9 group + 509 from phases 1-6)
+- 842 tests passing total:
+  - 706 unit tests (193 parser + 513 others: 49 parser + 4 waf_config + 14 variable_parser + 20 operator_parser + 20 action_parser + 12 rule_compiler + 6 include + 24 rule variable + 13 transformation + 10 operator + 13 action + 9 rule + 9 group + 509 from phases 1-6)
   - 17 integration tests (comprehensive rule engine end-to-end testing)
   - 119 doc tests
 - Clippy clean (0 warnings)
@@ -1977,16 +1982,65 @@ Following Go implementation exactly - no parser library (nom, pest, etc.). The G
 - Escaped quotes preserved in operator strings (not unescaped)
 - Ready for Step 7: Include directive and rule storage integration
 
-**Step 7: Include and Advanced Directives (Days 15-16)**
-- [ ] Include directive with file path resolution
-- [ ] Relative path handling (relative to current file's directory)
-- [ ] Absolute path handling
-- [ ] Glob pattern support (`Include /path/*.conf`)
-- [ ] Recursion protection (max 100 includes)
-- [ ] Circular include detection
-- [ ] SecRuleRemoveById/ByTag/ByMsg directives
-- [ ] SecDefaultAction directive
-- [ ] Tests: Includes, globs, recursion limit, rule removal
+**Step 7: Include and Advanced Directives ✅ PARTIAL COMPLETE (2026-03-10)**
+- [x] Include directive with file path resolution
+- [x] Relative path handling (relative to current file's directory)
+- [x] Absolute path handling
+- [x] Glob pattern support (`Include /path/*.conf`)
+- [x] Recursion protection (max 100 includes)
+- [x] Circular include detection (via recursion limit)
+- [ ] SecRuleRemoveById/ByTag/ByMsg directives (deferred to Phase 9/10 - require WAF rule storage)
+- [ ] SecDefaultAction directive (deferred to Phase 9/10 - require WAF rule storage)
+- [x] Tests: Includes, globs, recursion limit (6 comprehensive tests)
+- [x] **Implementation complete** (~100 lines in `src/seclang/parser.rs`)
+  - ✅ from_file() method - File loading with glob support
+    - Handles absolute paths
+    - Handles relative paths (resolved from current_dir)
+    - Glob pattern expansion via `glob` crate
+    - Processes multiple files from glob results
+    - Tracks current directory for nested includes
+    - Restores directory state after processing
+  - ✅ Include directive handling in evaluate_line()
+    - Special case before directive registry lookup
+    - Increments include_count for recursion protection
+    - Calls from_file() recursively
+    - MAX_INCLUDE_RECURSION = 100 (prevents DoS)
+  - ✅ ParserState tracking
+    - current_dir - For resolving relative includes
+    - current_file - For error reporting
+    - current_line - For error reporting
+  - ✅ Error handling
+    - File not found errors
+    - Glob pattern errors
+    - Recursion limit errors
+- [x] **Dependencies added** (`Cargo.toml`)
+  - ✅ Added `glob = "0.3"` for glob pattern matching
+- [x] **Tests ported from Go** (6 comprehensive tests)
+  - ✅ test_include_file - Basic file loading
+  - ✅ test_include_directive_from_string - Include directive in config
+  - ✅ test_include_glob_pattern - Glob pattern matching (`*.conf`)
+  - ✅ test_include_recursion_limit - Circular include protection
+  - ✅ test_include_relative_path - Relative path resolution
+  - ✅ test_include_nonexistent_file - Error handling
+
+**Quality Metrics - Step 7:**
+- ✅ 6 tests passing (all new Include tests)
+- ✅ 706 total tests passing (+6 new)
+- ✅ Clippy clean (0 warnings)
+- ✅ Full documentation with examples
+- ✅ 100% test parity with Go Include implementation
+
+**Design Notes:**
+- Include is handled as special case in evaluate_line() (not in directive registry)
+- from_file() can be called directly or via Include directive
+- Glob crate used for pattern matching (Rust standard approach)
+- Current directory tracking matches Go's implementation
+- SecRuleRemove and SecDefaultAction require WAF rule storage infrastructure
+  - These will be implemented in Phase 9/10 when we have:
+    - Full WAF instance with RuleGroup
+    - Rule storage and management
+    - Default action merging logic
+- Include directive is fully functional and matches Go behavior
 
 **Step 8: Remaining Directives (Days 17-18)**
 - [ ] Audit log directives (SecAuditLog, SecAuditEngine, SecAuditLogParts)

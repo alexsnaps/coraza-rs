@@ -211,25 +211,96 @@ impl Parser {
     ///
     /// # Arguments
     ///
-    /// * `path` - Path to SecLang configuration file
+    /// * `path` - Path to SecLang configuration file or glob pattern
     ///
     /// # Returns
     ///
     /// Ok(()) if file parsed successfully, Err otherwise
     ///
-    /// # Note
+    /// # Features
     ///
-    /// Supports glob patterns like `/path/to/rules/*.conf`
+    /// - Supports glob patterns like `/path/to/rules/*.conf`
+    /// - Handles relative paths (resolved from current directory)
+    /// - Handles absolute paths
+    /// - Tracks current directory for nested includes
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use coraza::seclang::Parser;
+    ///
+    /// let mut parser = Parser::new();
+    /// parser.from_file("/etc/coraza/rules.conf")?;
+    /// parser.from_file("./local_rules/*.conf")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn from_file<P: AsRef<Path>>(&mut self, path: P) -> ParseResult<()> {
+        let original_dir = self.state.current_dir.clone();
         let path_str = path.as_ref().to_string_lossy().to_string();
 
-        // TODO: Implement file reading with glob support
-        // For now, return error
-        Err(ParseError::new(
-            format!("from_file not yet implemented: {}", path_str),
-            self.state.current_line,
-            self.state.current_file.clone(),
-        ))
+        // Expand glob patterns if present
+        let files = if path_str.contains('*') {
+            glob::glob(&path_str)
+                .map_err(|e| {
+                    ParseError::new(
+                        format!("failed to glob pattern '{}': {}", path_str, e),
+                        self.state.current_line,
+                        self.state.current_file.clone(),
+                    )
+                })?
+                .filter_map(Result::ok)
+                .map(|p| p.to_string_lossy().to_string())
+                .collect()
+        } else {
+            vec![path_str]
+        };
+
+        // Process each file
+        for file_path in files {
+            let file_path = file_path.trim();
+
+            // Resolve relative paths from current directory
+            let resolved_path = if Path::new(file_path).is_absolute() {
+                file_path.to_string()
+            } else {
+                Path::new(&self.state.current_dir)
+                    .join(file_path)
+                    .to_string_lossy()
+                    .to_string()
+            };
+
+            // Update current file and directory
+            let last_dir = self.state.current_dir.clone();
+            self.state.current_file = resolved_path.clone();
+            self.state.current_dir = Path::new(&resolved_path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| ".".to_string());
+
+            // Read file
+            let content = std::fs::read_to_string(&resolved_path).map_err(|e| {
+                ParseError::new(
+                    format!("failed to read file '{}': {}", resolved_path, e),
+                    self.state.current_line,
+                    self.state.current_file.clone(),
+                )
+            })?;
+
+            // Parse file content
+            let result = self.parse_string(&content);
+
+            // Restore directory for sibling includes
+            self.state.current_dir = last_dir;
+
+            // Propagate errors
+            result?;
+        }
+
+        // Restore original directory and clear current file
+        self.state.current_dir = original_dir;
+        self.state.current_file = String::new();
+
+        Ok(())
     }
 
     /// Internal string parsing implementation
@@ -968,5 +1039,168 @@ SecWebAppId production
         assert_eq!(parser.config().request_body_limit, 1048576);
         assert_eq!(parser.config().debug_log_level, 3);
         assert_eq!(parser.config().web_app_id, "production");
+    }
+
+    // ========================================================================
+    // Include Directive Tests
+    // ========================================================================
+
+    #[test]
+    fn test_include_file() {
+        use std::fs;
+        use std::io::Write;
+
+        // Create a temporary directory for test files
+        let temp_dir = std::env::temp_dir().join("coraza_include_test");
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create a test config file
+        let test_file = temp_dir.join("test_rules.conf");
+        let mut file = fs::File::create(&test_file).unwrap();
+        writeln!(file, "SecRuleEngine On").unwrap();
+        writeln!(file, "SecWebAppId included_file").unwrap();
+
+        // Parse with include
+        let mut parser = Parser::new();
+        parser.state.current_dir = temp_dir.to_string_lossy().to_string();
+        assert!(parser.from_file(&test_file).is_ok());
+
+        assert_eq!(parser.config().rule_engine, RuleEngineStatus::On);
+        assert_eq!(parser.config().web_app_id, "included_file");
+
+        // Cleanup
+        fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_include_directive_from_string() {
+        use std::fs;
+        use std::io::Write;
+
+        // Create a temporary directory
+        let temp_dir = std::env::temp_dir().join("coraza_include_directive_test");
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create included file
+        let included_file = temp_dir.join("included.conf");
+        let mut file = fs::File::create(&included_file).unwrap();
+        writeln!(file, "SecWebAppId from_included").unwrap();
+
+        // Create main file with Include directive
+        let main_file = temp_dir.join("main.conf");
+        let mut file = fs::File::create(&main_file).unwrap();
+        writeln!(file, "SecRuleEngine DetectionOnly").unwrap();
+        writeln!(file, "Include included.conf").unwrap();
+
+        // Parse main file
+        let mut parser = Parser::new();
+        parser.state.current_dir = temp_dir.to_string_lossy().to_string();
+        assert!(parser.from_file(&main_file).is_ok());
+
+        assert_eq!(parser.config().rule_engine, RuleEngineStatus::DetectionOnly);
+        assert_eq!(parser.config().web_app_id, "from_included");
+
+        // Cleanup
+        fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_include_glob_pattern() {
+        use std::fs;
+        use std::io::Write;
+
+        // Create a temporary directory
+        let temp_dir = std::env::temp_dir().join("coraza_glob_test");
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create multiple .conf files
+        for i in 1..=3 {
+            let file_path = temp_dir.join(format!("rules{}.conf", i));
+            let mut file = fs::File::create(&file_path).unwrap();
+            writeln!(file, "SecComponentSignature \"Component{}\"", i).unwrap();
+        }
+
+        // Parse with glob pattern
+        let mut parser = Parser::new();
+        let glob_pattern = temp_dir.join("*.conf").to_string_lossy().to_string();
+        assert!(parser.from_file(&glob_pattern).is_ok());
+
+        // Should have loaded all 3 components
+        assert_eq!(parser.config().component_names.len(), 3);
+
+        // Cleanup
+        fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_include_recursion_limit() {
+        use std::fs;
+        use std::io::Write;
+
+        // Create a temporary directory
+        let temp_dir = std::env::temp_dir().join("coraza_recursion_test");
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create file that includes itself (infinite recursion)
+        let self_include = temp_dir.join("self_include.conf");
+        let mut file = fs::File::create(&self_include).unwrap();
+        writeln!(file, "Include self_include.conf").unwrap();
+
+        // Try to parse - should hit recursion limit
+        let mut parser = Parser::new();
+        parser.state.current_dir = temp_dir.to_string_lossy().to_string();
+        let result = parser.from_file(&self_include);
+
+        // Should error due to recursion limit
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.message.contains("cannot include more than"));
+        }
+
+        // Cleanup
+        fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_include_relative_path() {
+        use std::fs;
+        use std::io::Write;
+
+        // Create a temporary directory structure
+        let temp_dir = std::env::temp_dir().join("coraza_relative_test");
+        let sub_dir = temp_dir.join("subdir");
+        fs::create_dir_all(&sub_dir).unwrap();
+
+        // Create file in subdirectory
+        let sub_file = sub_dir.join("sub_rules.conf");
+        let mut file = fs::File::create(&sub_file).unwrap();
+        writeln!(file, "SecWebAppId from_subdir").unwrap();
+
+        // Create main file with relative include
+        let main_file = temp_dir.join("main.conf");
+        let mut file = fs::File::create(&main_file).unwrap();
+        writeln!(file, "Include subdir/sub_rules.conf").unwrap();
+
+        // Parse main file
+        let mut parser = Parser::new();
+        parser.state.current_dir = temp_dir.to_string_lossy().to_string();
+        assert!(parser.from_file(&main_file).is_ok());
+
+        assert_eq!(parser.config().web_app_id, "from_subdir");
+
+        // Cleanup
+        fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_include_nonexistent_file() {
+        let mut parser = Parser::new();
+        let result = parser.from_file("/nonexistent/path/to/file.conf");
+
+        // Should error
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.message.contains("failed to read file"));
+        }
     }
 }
