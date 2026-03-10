@@ -178,6 +178,58 @@ impl Parser {
             "seccomponentsignature".to_string(),
             directive_sec_component_signature,
         );
+
+        // Additional configuration directives
+        self.directives.insert(
+            "secserversignature".to_string(),
+            directive_sec_server_signature,
+        );
+        self.directives
+            .insert("secsensorid".to_string(), directive_sec_sensor_id);
+        self.directives.insert(
+            "secresponsebodylimit".to_string(),
+            directive_sec_response_body_limit,
+        );
+        self.directives.insert(
+            "secresponsebodylimitaction".to_string(),
+            directive_sec_response_body_limit_action,
+        );
+        self.directives.insert(
+            "secrequestbodyinmemorylimit".to_string(),
+            directive_sec_request_body_in_memory_limit,
+        );
+        self.directives.insert(
+            "secrequestbodynofileslimit".to_string(),
+            directive_sec_request_body_no_files_limit,
+        );
+        self.directives.insert(
+            "secargumentslimit".to_string(),
+            directive_sec_arguments_limit,
+        );
+        self.directives
+            .insert("secuploaddir".to_string(), directive_sec_upload_dir);
+        self.directives.insert(
+            "secuploadfilelimit".to_string(),
+            directive_sec_upload_file_limit,
+        );
+        self.directives.insert(
+            "secuploadfilemode".to_string(),
+            directive_sec_upload_file_mode,
+        );
+        self.directives.insert(
+            "secuploadkeepfiles".to_string(),
+            directive_sec_upload_keep_files,
+        );
+        self.directives
+            .insert("secauditengine".to_string(), directive_sec_audit_engine);
+        self.directives
+            .insert("secauditlog".to_string(), directive_sec_audit_log);
+        self.directives
+            .insert("secdatadir".to_string(), directive_sec_data_dir);
+        self.directives.insert(
+            "seccollectiontimeout".to_string(),
+            directive_sec_collection_timeout,
+        );
     }
 
     /// Parse directives from a string
@@ -448,7 +500,7 @@ impl Default for Parser {
 
 /// Helper function to parse boolean values (On/Off)
 fn parse_boolean(value: &str) -> Result<bool, String> {
-    match value {
+    match value.to_lowercase().as_str() {
         "on" => Ok(true),
         "off" => Ok(false),
         _ => Err(format!("expected On or Off, got: {}", value)),
@@ -645,6 +697,339 @@ fn directive_sec_component_signature(options: &mut DirectiveOptions) -> ParseRes
         .waf_config
         .component_names
         .push(options.opts.clone());
+    Ok(())
+}
+
+/// SecServerSignature [signature]
+///
+/// Sets the server signature that will be sent in the Server response header.
+fn directive_sec_server_signature(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecServerSignature requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    options.waf_config.server_signature = options.opts.clone();
+    Ok(())
+}
+
+/// SecSensorID [id]
+///
+/// Sets the sensor ID that will identify this WAF instance in a cluster.
+fn directive_sec_sensor_id(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecSensorID requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    options.waf_config.sensor_id = options.opts.clone();
+    Ok(())
+}
+
+/// SecResponseBodyLimit [limit_in_bytes]
+///
+/// Sets the maximum response body size that will be buffered.
+fn directive_sec_response_body_limit(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecResponseBodyLimit requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    let limit = options.opts.parse::<i64>().map_err(|e| {
+        ParseError::new(
+            format!("invalid response body limit: {}", e),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        )
+    })?;
+
+    options.waf_config.response_body_limit = limit;
+    Ok(())
+}
+
+/// SecResponseBodyLimitAction [Reject|ProcessPartial]
+///
+/// Controls what happens when response body limit is reached.
+fn directive_sec_response_body_limit_action(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecResponseBodyLimitAction requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    let action = match options.opts.to_lowercase().as_str() {
+        "reject" => BodyLimitAction::Reject,
+        "processpartial" => BodyLimitAction::ProcessPartial,
+        _ => {
+            return Err(ParseError::new(
+                format!("invalid SecResponseBodyLimitAction value: {}", options.opts),
+                options.parser_state.current_line,
+                options.parser_state.current_file.clone(),
+            ));
+        }
+    };
+
+    options.waf_config.response_body_limit_action = action;
+    Ok(())
+}
+
+/// SecRequestBodyInMemoryLimit [limit_in_bytes]
+///
+/// Sets the limit for request body data stored in memory before writing to disk.
+fn directive_sec_request_body_in_memory_limit(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecRequestBodyInMemoryLimit requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    let limit = options.opts.parse::<i64>().map_err(|e| {
+        ParseError::new(
+            format!("invalid in-memory limit: {}", e),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        )
+    })?;
+
+    options.waf_config.request_body_in_memory_limit = limit;
+    Ok(())
+}
+
+/// SecRequestBodyNoFilesLimit [limit_in_bytes]
+///
+/// Sets the limit for request body excluding files.
+fn directive_sec_request_body_no_files_limit(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecRequestBodyNoFilesLimit requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    let limit = options.opts.parse::<i64>().map_err(|e| {
+        ParseError::new(
+            format!("invalid no-files limit: {}", e),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        )
+    })?;
+
+    options.waf_config.request_body_no_files_limit = limit;
+    Ok(())
+}
+
+/// SecArgumentsLimit [limit]
+///
+/// Sets the maximum number of ARGS that will be accepted.
+fn directive_sec_arguments_limit(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecArgumentsLimit requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    let limit = options.opts.parse::<usize>().map_err(|e| {
+        ParseError::new(
+            format!("invalid arguments limit: {}", e),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        )
+    })?;
+
+    options.waf_config.argument_limit = limit;
+    Ok(())
+}
+
+/// SecUploadDir [directory]
+///
+/// Sets the directory where uploaded files will be stored.
+fn directive_sec_upload_dir(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecUploadDir requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    options.waf_config.upload_dir = options.opts.clone();
+    Ok(())
+}
+
+/// SecUploadFileLimit [limit]
+///
+/// Sets the maximum number of files that will be processed in a multipart request.
+fn directive_sec_upload_file_limit(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecUploadFileLimit requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    let limit = options.opts.parse::<usize>().map_err(|e| {
+        ParseError::new(
+            format!("invalid upload file limit: {}", e),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        )
+    })?;
+
+    options.waf_config.upload_file_limit = limit;
+    Ok(())
+}
+
+/// SecUploadFileMode [mode]
+///
+/// Sets the file mode (permissions) for uploaded files.
+fn directive_sec_upload_file_mode(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecUploadFileMode requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    let mode = u32::from_str_radix(&options.opts, 8).map_err(|e| {
+        ParseError::new(
+            format!("invalid file mode (expected octal): {}", e),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        )
+    })?;
+
+    options.waf_config.upload_file_mode = mode;
+    Ok(())
+}
+
+/// SecUploadKeepFiles [On|Off]
+///
+/// Controls whether uploaded files are kept after transaction.
+fn directive_sec_upload_keep_files(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecUploadKeepFiles requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    let keep = parse_boolean(&options.opts).map_err(|e| {
+        ParseError::new(
+            e,
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        )
+    })?;
+    options.waf_config.upload_keep_files = keep;
+    Ok(())
+}
+
+/// SecAuditEngine [On|Off|RelevantOnly]
+///
+/// Configures the audit logging engine.
+fn directive_sec_audit_engine(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecAuditEngine requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    use crate::seclang::waf_config::AuditEngineStatus;
+
+    let status = match options.opts.to_lowercase().as_str() {
+        "on" => AuditEngineStatus::On,
+        "off" => AuditEngineStatus::Off,
+        "relevantonly" => AuditEngineStatus::RelevantOnly,
+        _ => {
+            return Err(ParseError::new(
+                format!(
+                    "invalid SecAuditEngine value: {} (expected On, Off, or RelevantOnly)",
+                    options.opts
+                ),
+                options.parser_state.current_line,
+                options.parser_state.current_file.clone(),
+            ));
+        }
+    };
+
+    options.waf_config.audit_engine = status;
+    Ok(())
+}
+
+/// SecAuditLog [path]
+///
+/// Sets the path to the audit log file.
+fn directive_sec_audit_log(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecAuditLog requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    options.waf_config.audit_log = options.opts.clone();
+    Ok(())
+}
+
+/// SecDataDir [directory]
+///
+/// Sets the directory for storing data files.
+fn directive_sec_data_dir(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecDataDir requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    options.waf_config.data_dir = options.opts.clone();
+    Ok(())
+}
+
+/// SecCollectionTimeout [seconds]
+///
+/// Sets the timeout for IP/SESSION/USER collections.
+fn directive_sec_collection_timeout(options: &mut DirectiveOptions) -> ParseResult<()> {
+    if options.opts.is_empty() {
+        return Err(ParseError::new(
+            "SecCollectionTimeout requires an argument".to_string(),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        ));
+    }
+
+    let timeout = options.opts.parse::<i64>().map_err(|e| {
+        ParseError::new(
+            format!("invalid collection timeout: {}", e),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        )
+    })?;
+
+    options.waf_config.collection_timeout = timeout;
     Ok(())
 }
 
@@ -1039,6 +1424,159 @@ SecWebAppId production
         assert_eq!(parser.config().request_body_limit, 1048576);
         assert_eq!(parser.config().debug_log_level, 3);
         assert_eq!(parser.config().web_app_id, "production");
+    }
+
+    // ========================================================================
+    // Additional Configuration Directives Tests
+    // ========================================================================
+
+    #[test]
+    fn test_sec_server_signature() {
+        let mut parser = Parser::new();
+        assert!(
+            parser
+                .from_string("SecServerSignature \"Apache/2.4.0\"")
+                .is_ok()
+        );
+        assert_eq!(parser.config().server_signature, "Apache/2.4.0");
+    }
+
+    #[test]
+    fn test_sec_sensor_id() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecSensorID sensor-01").is_ok());
+        assert_eq!(parser.config().sensor_id, "sensor-01");
+    }
+
+    #[test]
+    fn test_sec_response_body_limit() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecResponseBodyLimit 524288").is_ok());
+        assert_eq!(parser.config().response_body_limit, 524288);
+    }
+
+    #[test]
+    fn test_sec_response_body_limit_action() {
+        let mut parser = Parser::new();
+        assert!(
+            parser
+                .from_string("SecResponseBodyLimitAction ProcessPartial")
+                .is_ok()
+        );
+        assert_eq!(
+            parser.config().response_body_limit_action,
+            BodyLimitAction::ProcessPartial
+        );
+    }
+
+    #[test]
+    fn test_sec_request_body_in_memory_limit() {
+        let mut parser = Parser::new();
+        assert!(
+            parser
+                .from_string("SecRequestBodyInMemoryLimit 131072")
+                .is_ok()
+        );
+        assert_eq!(parser.config().request_body_in_memory_limit, 131072);
+    }
+
+    #[test]
+    fn test_sec_request_body_no_files_limit() {
+        let mut parser = Parser::new();
+        assert!(
+            parser
+                .from_string("SecRequestBodyNoFilesLimit 65536")
+                .is_ok()
+        );
+        assert_eq!(parser.config().request_body_no_files_limit, 65536);
+    }
+
+    #[test]
+    fn test_sec_arguments_limit() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecArgumentsLimit 500").is_ok());
+        assert_eq!(parser.config().argument_limit, 500);
+    }
+
+    #[test]
+    fn test_sec_upload_dir() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecUploadDir /var/tmp").is_ok());
+        assert_eq!(parser.config().upload_dir, "/var/tmp");
+    }
+
+    #[test]
+    fn test_sec_upload_file_limit() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecUploadFileLimit 50").is_ok());
+        assert_eq!(parser.config().upload_file_limit, 50);
+    }
+
+    #[test]
+    fn test_sec_upload_file_mode() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecUploadFileMode 0644").is_ok());
+        assert_eq!(parser.config().upload_file_mode, 0o644);
+    }
+
+    #[test]
+    fn test_sec_upload_keep_files() {
+        let mut parser = Parser::new();
+        let result = parser.from_string("SecUploadKeepFiles On");
+        if let Err(e) = &result {
+            eprintln!("Error: {}", e);
+        }
+        assert!(result.is_ok());
+        assert!(parser.config().upload_keep_files);
+
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecUploadKeepFiles Off").is_ok());
+        assert!(!parser.config().upload_keep_files);
+    }
+
+    #[test]
+    fn test_sec_audit_engine() {
+        use crate::seclang::AuditEngineStatus;
+
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecAuditEngine On").is_ok());
+        assert_eq!(parser.config().audit_engine, AuditEngineStatus::On);
+
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecAuditEngine Off").is_ok());
+        assert_eq!(parser.config().audit_engine, AuditEngineStatus::Off);
+
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecAuditEngine RelevantOnly").is_ok());
+        assert_eq!(
+            parser.config().audit_engine,
+            AuditEngineStatus::RelevantOnly
+        );
+    }
+
+    #[test]
+    fn test_sec_audit_log() {
+        let mut parser = Parser::new();
+        assert!(
+            parser
+                .from_string("SecAuditLog /var/log/coraza/audit.log")
+                .is_ok()
+        );
+        assert_eq!(parser.config().audit_log, "/var/log/coraza/audit.log");
+    }
+
+    #[test]
+    fn test_sec_data_dir() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecDataDir /var/cache/coraza").is_ok());
+        assert_eq!(parser.config().data_dir, "/var/cache/coraza");
+    }
+
+    #[test]
+    fn test_sec_collection_timeout() {
+        let mut parser = Parser::new();
+        assert!(parser.from_string("SecCollectionTimeout 7200").is_ok());
+        assert_eq!(parser.config().collection_timeout, 7200);
     }
 
     // ========================================================================

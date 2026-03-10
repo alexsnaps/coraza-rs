@@ -9,6 +9,17 @@
 
 use crate::types::{BodyLimitAction, RuleEngineStatus};
 
+/// Audit engine status
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditEngineStatus {
+    /// Audit logging is disabled
+    Off,
+    /// Audit logging is enabled for all transactions
+    On,
+    /// Audit logging is enabled only for relevant transactions (those that trigger rules)
+    RelevantOnly,
+}
+
 /// WAF configuration
 ///
 /// Holds all configuration options that can be set via SecLang directives.
@@ -67,6 +78,33 @@ pub struct WafConfig {
 
     /// Maximum number of ARGS that will be accepted for processing
     pub argument_limit: usize,
+
+    /// Request body in-memory limit (bytes stored in memory before writing to disk)
+    pub request_body_in_memory_limit: i64,
+
+    /// Request body limit excluding files (bytes for non-file fields)
+    pub request_body_no_files_limit: i64,
+
+    /// Directory where uploaded files will be stored
+    pub upload_dir: String,
+
+    /// Maximum number of uploaded files that will be processed
+    pub upload_file_limit: usize,
+
+    /// File mode (permissions) for uploaded files (e.g., 0600)
+    pub upload_file_mode: u32,
+
+    /// If On, uploaded files will be kept after transaction
+    pub upload_keep_files: bool,
+
+    /// Audit engine status (On/Off/RelevantOnly)
+    pub audit_engine: AuditEngineStatus,
+
+    /// Path to audit log file
+    pub audit_log: String,
+
+    /// Collection timeout in seconds (for IP/SESSION/USER collections)
+    pub collection_timeout: i64,
 }
 
 impl WafConfig {
@@ -87,6 +125,15 @@ impl WafConfig {
             sensor_id: String::new(),
             data_dir: String::new(),
             argument_limit: 1000,
+            request_body_in_memory_limit: 128 * 1024, // 128 KiB
+            request_body_no_files_limit: 64 * 1024,   // 64 KiB
+            upload_dir: "/tmp".to_string(),
+            upload_file_limit: 100,
+            upload_file_mode: 0o600,
+            upload_keep_files: false,
+            audit_engine: AuditEngineStatus::Off,
+            audit_log: String::new(),
+            collection_timeout: 3600, // 1 hour
         }
     }
 
