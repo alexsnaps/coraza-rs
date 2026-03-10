@@ -1,0 +1,291 @@
+//! IP address matching operators.
+//!
+//! This module provides operators for matching IP addresses against CIDR blocks
+//! and IP ranges, compatible with ModSecurity's @ipMatch family of operators.
+
+use crate::operators::Operator;
+use crate::operators::macros::TransactionState;
+use ipnet::IpNet;
+use std::net::IpAddr;
+use std::str::FromStr;
+
+/// IP address matching operator.
+///
+/// Performs fast IPv4 or IPv6 address matching with support for CIDR notation.
+/// Can match individual IPs or IP ranges. Automatically adds appropriate subnet masks
+/// (/32 for IPv4, /128 for IPv6) when not specified.
+///
+/// # Arguments
+///
+/// Comma-separated list of IP addresses with optional CIDR blocks (e.g., "192.168.1.0/24, 10.0.0.1").
+///
+/// # Returns
+///
+/// `true` if the input IP address matches any of the provided IPs or ranges, `false` otherwise.
+///
+/// # Examples
+///
+/// ```
+/// # use coraza::operators::ip::ip_match;
+/// # use coraza::operators::Operator;
+/// // Block specific IPs and ranges
+/// let op = ip_match("192.168.1.100,192.168.1.50,10.10.50.0/24").unwrap();
+/// assert!(op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "192.168.1.100"));
+/// assert!(op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "10.10.50.25"));
+/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "192.168.1.101"));
+///
+/// // Match internal network
+/// let op = ip_match("10.0.0.0/8,172.16.0.0/12").unwrap();
+/// assert!(op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "10.5.10.20"));
+/// assert!(op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "172.16.0.1"));
+/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "192.168.1.1"));
+///
+/// // IPv6 support
+/// let op = ip_match("::1,2001:db8::/32").unwrap();
+/// assert!(op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "::1"));
+/// assert!(op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "2001:db8::1"));
+/// assert!(!op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "::2"));
+/// ```
+#[derive(Debug, Clone)]
+pub struct IpMatch {
+    /// List of IP networks (CIDR blocks) to match against
+    subnets: Vec<IpNet>,
+}
+
+impl IpMatch {
+    /// Creates a new `IpMatch` operator from a comma-separated list of IPs/CIDRs.
+    ///
+    /// # Arguments
+    ///
+    /// * `ips` - Comma-separated list of IP addresses with optional CIDR notation
+    ///
+    /// # Returns
+    ///
+    /// `Ok(IpMatch)` if at least one valid IP/CIDR was parsed, `Err` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use coraza::operators::ip::IpMatch;
+    /// let op = IpMatch::new("192.168.1.0/24,10.0.0.1").unwrap();
+    /// ```
+    pub fn new(ips: &str) -> Result<Self, String> {
+        let mut subnets = Vec::new();
+
+        for ip_str in ips.split(',') {
+            let ip_str = ip_str.trim();
+            if ip_str.is_empty() {
+                continue;
+            }
+
+            // Auto-add CIDR suffix if not present
+            let ip_with_cidr = if ip_str.contains(':') && !ip_str.contains('/') {
+                // IPv6 without CIDR - add /128
+                format!("{}/128", ip_str)
+            } else if ip_str.contains('.') && !ip_str.contains('/') {
+                // IPv4 without CIDR - add /32
+                format!("{}/32", ip_str)
+            } else {
+                ip_str.to_string()
+            };
+
+            // Parse CIDR notation
+            match IpNet::from_str(&ip_with_cidr) {
+                Ok(net) => subnets.push(net),
+                Err(_) => {
+                    // Silently skip invalid IPs (matches Go behavior)
+                    continue;
+                }
+            }
+        }
+
+        if subnets.is_empty() {
+            return Err("no valid IP addresses or CIDR blocks provided".to_string());
+        }
+
+        Ok(IpMatch { subnets })
+    }
+}
+
+impl Operator for IpMatch {
+    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, input: &str) -> bool {
+        // Parse the input IP address
+        let ip = match IpAddr::from_str(input) {
+            Ok(ip) => ip,
+            Err(_) => return false,
+        };
+
+        // Check if the IP is contained in any of the configured subnets
+        for subnet in &self.subnets {
+            if subnet.contains(&ip) {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+/// Creates a new `ipMatch` operator.
+///
+/// # Arguments
+///
+/// * `ips` - Comma-separated list of IP addresses with optional CIDR blocks
+///
+/// # Examples
+///
+/// ```
+/// # use coraza::operators::ip::ip_match;
+/// # use coraza::operators::Operator;
+/// let op = ip_match("192.168.1.0/24").unwrap();
+/// assert!(op.evaluate(None::<&mut coraza::operators::macros::NoTx>, "192.168.1.100"));
+/// ```
+pub fn ip_match(ips: &str) -> Result<IpMatch, String> {
+    IpMatch::new(ips)
+}
+
+#[cfg(test)]
+#[allow(deprecated)]
+mod tests {
+    use super::*;
+    use crate::operators::macros::NoTx;
+
+    #[test]
+    fn test_ip_match_single_address() {
+        // Test from Go: TestOneAddress
+        let op = ip_match("127.0.0.1/32").unwrap();
+
+        assert!(op.evaluate(None::<&mut NoTx>, "127.0.0.1"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "127.0.0.2"));
+    }
+
+    #[test]
+    fn test_ip_match_multiple_addresses() {
+        // Test from Go: TestMultipleAddress
+        let op = ip_match("127.0.0.1, 192.168.0.0/24").unwrap();
+
+        // Should match
+        let addrs_ok = ["127.0.0.1", "192.168.0.1", "192.168.0.253"];
+        for addr in &addrs_ok {
+            assert!(
+                op.evaluate(None::<&mut NoTx>, addr),
+                "Expected {} to match",
+                addr
+            );
+        }
+
+        // Should not match
+        let addrs_fail = ["127.0.0.2", "192.168.1.1"];
+        for addr in &addrs_fail {
+            assert!(
+                !op.evaluate(None::<&mut NoTx>, addr),
+                "Expected {} to not match",
+                addr
+            );
+        }
+    }
+
+    #[test]
+    fn test_ip_match_auto_cidr_ipv4() {
+        // Test auto-adding /32 for IPv4 without CIDR
+        let op = ip_match("192.168.1.100").unwrap();
+
+        assert!(op.evaluate(None::<&mut NoTx>, "192.168.1.100"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "192.168.1.101"));
+    }
+
+    #[test]
+    fn test_ip_match_auto_cidr_ipv6() {
+        // Test auto-adding /128 for IPv6 without CIDR
+        let op = ip_match("::1").unwrap();
+
+        assert!(op.evaluate(None::<&mut NoTx>, "::1"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "::2"));
+    }
+
+    #[test]
+    fn test_ip_match_ipv6_with_cidr() {
+        let op = ip_match("2001:db8::/32").unwrap();
+
+        assert!(op.evaluate(None::<&mut NoTx>, "2001:db8::1"));
+        assert!(op.evaluate(None::<&mut NoTx>, "2001:db8:ffff::1"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "2001:db9::1"));
+    }
+
+    #[test]
+    fn test_ip_match_mixed_ipv4_ipv6() {
+        let op = ip_match("127.0.0.1, ::1, 192.168.0.0/24, 2001:db8::/32").unwrap();
+
+        // IPv4
+        assert!(op.evaluate(None::<&mut NoTx>, "127.0.0.1"));
+        assert!(op.evaluate(None::<&mut NoTx>, "192.168.0.50"));
+
+        // IPv6
+        assert!(op.evaluate(None::<&mut NoTx>, "::1"));
+        assert!(op.evaluate(None::<&mut NoTx>, "2001:db8::1"));
+
+        // Should not match
+        assert!(!op.evaluate(None::<&mut NoTx>, "127.0.0.2"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "::2"));
+    }
+
+    #[test]
+    fn test_ip_match_invalid_input() {
+        let op = ip_match("192.168.1.0/24").unwrap();
+
+        // Invalid IP addresses should return false
+        assert!(!op.evaluate(None::<&mut NoTx>, "not-an-ip"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "999.999.999.999"));
+        assert!(!op.evaluate(None::<&mut NoTx>, ""));
+    }
+
+    #[test]
+    fn test_ip_match_empty_list() {
+        // Empty list should error
+        let result = ip_match("");
+        assert!(result.is_err());
+
+        // Only whitespace should also error
+        let result = ip_match("   ");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ip_match_skip_invalid_entries() {
+        // Should skip invalid entries and continue (matches Go behavior)
+        let op = ip_match("invalid, 192.168.1.0/24, also-invalid").unwrap();
+
+        assert!(op.evaluate(None::<&mut NoTx>, "192.168.1.100"));
+        assert!(!op.evaluate(None::<&mut NoTx>, "10.0.0.1"));
+    }
+
+    #[test]
+    fn test_ip_match_whitespace_handling() {
+        // Should handle whitespace properly
+        let op = ip_match("  192.168.1.100  ,  10.0.0.0/8  ").unwrap();
+
+        assert!(op.evaluate(None::<&mut NoTx>, "192.168.1.100"));
+        assert!(op.evaluate(None::<&mut NoTx>, "10.5.10.20"));
+    }
+
+    #[test]
+    fn test_ip_match_large_cidr_blocks() {
+        // Test common network ranges
+        let op = ip_match("10.0.0.0/8,172.16.0.0/12,192.168.0.0/16").unwrap();
+
+        // Class A private
+        assert!(op.evaluate(None::<&mut NoTx>, "10.0.0.1"));
+        assert!(op.evaluate(None::<&mut NoTx>, "10.255.255.254"));
+
+        // Class B private
+        assert!(op.evaluate(None::<&mut NoTx>, "172.16.0.1"));
+        assert!(op.evaluate(None::<&mut NoTx>, "172.31.255.254"));
+
+        // Class C private
+        assert!(op.evaluate(None::<&mut NoTx>, "192.168.0.1"));
+        assert!(op.evaluate(None::<&mut NoTx>, "192.168.255.254"));
+
+        // Public IP should not match
+        assert!(!op.evaluate(None::<&mut NoTx>, "8.8.8.8"));
+    }
+}

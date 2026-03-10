@@ -451,13 +451,62 @@ impl Operator for Eq {
   - Explicit `capturing()` method instead of implicit check
   - Cleaner separation of fast path vs capturing path
 
-### Quality Metrics - Phase 3 (Final)
+### Quality Metrics - Phase 3 (Updated)
 - ✅ All tests passing (167/167 unit tests, +11 new capturing tests)
 - ✅ Doc tests passing (57/57)
 - ✅ Clippy clean (no warnings)
 - ✅ Full documentation with examples
 - ✅ Test coverage includes capturing groups (rx) and capturing matches (pm), macro expansion, transaction state
 - ✅ **Phase 3, Step 4 Complete!** Capturing fully implemented for both @rx and @pm operators
+
+#### 5. IP Matching Operators (src/operators/ip.rs)
+- **Date:** 2026-03-10
+- **Source:** `coraza/internal/operators/ip_match.go`, `coraza/internal/operators/ip_match_test.go`
+- **Tests:** 11/11 passing (2 ported from Go + 9 additional edge cases) + 178/178 total
+- **Dependency Added:** `ipnet = "2.9"` for CIDR parsing and IP network operations
+- **Features:**
+  - **`@ipMatch` operator:**
+    - Parse comma-separated list of IPs and CIDR blocks
+    - Auto-add `/32` for IPv4 without CIDR suffix
+    - Auto-add `/128` for IPv6 without CIDR suffix
+    - Support mixed IPv4/IPv6 in same operator
+    - Efficient subnet matching using `ipnet` crate
+  - **No transaction state needed** - plain parameter evaluation
+  - **No macro expansion** - static IP list (not dynamic)
+- **Implementation:**
+  - Uses `ipnet::IpNet` for CIDR parsing and `contains()` checking
+  - Uses `std::net::IpAddr` for input IP parsing
+  - Silently skips invalid IPs (matches Go behavior)
+  - Returns error only if ALL entries are invalid/empty
+- **Test Coverage:**
+  - ✅ Single IP with CIDR (ported from Go)
+  - ✅ Multiple IPs and CIDR ranges (ported from Go)
+  - ✅ Auto-add /32 for IPv4 single IPs
+  - ✅ Auto-add /128 for IPv6 single IPs
+  - ✅ IPv6 with explicit CIDR
+  - ✅ Mixed IPv4/IPv6 matching
+  - ✅ Invalid input handling
+  - ✅ Empty list error
+  - ✅ Skip invalid entries (partial valid list)
+  - ✅ Whitespace handling
+  - ✅ Large CIDR blocks (private network ranges)
+- **Deferred:**
+  - `@ipMatchFromFile` - Requires file I/O infrastructure and operator init context (search paths, root FS)
+  - `@ipMatchFromDataset` - Requires dataset management at WAF level
+  - Both will be implemented in Phase 6+ when WAF core is ported
+- **Design Notes:**
+  - Zero-cost abstraction: no dynamic dispatch
+  - Pre-parsed CIDR blocks stored in `Vec<IpNet>`
+  - Fast O(n) lookup where n = number of configured subnets
+  - Could optimize with interval tree for large subnet lists (future)
+
+### Quality Metrics - Phase 3 (Final)
+- ✅ All tests passing (178/178 unit tests, +11 new IP tests)
+- ✅ Doc tests passing (60/60, +3 new IP examples)
+- ✅ Clippy clean (no warnings)
+- ✅ Full documentation with examples
+- ✅ Test coverage includes IP/CIDR matching, capturing groups, macro expansion, transaction state
+- ✅ **Phase 3, Step 5 Complete!** IP matching operator fully implemented
 
 ### Next Steps
 - [ ] **IMPORTANT - Cleanup After Transaction Port:** Once the production `TransactionState` implementation is ported:
@@ -467,7 +516,9 @@ impl Operator for Eq {
     - `src/operators/mod.rs` (pub use statement)
     - `src/operators/simple.rs` (test module)
     - `src/operators/pattern.rs` (test module)
+    - `src/operators/ip.rs` (test module)
   - Update all test code to use the production transaction type instead of `NoTx`
   - This cleanup is critical to avoid shipping deprecated convenience types
-- [ ] **Phase 3, Step 5:** Port IP matching operators (ipMatch, ipMatchFromFile)
+- [ ] **Phase 3, Step 6:** Port additional operators (@unconditionalMatch, @validateByteRange, @validateUrlEncoding, etc.)
+- [ ] **Phase 6+:** When porting WAF core, implement `@ipMatchFromFile` and `@ipMatchFromDataset`
 - [ ] **Phase 4:** Port complex text processing transformations (cmd_line, css_decode, js_decode, html_entity_decode, escape sequences)

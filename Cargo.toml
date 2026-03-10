@@ -14,3 +14,6 @@ sha1 = "0.10"
 # Pattern matching
 regex = "1.10"
 aho-corasick = "1.1"
+
+# IP address and network utilities
+ipnet = "2.9"

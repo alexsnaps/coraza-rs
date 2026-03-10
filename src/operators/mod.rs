@@ -6,10 +6,12 @@
 //! Operators are used to evaluate input values against configured parameters.
 //! They return boolean results indicating whether the match succeeded.
 
+pub mod ip;
 pub mod macros;
 mod pattern;
 mod simple;
 
+pub use ip::{IpMatch, ip_match};
 #[allow(deprecated)]
 pub use macros::{Macro, MacroError, NoTx, TransactionState};
 pub use pattern::{Pm, Rx, StrMatch, Within, pm, rx, strmatch, within};
