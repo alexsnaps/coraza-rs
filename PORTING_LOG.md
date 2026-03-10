@@ -1185,31 +1185,115 @@ pub enum AllowType {
 }
 ```
 
-### Quality Gates (Steps 1-7)
-- [x] All Go test cases ported (123 action tests)
-- [x] All tests passing (491 total tests)
+### Quality Gates (Phase 6 Complete)
+- [x] All Go test cases ported (145 action tests)
+- [x] All tests passing (513 total tests)
 - [x] Clippy clean (0 warnings)
-- [x] All actions registered in global registry (25/26 core actions)
+- [x] All actions registered in global registry (26/26 core actions)
 - [x] Full documentation with examples
+- [x] Step 8 complete: CTL action implemented (20 sub-commands)
 
-**Remaining for Phase 6:**
-- [ ] Step 8: 1 ctl action (runtime configuration) - FINAL ACTION!
+### Actual Timeline
+- Step 1: 1 day (Foundation)
+- Step 2: 1 day (Metadata actions)
+- Step 3: 1 day (Logging actions)
+- Step 4: 1 day (Disruptive actions)
+- Step 5: 1 day (Variable manipulation)
+- Step 6: 1 day (Flow control)
+- Step 7: 1 day (Special actions)
+- Step 8: 1 day (CTL action)
 
-### Estimated Timeline
-- Step 1: 1 day
-- Step 2: 2 days
-- Step 3: 1 day
-- Step 4: 2 days
-- Step 5: 2 days
-- Step 6: 1 day
-- Step 7: 1 day
-- Step 8: 2 days
+**Total:** 8 days for 26 core actions ✅
 
-**Total:** ~12 days for 24 core actions
+## Next Steps: Remaining Phases
 
-### Next Steps (After Phase 6)
-- [ ] **Phase 7:** Body processors (JSON, XML, multipart, urlencoded)
-- [ ] **Phase 8:** Rule engine (compilation and execution)
-- [ ] **Phase 9:** SecLang parser (directive parsing)
-- [ ] **Phase 10:** WAF core and configuration
-- [ ] **Phase 11:** Integration testing and OWASP CRS compatibility
+### Phase 7: Rule Engine (NEXT - ~15 days)
+**Goal:** Implement the core rule evaluation engine that ties together variables, transformations, operators, and actions.
+
+**Components to implement:**
+- [ ] **Week 1, Days 1-3:** Variable extraction system
+  - RuleVariable struct with regex keys, exceptions, count mode
+  - Extract values from transaction collections
+  - Handle variable exceptions and filtering
+- [ ] **Week 1, Days 4-5:** Transformation pipeline
+  - Apply transformation chains with caching
+  - Multi-match mode (evaluate after each transformation)
+  - Integration with existing transformations from Phases 2 & 4
+- [ ] **Week 1, Day 6:** Operator integration
+  - RuleOperator wrapper with negation support
+  - Integration with existing operators from Phase 3
+  - Handle operator-less rules (SecAction, SecMarker)
+- [ ] **Week 2, Days 1-2:** Action execution
+  - Execute actions on rule match
+  - Handle disruptive vs non-disruptive actions
+  - Integration with existing actions from Phase 6
+- [ ] **Week 2, Days 3-5:** Core rule evaluation engine
+  - Main Rule::evaluate() method
+  - Tie together: variables → transformations → operator → actions
+  - Capture match data (matched variables, keys, values)
+- [ ] **Week 2, Day 6:** Rule chaining
+  - Chain pointer (Rule.chain: Option<Box<Rule>>)
+  - Recursive evaluation for AND logic
+  - Aggregate match data across chains
+- [ ] **Week 3, Days 1-2:** Rule groups and phase processing
+  - RuleGroup for organizing rules by phase
+  - Phase-based evaluation
+  - Skip and skipAfter flow control
+- [ ] **Week 3, Days 3-5:** Integration tests
+  - Port comprehensive tests from rule_test.go (19k lines)
+  - Test complex multi-variable rules
+  - Test transformation + operator combinations
+  - Test chained rules with multiple actions
+
+**Source:** `coraza/internal/corazawaf/rule.go` (23k lines), `rulegroup.go` (8.7k lines)
+**Target:** `src/rules/` module (~1500 lines across multiple files)
+**Dependencies:** ✅ All prerequisites complete (Phases 1-6)
+
+### Phase 8: SecLang Parser (~15 days)
+**Goal:** Parse ModSecurity SecLang directives and compile to rules.
+
+**Components to implement:**
+- [ ] Parser infrastructure (nom-based)
+- [ ] SecRule parsing (variables, operators, actions)
+- [ ] All configuration directives (SecRuleEngine, etc.)
+- [ ] Include file handling
+- [ ] Rule compilation to executable structures
+
+**Source:** `coraza/internal/seclang/` (parser.go, rule_parser.go, directives.go)
+**Target:** `src/seclang/` module
+
+### Phase 9: Transaction Enhancements (~10 days)
+**Goal:** Enhance transaction system with full WAF capabilities.
+
+**Components to implement:**
+- [ ] Body processors (JSON, XML, URL-encoded, multipart)
+- [ ] Variable population from HTTP requests
+- [ ] Phase-based processing integration
+- [ ] Full request/response handling
+
+**Source:** `coraza/internal/corazawaf/transaction.go` (78k lines)
+**Target:** Enhanced `src/transaction.rs` and `src/body_processors/`
+
+### Phase 10: WAF Core & Configuration (~5 days)
+**Goal:** Top-level WAF instance with configuration management.
+
+**Components to implement:**
+- [ ] WAF configuration builder
+- [ ] Rule set management
+- [ ] Transaction factory
+- [ ] Audit logging
+
+**Source:** `coraza/internal/corazawaf/waf.go` (12k lines)
+**Target:** `src/waf.rs`, `src/config.rs`
+
+### Phase 11: Integration & Testing (~10 days)
+**Goal:** Production readiness.
+
+**Components to implement:**
+- [ ] E2E test framework
+- [ ] OWASP CRS v4 test suite (100% pass rate target)
+- [ ] Performance benchmarking (match or exceed Go)
+- [ ] Production documentation and examples
+- [ ] HTTP integration examples
+
+**Total Remaining:** ~55 days (~11 weeks) to production-ready WAF
