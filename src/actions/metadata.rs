@@ -7,9 +7,10 @@
 //! versioning, and classification. These actions do not affect transaction
 //! processing - they only store information that appears in logs and alerts.
 
-use crate::RuleSeverity;
 use crate::actions::{Action, ActionError, ActionType, Rule, TransactionState};
 use crate::operators::Macro;
+use crate::{RulePhase, RuleSeverity};
+use std::str::FromStr;
 
 /// `id` action - Assigns a unique numeric ID to the rule.
 ///
@@ -305,6 +306,55 @@ impl Action for MaturityAction {
     }
 }
 
+/// `phase` action - Specifies the processing phase for the rule.
+///
+/// Places the rule into one of five available processing phases.
+/// It can also be used in `SecDefaultAction` to establish the rule defaults.
+///
+/// # Phase Values
+///
+/// - 1 (request_headers): Request Headers phase
+/// - 2 (request_body or "request"): Request Body phase (default)
+/// - 3 (response_headers): Response Headers phase
+/// - 4 (response_body or "response"): Response Body phase
+/// - 5 (logging): Logging phase
+///
+/// # Arguments
+///
+/// Phase number (1-5) or alias ("request", "response", "logging")
+///
+/// # Examples
+///
+/// ```text
+/// SecAction "phase:1,nolog,pass,id:126,initcol:IP=%{REMOTE_ADDR}"
+/// SecRule REQUEST_HEADERS:User-Agent "Test" "phase:request,log,deny,id:127"
+/// SecRule RESPONSE_BODY "@rx error" "phase:4,log,deny,id:128"
+/// ```
+#[derive(Debug)]
+pub struct PhaseAction;
+
+impl Action for PhaseAction {
+    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+        if data.is_empty() {
+            return Err(ActionError::MissingArguments);
+        }
+
+        let phase = RulePhase::from_str(data)
+            .map_err(|e| ActionError::InvalidArguments(format!("{}", e)))?;
+
+        rule.phase = phase;
+        Ok(())
+    }
+
+    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+        // Metadata actions don't execute at runtime
+    }
+
+    fn action_type(&self) -> ActionType {
+        ActionType::Metadata
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,6 +593,77 @@ mod tests {
         let mut action = MaturityAction;
         assert!(action.init(&mut rule, "5").is_ok());
         assert_eq!(rule.maturity, 5);
+    }
+
+    // Phase Action Tests
+    #[test]
+    fn test_phase_empty() {
+        let mut rule = Rule::new();
+        let mut action = PhaseAction;
+        assert_eq!(
+            action.init(&mut rule, ""),
+            Err(ActionError::MissingArguments)
+        );
+    }
+
+    #[test]
+    fn test_phase_numeric() {
+        let mut rule = Rule::new();
+        let mut action = PhaseAction;
+        assert!(action.init(&mut rule, "1").is_ok());
+        assert_eq!(rule.phase, RulePhase::RequestHeaders);
+
+        let mut rule = Rule::new();
+        let mut action = PhaseAction;
+        assert!(action.init(&mut rule, "2").is_ok());
+        assert_eq!(rule.phase, RulePhase::RequestBody);
+
+        let mut rule = Rule::new();
+        let mut action = PhaseAction;
+        assert!(action.init(&mut rule, "5").is_ok());
+        assert_eq!(rule.phase, RulePhase::Logging);
+    }
+
+    #[test]
+    fn test_phase_aliases() {
+        let mut rule = Rule::new();
+        let mut action = PhaseAction;
+        assert!(action.init(&mut rule, "request").is_ok());
+        assert_eq!(rule.phase, RulePhase::RequestBody);
+
+        let mut rule = Rule::new();
+        let mut action = PhaseAction;
+        assert!(action.init(&mut rule, "response").is_ok());
+        assert_eq!(rule.phase, RulePhase::ResponseBody);
+
+        let mut rule = Rule::new();
+        let mut action = PhaseAction;
+        assert!(action.init(&mut rule, "logging").is_ok());
+        assert_eq!(rule.phase, RulePhase::Logging);
+    }
+
+    #[test]
+    fn test_phase_invalid() {
+        let mut rule = Rule::new();
+        let mut action = PhaseAction;
+        assert!(matches!(
+            action.init(&mut rule, "0"),
+            Err(ActionError::InvalidArguments(_))
+        ));
+
+        let mut rule = Rule::new();
+        let mut action = PhaseAction;
+        assert!(matches!(
+            action.init(&mut rule, "6"),
+            Err(ActionError::InvalidArguments(_))
+        ));
+
+        let mut rule = Rule::new();
+        let mut action = PhaseAction;
+        assert!(matches!(
+            action.init(&mut rule, "invalid"),
+            Err(ActionError::InvalidArguments(_))
+        ));
     }
 
     #[test]

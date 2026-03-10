@@ -81,8 +81,8 @@ pub struct ParsedAction {
 /// use coraza::seclang::parse_actions;
 ///
 /// // Parse multiple actions
-/// let actions = parse_actions("id:1,deny,log")?;
-/// assert_eq!(actions.len(), 3);
+/// let actions = parse_actions("phase:2,auditlog,allow,log,id:5000003,msg:'msn bot'")?;
+/// assert_eq!(actions.len(), 6);
 ///
 /// // Parse action with quoted value
 /// let actions = parse_actions("msg:'Attack detected'")?;

@@ -68,8 +68,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::OnceLock;
 
-use crate::RuleSeverity;
 use crate::operators::Macro;
+use crate::{RulePhase, RuleSeverity};
 
 pub use ctl::CtlAction;
 pub use disruptive::{
@@ -78,7 +78,8 @@ pub use disruptive::{
 pub use flow::{ChainAction, SkipAction, SkipAfterAction};
 pub use logging::{AuditlogAction, LogAction, LogdataAction, NoauditlogAction, NologAction};
 pub use metadata::{
-    IdAction, MaturityAction, MsgAction, RevAction, SeverityAction, TagAction, VerAction,
+    IdAction, MaturityAction, MsgAction, PhaseAction, RevAction, SeverityAction, TagAction,
+    VerAction,
 };
 pub use special::{CaptureAction, MultimatchAction, StatusAction, TAction};
 pub use variables::SetvarAction;
@@ -193,6 +194,8 @@ pub struct Rule {
     pub transformations: Vec<String>,
     /// SecMarker label (for flow control markers)
     pub sec_mark: Option<String>,
+    /// Processing phase (1-5)
+    pub phase: RulePhase,
 }
 
 impl Rule {
@@ -216,6 +219,7 @@ impl Rule {
             multi_match: false,
             transformations: Vec::new(),
             sec_mark: None,
+            phase: RulePhase::RequestBody, // Default phase is 2 (request body)
         }
     }
 }
@@ -325,6 +329,9 @@ fn create_ver() -> Box<dyn Action> {
 fn create_maturity() -> Box<dyn Action> {
     Box::new(MaturityAction)
 }
+fn create_phase() -> Box<dyn Action> {
+    Box::new(PhaseAction)
+}
 fn create_log() -> Box<dyn Action> {
     Box::new(LogAction)
 }
@@ -398,6 +405,7 @@ fn init_registry() -> HashMap<String, ActionFactory> {
     registry.insert("rev".to_string(), create_rev as ActionFactory);
     registry.insert("ver".to_string(), create_ver as ActionFactory);
     registry.insert("maturity".to_string(), create_maturity as ActionFactory);
+    registry.insert("phase".to_string(), create_phase as ActionFactory);
 
     // Logging actions
     registry.insert("log".to_string(), create_log as ActionFactory);
