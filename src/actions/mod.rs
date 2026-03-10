@@ -56,12 +56,20 @@
 //! SecRule ARGS "@rx attack" "id:100,deny,log,msg:'Attack detected'"
 //! ```
 
+mod logging;
+mod metadata;
+
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::OnceLock;
 
 use crate::RuleSeverity;
 use crate::operators::Macro;
+
+pub use logging::{AuditlogAction, LogAction, LogdataAction, NoauditlogAction, NologAction};
+pub use metadata::{
+    IdAction, MaturityAction, MsgAction, RevAction, SeverityAction, TagAction, VerAction,
+};
 
 /// Action execution errors.
 #[derive(Debug, Clone, PartialEq)]
@@ -261,15 +269,65 @@ type ActionFactory = fn() -> Box<dyn Action>;
 /// Global action registry.
 static ACTION_REGISTRY: OnceLock<HashMap<String, ActionFactory>> = OnceLock::new();
 
+/// Helper functions to create action instances (for registry)
+fn create_id() -> Box<dyn Action> {
+    Box::new(IdAction)
+}
+fn create_msg() -> Box<dyn Action> {
+    Box::new(MsgAction)
+}
+fn create_tag() -> Box<dyn Action> {
+    Box::new(TagAction)
+}
+fn create_severity() -> Box<dyn Action> {
+    Box::new(SeverityAction)
+}
+fn create_rev() -> Box<dyn Action> {
+    Box::new(RevAction)
+}
+fn create_ver() -> Box<dyn Action> {
+    Box::new(VerAction)
+}
+fn create_maturity() -> Box<dyn Action> {
+    Box::new(MaturityAction)
+}
+fn create_log() -> Box<dyn Action> {
+    Box::new(LogAction)
+}
+fn create_nolog() -> Box<dyn Action> {
+    Box::new(NologAction)
+}
+fn create_auditlog() -> Box<dyn Action> {
+    Box::new(AuditlogAction)
+}
+fn create_noauditlog() -> Box<dyn Action> {
+    Box::new(NoauditlogAction)
+}
+fn create_logdata() -> Box<dyn Action> {
+    Box::new(LogdataAction)
+}
+
 /// Initialize the action registry with built-in actions.
 fn init_registry() -> HashMap<String, ActionFactory> {
-    // Actions will be registered here as they're implemented
-    // Example:
-    // let mut registry = HashMap::new();
-    // registry.insert("deny".to_string(), || Box::new(DenyAction));
-    // registry
+    let mut registry = HashMap::new();
 
-    HashMap::new()
+    // Metadata actions
+    registry.insert("id".to_string(), create_id as ActionFactory);
+    registry.insert("msg".to_string(), create_msg as ActionFactory);
+    registry.insert("tag".to_string(), create_tag as ActionFactory);
+    registry.insert("severity".to_string(), create_severity as ActionFactory);
+    registry.insert("rev".to_string(), create_rev as ActionFactory);
+    registry.insert("ver".to_string(), create_ver as ActionFactory);
+    registry.insert("maturity".to_string(), create_maturity as ActionFactory);
+
+    // Logging actions
+    registry.insert("log".to_string(), create_log as ActionFactory);
+    registry.insert("nolog".to_string(), create_nolog as ActionFactory);
+    registry.insert("auditlog".to_string(), create_auditlog as ActionFactory);
+    registry.insert("noauditlog".to_string(), create_noauditlog as ActionFactory);
+    registry.insert("logdata".to_string(), create_logdata as ActionFactory);
+
+    registry
 }
 
 /// Register a new action in the global registry.
@@ -306,12 +364,14 @@ fn init_registry() -> HashMap<String, ActionFactory> {
 /// // Register the custom action
 /// register("mycustom", || Box::new(CustomAction));
 /// ```
-pub fn register(name: &str, factory: ActionFactory) {
-    // For now, we can't modify the static registry after initialization
-    // This will be improved when we implement the actual registry
-    // For testing, we'll need a different approach
-    let _ = (name, factory);
-    todo!("Action registration not yet implemented - requires mutable static or lazy_static")
+pub fn register(_name: &str, _factory: ActionFactory) {
+    // Note: Runtime registration is not currently supported with OnceLock.
+    // The registry is initialized once with built-in actions.
+    // For plugin actions, consider using a different registration mechanism
+    // or compile-time registration via feature flags.
+    todo!(
+        "Runtime action registration not yet implemented - registry is read-only after initialization"
+    )
 }
 
 /// Get an action by name from the registry.
@@ -449,5 +509,68 @@ mod tests {
     fn test_get_unknown_action() {
         let result = get("nonexistent_action");
         assert!(matches!(result, Err(ActionError::UnknownAction(_))));
+    }
+
+    #[test]
+    fn test_get_id_action() {
+        let action = get("id");
+        assert!(action.is_ok());
+        assert_eq!(action.unwrap().action_type(), ActionType::Metadata);
+    }
+
+    #[test]
+    fn test_get_msg_action() {
+        let action = get("msg");
+        assert!(action.is_ok());
+        assert_eq!(action.unwrap().action_type(), ActionType::Metadata);
+    }
+
+    #[test]
+    fn test_get_severity_action() {
+        let action = get("severity");
+        assert!(action.is_ok());
+        assert_eq!(action.unwrap().action_type(), ActionType::Metadata);
+    }
+
+    #[test]
+    fn test_get_case_insensitive() {
+        // Registry should be case-insensitive
+        assert!(get("ID").is_ok());
+        assert!(get("Id").is_ok());
+        assert!(get("MSG").is_ok());
+        assert!(get("Msg").is_ok());
+    }
+
+    #[test]
+    fn test_all_metadata_actions_registered() {
+        // Ensure all 7 metadata actions are registered
+        let actions = vec!["id", "msg", "tag", "severity", "rev", "ver", "maturity"];
+        for name in actions {
+            assert!(get(name).is_ok(), "Action '{}' not registered", name);
+        }
+    }
+
+    #[test]
+    fn test_all_logging_actions_registered() {
+        // Ensure all 5 logging actions are registered
+        let actions = vec!["log", "nolog", "auditlog", "noauditlog", "logdata"];
+        for name in actions {
+            assert!(get(name).is_ok(), "Action '{}' not registered", name);
+        }
+    }
+
+    #[test]
+    fn test_logging_action_types() {
+        // Verify all logging actions have Nondisruptive type
+        let actions = vec!["log", "nolog", "auditlog", "noauditlog", "logdata"];
+        for name in actions {
+            let action = get(name).unwrap();
+            assert_eq!(
+                action.action_type(),
+                ActionType::Nondisruptive,
+                "Action '{}' should be Nondisruptive",
+                name
+            );
+        }
     }
 }
