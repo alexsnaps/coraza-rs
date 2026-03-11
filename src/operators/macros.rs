@@ -99,6 +99,48 @@ pub trait TransactionState {
     fn set_skip_after(&mut self, marker: &str) {
         let _ = marker; // Suppress unused warnings for default impl
     }
+
+    // ===== CTL Action Methods =====
+
+    /// Set rule engine status (called by ctl:ruleEngine).
+    fn ctl_set_rule_engine(&mut self, status: crate::RuleEngineStatus) {
+        let _ = status;
+    }
+
+    /// Set request body access (called by ctl:requestBodyAccess).
+    fn ctl_set_request_body_access(&mut self, enabled: bool) {
+        let _ = enabled;
+    }
+
+    /// Set request body limit (called by ctl:requestBodyLimit).
+    fn ctl_set_request_body_limit(&mut self, limit: i64) {
+        let _ = limit;
+    }
+
+    /// Set force request body variable (called by ctl:forceRequestBodyVariable).
+    fn ctl_set_force_request_body_variable(&mut self, enabled: bool) {
+        let _ = enabled;
+    }
+
+    /// Set response body access (called by ctl:responseBodyAccess).
+    fn ctl_set_response_body_access(&mut self, enabled: bool) {
+        let _ = enabled;
+    }
+
+    /// Set response body limit (called by ctl:responseBodyLimit).
+    fn ctl_set_response_body_limit(&mut self, limit: i64) {
+        let _ = limit;
+    }
+
+    /// Set force response body variable (called by ctl:forceResponseBodyVariable).
+    fn ctl_set_force_response_body_variable(&mut self, enabled: bool) {
+        let _ = enabled;
+    }
+
+    /// Get last processed phase (used by CTL to check phase restrictions).
+    fn ctl_last_phase(&self) -> Option<crate::types::RulePhase> {
+        None
+    }
 }
 
 /// A macro that can expand variable references at runtime.

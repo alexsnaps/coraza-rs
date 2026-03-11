@@ -2222,7 +2222,7 @@ The following features were deferred from earlier phases and will be implemented
 
 ## Next Steps: Remaining Phases
 
-### Phase 9: Transaction Enhancements ⏳ IN PROGRESS (~15 days, 7/12 steps complete)
+### Phase 9: Transaction Enhancements ⏳ IN PROGRESS (~15 days, 8/12 steps complete)
 **Goal:** Enhance transaction system with full WAF capabilities and implement deferred features.
 
 **New Components:**
@@ -2926,56 +2926,128 @@ impl Transaction {
 
 ---
 
-### Step 8: CTL Action Execution (Days 11-12)
+### Step 8: CTL Action Execution ✅ PARTIAL (Days 11-12)
 
 **Goal:** Implement runtime configuration changes via CTL action
 
+**Completion Date:** 2026-03-11
+
+**Completion Status:** Core CTL commands implemented, WAF-level commands deferred to Phase 10
+
 **Components:**
-- [ ] Execute CTL action during rule evaluation (not just parse)
-- [ ] Implement 20 CTL sub-commands:
-  - `ruleEngine` - Change rule engine status
-  - `requestBodyAccess` - Toggle request body inspection
-  - `responseBodyAccess` - Toggle response body inspection
-  - `requestBodyLimit` - Change body size limit
-  - `responseBodyLimit` - Change response body limit
-  - `requestBodyProcessor` - Select body processor
-  - `forceRequestBodyVariable` - Force REQUEST_BODY population
-  - `forceResponseBodyVariable` - Force RESPONSE_BODY population
-  - `auditEngine` - Toggle audit logging
-  - `auditLogParts` - Select audit log parts
-  - `ruleRemoveById` - Remove rule by ID
-  - `ruleRemoveByTag` - Remove rule by tag
-  - `ruleRemoveTargetById` - Remove target from rule
-  - `ruleRemoveTargetByTag` - Remove target from rule
-  - `hashEngine` - Toggle hash verification
-  - `hashEnforcement` - Toggle hash enforcement
-  - Plus 4 more (see ctl.go)
-- [ ] Modify Transaction fields based on CTL command
-- [ ] Apply changes immediately for current transaction
+
+**Transaction-Level CTL Commands:** ✅ COMPLETE (7 commands)
+- [x] `ruleEngine` - Change rule engine status (On/Off/DetectionOnly)
+- [x] `requestBodyAccess` - Toggle request body inspection (with phase restrictions)
+- [x] `requestBodyLimit` - Change body size limit (with phase restrictions)
+- [x] `forceRequestBodyVariable` - Force REQUEST_BODY population
+- [x] `responseBodyAccess` - Toggle response body inspection (with phase restrictions)
+- [x] `responseBodyLimit` - Change response body limit (with phase restrictions)
+- [x] `forceResponseBodyVariable` - Force RESPONSE_BODY population
+- [x] Phase restriction checks (prevent changes after relevant phase)
+
+**WAF-Level CTL Commands:** ⏳ DEFERRED TO PHASE 10 (13 commands)
+- [ ] `ruleRemoveById` - Remove rule by ID (requires WAF.Rules access)
+- [ ] `ruleRemoveByTag` - Remove rule by tag (requires WAF.Rules access)
+- [ ] `ruleRemoveByMsg` - Remove rule by message (requires WAF.Rules access)
+- [ ] `ruleRemoveTargetById` - Remove target from rule (requires WAF.Rules access)
+- [ ] `ruleRemoveTargetByTag` - Remove target from rule (requires WAF.Rules access)
+- [ ] `ruleRemoveTargetByMsg` - Remove target from rule (requires WAF.Rules access)
+- [ ] `requestBodyProcessor` - Select body processor (requires processor infrastructure)
+- [ ] `responseBodyProcessor` - Select response body processor
+- [ ] `auditEngine` - Toggle audit logging (requires audit infrastructure)
+- [ ] `auditLogParts` - Select audit log parts (requires audit infrastructure)
+- [ ] `debugLogLevel` - Set debug log verbosity (requires logging infrastructure)
+- [ ] `hashEngine` - Not supported (same as Go)
+- [ ] `hashEnforcement` - Not supported (same as Go)
+
+**Infrastructure Added:**
+- Added 7 transaction fields for CTL-modifiable settings:
+  - `rule_engine: RuleEngineStatus` (default: On)
+  - `request_body_access: bool` (default: true)
+  - `request_body_limit: i64` (default: 131072 = 128KB)
+  - `force_request_body_variable: bool` (default: false)
+  - `response_body_access: bool` (default: false)
+  - `response_body_limit: i64` (default: 524288 = 512KB)
+  - `force_response_body_variable: bool` (default: false)
+
+- Added 8 CTL methods to TransactionState trait (with default no-op impls):
+  - `ctl_set_rule_engine()`
+  - `ctl_set_request_body_access()`
+  - `ctl_set_request_body_limit()`
+  - `ctl_set_force_request_body_variable()`
+  - `ctl_set_response_body_access()`
+  - `ctl_set_response_body_limit()`
+  - `ctl_set_force_response_body_variable()`
+  - `ctl_last_phase()` - For phase restriction checks
+
+- Added public accessor methods on Transaction for all CTL-modifiable settings
 
 **Implementation:**
 ```rust
-impl CtlAction {
-    pub fn execute(&self, tx: &mut Transaction) -> Result<(), ActionError> {
-        match self.command.as_str() {
-            "ruleEngine" => {
-                tx.rule_engine = RuleEngineStatus::from_str(&self.value)?;
+impl Action for CtlAction {
+    fn evaluate(&self, _rule: &Rule, tx: &mut dyn TransactionState) {
+        match self.command {
+            CtlCommand::RuleEngine => {
+                if let Ok(status) = RuleEngineStatus::from_str(&self.value) {
+                    tx.ctl_set_rule_engine(status);
+                }
             }
-            "requestBodyAccess" => {
-                tx.request_body_access = parse_boolean(&self.value)?;
+            CtlCommand::RequestBodyAccess => {
+                // Check phase restriction
+                if let Some(phase) = tx.ctl_last_phase()
+                    && phase >= RulePhase::RequestBody {
+                        return; // Too late
+                    }
+                if let Ok(enabled) = Self::parse_on_off(&self.value) {
+                    tx.ctl_set_request_body_access(enabled);
+                }
             }
-            // ... 18 more commands
+            // ... 5 more implemented commands
         }
-        Ok(())
     }
 }
 ```
 
-**Source:** `coraza/internal/actions/ctl.go` (486 lines)
-**Target:** `src/actions/ctl_execution.rs` (~300 lines)
-**Tests:** 29 tests from Phase 6 + 10 new execution tests
+**What Was Implemented:**
+- Full evaluate() method in CtlAction with all 20 CTL command cases
+- 7 working transaction-level commands
+- Phase restriction logic (prevents changing request body settings after request body phase, etc.)
+- Error handling (parse errors silently ignored since init() already validated)
+- 9 new execution tests covering all implemented commands
+- Integration with TransactionState trait
 
-**Deliverable:** Full CTL action execution with all 20 sub-commands
+**Quality Metrics:**
+- ✅ 822 total tests passing (+9 new CTL execution tests)
+- ✅ 31 total CTL tests (22 parsing + 9 execution)
+- ✅ 141 doc tests passing
+- ✅ 963 total tests (822 unit + 141 doc)
+- ✅ Clippy clean (0 warnings)
+- ✅ Full documentation
+
+**Ported Tests from Go (9 execution tests):**
+1. ✅ test_ctl_execute_rule_engine - RuleEngine command
+2. ✅ test_ctl_execute_request_body_access - RequestBodyAccess command
+3. ✅ test_ctl_execute_request_body_limit - RequestBodyLimit command
+4. ✅ test_ctl_execute_force_request_body_variable - ForceRequestBodyVariable
+5. ✅ test_ctl_execute_response_body_access - ResponseBodyAccess command
+6. ✅ test_ctl_execute_response_body_limit - ResponseBodyLimit command
+7. ✅ test_ctl_execute_force_response_body_variable - ForceResponseBodyVariable
+8. ✅ test_ctl_phase_restriction_request_body - Phase restriction enforcement
+9. ✅ test_ctl_phase_restriction_response_body - Phase restriction enforcement
+
+**Deferred to Phase 10:**
+The 13 WAF-level CTL commands require infrastructure that will be available in Phase 10:
+- Rule removal commands need access to WAF.Rules (RuleGroup)
+- Body processor selection needs request processing infrastructure
+- Audit commands need audit logging infrastructure
+- Debug level needs logging infrastructure
+
+**Source:** `coraza/internal/actions/ctl.go` (evaluate method, ~250 lines)
+**Target:** `src/actions/ctl.rs` (evaluate method, ~70 lines for implemented commands)
+**Tests:** 31 total tests (22 parsing from Phase 6 + 9 new execution tests)
+
+**Deliverable:** ✅ Core CTL action execution with transaction-level commands - PARTIAL COMPLETE
 
 ---
 

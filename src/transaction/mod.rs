@@ -8,7 +8,7 @@ pub mod variables;
 use crate::RuleVariable;
 use crate::collection::{Keyed, Map, MapCollection, Single, SingleCollection};
 use crate::operators::TransactionState;
-use crate::types::RulePhase;
+use crate::types::{RuleEngineStatus, RulePhase};
 
 /// Interruption returned when a disruptive action is triggered.
 ///
@@ -178,6 +178,28 @@ pub struct Transaction {
     /// RESPONSE_XML - Parsed XML response data
     response_xml: Map,
 
+    // ===== CTL-Modifiable Settings =====
+    /// Rule engine status (controlled by ctl:ruleEngine)
+    pub(crate) rule_engine: RuleEngineStatus,
+
+    /// Request body access enabled (controlled by ctl:requestBodyAccess)
+    pub(crate) request_body_access: bool,
+
+    /// Request body size limit in bytes (controlled by ctl:requestBodyLimit)
+    pub(crate) request_body_limit: i64,
+
+    /// Force REQUEST_BODY variable creation (controlled by ctl:forceRequestBodyVariable)
+    pub(crate) force_request_body_variable: bool,
+
+    /// Response body access enabled (controlled by ctl:responseBodyAccess)
+    pub(crate) response_body_access: bool,
+
+    /// Response body size limit in bytes (controlled by ctl:responseBodyLimit)
+    pub(crate) response_body_limit: i64,
+
+    /// Force RESPONSE_BODY variable creation (controlled by ctl:forceResponseBodyVariable)
+    pub(crate) force_response_body_variable: bool,
+
     /// Last phase that was processed
     last_phase: Option<RulePhase>,
 
@@ -238,6 +260,13 @@ impl Transaction {
             response_body: Single::new(RuleVariable::ResponseBody),
             response_args: Map::new_case_sensitive(RuleVariable::ResponseArgs),
             response_xml: Map::new_case_sensitive(RuleVariable::ResponseXML),
+            rule_engine: RuleEngineStatus::On,
+            request_body_access: true,
+            request_body_limit: 131072, // 128KB default
+            force_request_body_variable: false,
+            response_body_access: false,
+            response_body_limit: 524288, // 512KB default
+            force_response_body_variable: false,
             last_phase: None,
             interruption: None,
             captures: Vec::new(),
@@ -384,6 +413,83 @@ impl Transaction {
         if !enabled {
             self.captures.clear();
         }
+    }
+
+    // ===== CTL Action Setters =====
+
+    /// Set rule engine status (used by ctl:ruleEngine).
+    pub fn set_rule_engine(&mut self, status: RuleEngineStatus) {
+        self.rule_engine = status;
+    }
+
+    /// Get rule engine status.
+    pub fn rule_engine(&self) -> RuleEngineStatus {
+        self.rule_engine
+    }
+
+    /// Set request body access (used by ctl:requestBodyAccess).
+    pub fn set_request_body_access(&mut self, enabled: bool) {
+        self.request_body_access = enabled;
+    }
+
+    /// Get request body access status.
+    pub fn request_body_access(&self) -> bool {
+        self.request_body_access
+    }
+
+    /// Set request body limit (used by ctl:requestBodyLimit).
+    pub fn set_request_body_limit(&mut self, limit: i64) {
+        self.request_body_limit = limit;
+    }
+
+    /// Get request body limit.
+    pub fn request_body_limit(&self) -> i64 {
+        self.request_body_limit
+    }
+
+    /// Set force request body variable (used by ctl:forceRequestBodyVariable).
+    pub fn set_force_request_body_variable(&mut self, enabled: bool) {
+        self.force_request_body_variable = enabled;
+    }
+
+    /// Get force request body variable status.
+    pub fn force_request_body_variable(&self) -> bool {
+        self.force_request_body_variable
+    }
+
+    /// Set response body access (used by ctl:responseBodyAccess).
+    pub fn set_response_body_access(&mut self, enabled: bool) {
+        self.response_body_access = enabled;
+    }
+
+    /// Get response body access status.
+    pub fn response_body_access(&self) -> bool {
+        self.response_body_access
+    }
+
+    /// Set response body limit (used by ctl:responseBodyLimit).
+    pub fn set_response_body_limit(&mut self, limit: i64) {
+        self.response_body_limit = limit;
+    }
+
+    /// Get response body limit.
+    pub fn response_body_limit(&self) -> i64 {
+        self.response_body_limit
+    }
+
+    /// Set force response body variable (used by ctl:forceResponseBodyVariable).
+    pub fn set_force_response_body_variable(&mut self, enabled: bool) {
+        self.force_response_body_variable = enabled;
+    }
+
+    /// Get force response body variable status.
+    pub fn force_response_body_variable(&self) -> bool {
+        self.force_response_body_variable
+    }
+
+    /// Get last processed phase.
+    pub fn last_phase(&self) -> Option<RulePhase> {
+        self.last_phase
     }
 
     // ===== HTTP Processing Methods =====
@@ -861,6 +967,40 @@ impl TransactionState for Transaction {
         }
 
         self.captures[index] = Some(value.to_string());
+    }
+
+    // ===== CTL Action Methods =====
+
+    fn ctl_set_rule_engine(&mut self, status: RuleEngineStatus) {
+        self.set_rule_engine(status);
+    }
+
+    fn ctl_set_request_body_access(&mut self, enabled: bool) {
+        self.set_request_body_access(enabled);
+    }
+
+    fn ctl_set_request_body_limit(&mut self, limit: i64) {
+        self.set_request_body_limit(limit);
+    }
+
+    fn ctl_set_force_request_body_variable(&mut self, enabled: bool) {
+        self.set_force_request_body_variable(enabled);
+    }
+
+    fn ctl_set_response_body_access(&mut self, enabled: bool) {
+        self.set_response_body_access(enabled);
+    }
+
+    fn ctl_set_response_body_limit(&mut self, limit: i64) {
+        self.set_response_body_limit(limit);
+    }
+
+    fn ctl_set_force_response_body_variable(&mut self, enabled: bool) {
+        self.set_force_response_body_variable(enabled);
+    }
+
+    fn ctl_last_phase(&self) -> Option<RulePhase> {
+        self.last_phase
     }
 }
 

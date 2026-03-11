@@ -12,6 +12,7 @@
 
 use crate::RuleVariable;
 use crate::actions::{Action, ActionError, ActionType, Rule, TransactionState};
+use std::str::FromStr;
 
 /// CTL command types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -259,16 +260,109 @@ impl Action for CtlAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
-        // TODO: Implement transaction manipulation in Phase 8
-        // This action requires deep transaction system integration which doesn't exist yet.
-        // For now, parsing is validated at rule compilation time.
-        //
-        // When implementing in Phase 8, this should:
-        // - Modify transaction settings (rule engine, audit engine, body limits, etc.)
-        // - Remove rules or rule targets based on ID/tag/message
-        // - Set body processors and debug levels
-        // - See coraza/internal/actions/ctl.go:129-372 for reference implementation
+    fn evaluate(&self, _rule: &Rule, tx: &mut dyn TransactionState) {
+        use crate::RuleEngineStatus;
+        use crate::types::RulePhase;
+
+        match self.command {
+            CtlCommand::RuleEngine => {
+                // Parse and set rule engine status
+                if let Ok(status) = RuleEngineStatus::from_str(&self.value) {
+                    tx.ctl_set_rule_engine(status);
+                }
+                // Note: Errors are already caught during init(), silently ignore here
+            }
+
+            CtlCommand::RequestBodyAccess => {
+                // Only allow changing before request body phase
+                if let Some(phase) = tx.ctl_last_phase()
+                    && phase >= RulePhase::RequestBody
+                {
+                    // Too late to change, silently ignore
+                    return;
+                }
+
+                if let Ok(enabled) = Self::parse_on_off(&self.value) {
+                    tx.ctl_set_request_body_access(enabled);
+                }
+            }
+
+            CtlCommand::RequestBodyLimit => {
+                // Only allow changing before request body phase
+                if let Some(phase) = tx.ctl_last_phase()
+                    && phase >= RulePhase::RequestBody
+                {
+                    return;
+                }
+
+                if let Ok(limit) = self.value.parse::<i64>() {
+                    tx.ctl_set_request_body_limit(limit);
+                }
+            }
+
+            CtlCommand::ForceRequestBodyVariable => {
+                if let Ok(enabled) = Self::parse_on_off(&self.value) {
+                    tx.ctl_set_force_request_body_variable(enabled);
+                }
+            }
+
+            CtlCommand::ResponseBodyAccess => {
+                // Only allow changing before response body phase
+                if let Some(phase) = tx.ctl_last_phase()
+                    && phase >= RulePhase::ResponseBody
+                {
+                    return;
+                }
+
+                if let Ok(enabled) = Self::parse_on_off(&self.value) {
+                    tx.ctl_set_response_body_access(enabled);
+                }
+            }
+
+            CtlCommand::ResponseBodyLimit => {
+                // Only allow changing before response body phase
+                if let Some(phase) = tx.ctl_last_phase()
+                    && phase >= RulePhase::ResponseBody
+                {
+                    return;
+                }
+
+                if let Ok(limit) = self.value.parse::<i64>() {
+                    tx.ctl_set_response_body_limit(limit);
+                }
+            }
+
+            CtlCommand::ForceResponseBodyVariable => {
+                if let Ok(enabled) = Self::parse_on_off(&self.value) {
+                    tx.ctl_set_force_response_body_variable(enabled);
+                }
+            }
+
+            // These commands require WAF-level integration and will be implemented
+            // in Phase 10 when we have full WAF infrastructure
+            CtlCommand::RuleRemoveById
+            | CtlCommand::RuleRemoveByTag
+            | CtlCommand::RuleRemoveByMsg
+            | CtlCommand::RuleRemoveTargetById
+            | CtlCommand::RuleRemoveTargetByTag
+            | CtlCommand::RuleRemoveTargetByMsg => {
+                // Deferred to Phase 10 - requires WAF.Rules access
+            }
+
+            // Body processor and audit settings - deferred to Phase 10
+            CtlCommand::RequestBodyProcessor
+            | CtlCommand::ResponseBodyProcessor
+            | CtlCommand::AuditEngine
+            | CtlCommand::AuditLogParts
+            | CtlCommand::DebugLogLevel => {
+                // Deferred to Phase 10 - requires additional infrastructure
+            }
+
+            // Not supported
+            CtlCommand::HashEngine | CtlCommand::HashEnforcement => {
+                // Hash engine is not supported in Coraza
+            }
+        }
     }
 
     fn action_type(&self) -> ActionType {
@@ -495,5 +589,154 @@ mod tests {
         assert_eq!(CtlAction::parse_on_off("OFF"), Ok(false));
         assert_eq!(CtlAction::parse_on_off("Off"), Ok(false));
         assert!(CtlAction::parse_on_off("maybe").is_err());
+    }
+
+    // CTL Execution Tests
+
+    #[test]
+    fn test_ctl_execute_rule_engine() {
+        use crate::transaction::Transaction;
+
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action.init(&mut rule, "ruleEngine=DetectionOnly").unwrap();
+
+        let mut tx = Transaction::new("test-1");
+        assert_eq!(tx.rule_engine(), crate::RuleEngineStatus::On); // default
+
+        action.evaluate(&rule, &mut tx);
+        assert_eq!(tx.rule_engine(), crate::RuleEngineStatus::DetectionOnly);
+    }
+
+    #[test]
+    fn test_ctl_execute_request_body_access() {
+        use crate::transaction::Transaction;
+
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action.init(&mut rule, "requestBodyAccess=off").unwrap();
+
+        let mut tx = Transaction::new("test-2");
+        assert!(tx.request_body_access()); // default is true
+
+        action.evaluate(&rule, &mut tx);
+        assert!(!tx.request_body_access());
+    }
+
+    #[test]
+    fn test_ctl_execute_request_body_limit() {
+        use crate::transaction::Transaction;
+
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action.init(&mut rule, "requestBodyLimit=256000").unwrap();
+
+        let mut tx = Transaction::new("test-3");
+        assert_eq!(tx.request_body_limit(), 131072); // default is 128KB
+
+        action.evaluate(&rule, &mut tx);
+        assert_eq!(tx.request_body_limit(), 256000);
+    }
+
+    #[test]
+    fn test_ctl_execute_force_request_body_variable() {
+        use crate::transaction::Transaction;
+
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action
+            .init(&mut rule, "forceRequestBodyVariable=on")
+            .unwrap();
+
+        let mut tx = Transaction::new("test-4");
+        assert!(!tx.force_request_body_variable()); // default is false
+
+        action.evaluate(&rule, &mut tx);
+        assert!(tx.force_request_body_variable());
+    }
+
+    #[test]
+    fn test_ctl_execute_response_body_access() {
+        use crate::transaction::Transaction;
+
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action.init(&mut rule, "responseBodyAccess=on").unwrap();
+
+        let mut tx = Transaction::new("test-5");
+        assert!(!tx.response_body_access()); // default is false
+
+        action.evaluate(&rule, &mut tx);
+        assert!(tx.response_body_access());
+    }
+
+    #[test]
+    fn test_ctl_execute_response_body_limit() {
+        use crate::transaction::Transaction;
+
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action.init(&mut rule, "responseBodyLimit=1048576").unwrap();
+
+        let mut tx = Transaction::new("test-6");
+        assert_eq!(tx.response_body_limit(), 524288); // default is 512KB
+
+        action.evaluate(&rule, &mut tx);
+        assert_eq!(tx.response_body_limit(), 1048576);
+    }
+
+    #[test]
+    fn test_ctl_execute_force_response_body_variable() {
+        use crate::transaction::Transaction;
+
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action
+            .init(&mut rule, "forceResponseBodyVariable=on")
+            .unwrap();
+
+        let mut tx = Transaction::new("test-7");
+        assert!(!tx.force_response_body_variable()); // default is false
+
+        action.evaluate(&rule, &mut tx);
+        assert!(tx.force_response_body_variable());
+    }
+
+    #[test]
+    fn test_ctl_phase_restriction_request_body() {
+        use crate::transaction::Transaction;
+
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action.init(&mut rule, "requestBodyAccess=off").unwrap();
+
+        let mut tx = Transaction::new("test-8");
+        // Simulate being in request body phase
+        tx.process_request_body(b"test").unwrap();
+
+        assert!(tx.request_body_access()); // default is true
+
+        // Try to change it - should be silently ignored
+        action.evaluate(&rule, &mut tx);
+        assert!(tx.request_body_access()); // unchanged
+    }
+
+    #[test]
+    fn test_ctl_phase_restriction_response_body() {
+        use crate::transaction::Transaction;
+
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action.init(&mut rule, "responseBodyLimit=1000").unwrap();
+
+        let mut tx = Transaction::new("test-9");
+        // Simulate being in response body phase
+        tx.process_response_body(b"test");
+
+        assert_eq!(tx.response_body_limit(), 524288); // default
+
+        // Try to change it - should be silently ignored
+        action.evaluate(&rule, &mut tx);
+        assert_eq!(tx.response_body_limit(), 524288); // unchanged
     }
 }
