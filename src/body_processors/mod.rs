@@ -30,6 +30,7 @@ use std::io;
 use std::sync::{LazyLock, RwLock};
 
 pub mod raw;
+pub mod urlencoded;
 
 /// Body processor error types
 #[derive(Debug)]
@@ -167,6 +168,10 @@ static BODY_PROCESSORS: LazyLock<RwLock<HashMap<String, BodyProcessorFactory>>> 
         let mut registry = HashMap::new();
         // Register built-in processors
         registry.insert("raw".to_string(), raw::create_raw as BodyProcessorFactory);
+        registry.insert(
+            "urlencoded".to_string(),
+            urlencoded::create_urlencoded as BodyProcessorFactory,
+        );
         RwLock::new(registry)
     });
 
