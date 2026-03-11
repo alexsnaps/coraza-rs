@@ -10,6 +10,7 @@
 pub mod actions;
 pub mod body_processors;
 pub mod collection;
+pub mod config;
 pub mod operators;
 pub mod rules;
 pub mod seclang;
@@ -17,6 +18,7 @@ pub mod transaction;
 pub mod transformations;
 pub mod types;
 pub mod utils;
+pub mod waf;
 
 // Re-export commonly used types
 pub use types::{

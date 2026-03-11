@@ -4,7 +4,7 @@
 
 ## Current Status (as of 2026-03-11)
 
-**Phase 10: WAF Core & Configuration** - READY TO START
+**Phase 10: WAF Core & Configuration** - IN PROGRESS (Step 1/8 complete)
 
 - ✅ **Phase 1:** Foundation types (RuleSeverity, RulePhase, RuleVariable, etc.) - COMPLETE
 - ✅ **Phase 2:** String utilities - COMPLETE
@@ -29,12 +29,12 @@
   - ✅ Step 12: Integration Tests & Documentation - COMPLETE (17 integration tests)
 
 **Quality Metrics:**
-- 1014 tests passing total (↑17 from Phase 9):
-  - 856 unit tests (lib tests)
-  - 17 transaction integration tests (tests/transaction_integration.rs) - NEW
+- 1107 tests passing total (↑37 from Phase 10 Step 1):
+  - 885 unit tests (lib tests) - +29 from Step 1 (14 config + 15 waf)
+  - 17 transaction integration tests (tests/transaction_integration.rs)
   - 39 seclang integration tests (tests/seclang.rs)
   - 17 rule engine integration tests (tests/rule_engine.rs)
-  - 141 doc tests
+  - 149 doc tests (+8 from Step 1)
 - ✅ Clippy clean (0 warnings)
 - ✅ 100% test parity with Go implementation for all implemented features
 
@@ -2306,22 +2306,23 @@ The following features were deferred from earlier phases and will be implemented
 | 7 | Rule Engine | ✅ | 719/719 | Full rule evaluation (3 features deferred) |
 | 8 | SecLang Parser | ✅ | 904/904 | Parser, directives (7 directives deferred) |
 | 9 | Transaction Enhancements | ✅ | 1014/1014 | Body processors, phase processing, integration (11/12 steps) |
-| 10 | WAF Core | ⏳ | - | WAF instance, rule storage, persistence |
+| 10 | WAF Core | 🚧 | 29/139 | WAF instance, configuration (Step 1/8 complete) |
 | 11 | Integration & Testing | ⏳ | - | CRS v4, benchmarks, E2E |
 
 ### Test Coverage
-- **1014 total tests passing:**
-  - 856 unit tests (lib) - Includes all body processors (RAW, URL-encoded, Multipart, JSON, XML) + phase processing + CTL execution + advanced RuleGroup features + deferred actions
-  - 17 transaction integration tests (tests/transaction_integration.rs) - NEW in Phase 9
+- **1107 total tests passing (↑37 from Phase 10 Step 1):**
+  - 885 unit tests (lib) - Includes all body processors (RAW, URL-encoded, Multipart, JSON, XML) + phase processing + CTL execution + advanced RuleGroup features + deferred actions + WAF core + configuration
+  - 17 transaction integration tests (tests/transaction_integration.rs)
   - 39 seclang integration tests (tests/seclang.rs)
   - 17 rule engine integration tests (tests/rule_engine.rs)
-  - 141 doc tests
+  - 149 doc tests
 - **0 clippy warnings**
 - **100% test parity** with Go implementation for all implemented features
   - All 7 Go multipart tests ported with behavioral differences documented
   - All 5 Go JSON test cases ported + 5 additional tests + 3 response processing tests
   - All 5 Go XML test cases ported + 5 additional tests
   - 17 comprehensive transaction integration tests covering end-to-end scenarios
+  - 29 WAF core and configuration tests (Phase 10 Step 1)
 
 ### Features Implemented
 ✅ **30 Transformations** (all from Go codebase)
@@ -3580,9 +3581,10 @@ Created comprehensive integration test suite in `tests/transaction_integration.r
 
 ## Phase 10: WAF Core & Configuration - DETAILED STEP-BY-STEP PLAN
 
-**Status:** ⏳ READY TO START
+**Status:** 🚧 IN PROGRESS (Step 1/8 complete)
+**Started:** 2026-03-11
 **Estimated Duration:** 10-12 days
-**Completion Target:** 2026-03-21
+**Completion Target:** 2026-03-23
 
 ### Overview
 
@@ -3613,77 +3615,94 @@ Implement the top-level WAF instance that manages configuration, rule storage, a
 
 ---
 
-### Step 1: WAF Core Structure & Configuration (Days 1-2)
+### Step 1: WAF Core Structure & Configuration ✅ COMPLETE
 
+**Status:** ✅ COMPLETE (2026-03-11)
 **Goal:** Implement the main WAF struct and configuration system
 
-**Components:**
+**Implementation Details:**
 
-**1.1 WAF Struct (`src/waf.rs`):**
-```rust
-pub struct Waf {
-    /// Compiled rule groups organized by phase
-    rules: Arc<RuleGroup>,
+**1.1 Configuration System (`src/config.rs` - 389 lines):**
+- ✅ `WafConfig` struct with 19 configuration fields:
+  - Rule engine settings (on/off/detection_only)
+  - Request/response body access and limits
+  - Request body in-memory limit
+  - Body limit actions (reject/process_partial)
+  - Response body MIME type filtering
+  - Audit engine configuration
+  - Audit log parts and format
+  - Collection timeout
+  - Debug log level (0-9)
+  - Temporary directory
+  - Argument separator and limit
+  - Web app ID and sensor ID
+- ✅ Builder pattern with immutable `with_*` methods
+- ✅ Getter methods for all configuration values
+- ✅ Default implementation matching Go defaults (128 MB request, 512 KB response)
+- ✅ 14 comprehensive unit tests
 
-    /// Configuration settings
-    config: WafConfig,
+**1.2 WAF Core (`src/waf.rs` - 421 lines):**
+- ✅ `Waf` struct with configuration and Arc-wrapped rule storage:
+  ```rust
+  pub struct Waf {
+      config: WafConfig,
+      rules: Arc<RuleGroup>,
+  }
+  ```
+- ✅ Separated error types for better API design:
+  - `ConfigError` - Configuration validation errors (only during WAF creation)
+  - `WafError` - Runtime errors (rule loading, audit logging)
+- ✅ Transaction factory methods:
+  - `new_transaction()` - Auto-generated ID using `random_string(19)`
+  - `new_transaction_with_id()` - Custom ID
+- ✅ Configuration inheritance to transactions
+- ✅ Configuration validation:
+  - Body limits must be non-negative
+  - Collection timeout must be non-negative
+  - Debug log level must be 0-9
+  - Argument limit must be > 0
+- ✅ 15 comprehensive unit tests
 
-    /// Audit logger (if enabled)
-    audit_logger: Option<Box<dyn AuditLogger>>,
+**Key Design Decisions:**
 
-    /// Persistent collections storage
-    persistent_collections: Arc<RwLock<PersistentCollectionStore>>,
-}
+1. **Separated ConfigError from WafError:**
+   - ConfigError: Only occurs during `Waf::new()` - configuration validation failures
+   - WafError: Runtime errors after WAF is created - rule loading, audit logging
+   - Cleaner API: `Waf::new(config) -> Result<Waf, ConfigError>`
 
-impl Waf {
-    pub fn new(config: WafConfig) -> Result<Self, WafError>;
-    pub fn new_transaction(&self) -> Transaction;
-    pub fn new_transaction_with_id(&self, id: String) -> Transaction;
-}
-```
+2. **Immutable Configuration:**
+   - WafConfig uses builder pattern
+   - Each `with_*` method returns new instance
+   - Prevents accidental modification
 
-**1.2 Configuration System (`src/config.rs`):**
-```rust
-pub struct WafConfig {
-    // Rule engine settings
-    pub rule_engine: RuleEngineStatus,
+3. **Thread-Safe Design:**
+   - Arc-wrapped RuleGroup for efficient sharing
+   - Configuration copied to each transaction
+   - Prepares for concurrent transaction processing
 
-    // Body processing
-    pub request_body_access: bool,
-    pub request_body_limit: i64,
-    pub response_body_access: bool,
-    pub response_body_limit: i64,
+**Source Files:**
+- `coraza/waf.go` (390 lines)
+- `coraza/internal/corazawaf/waf.go` (1200+ lines)
+- `coraza/config.go` (225 lines)
 
-    // Audit logging
-    pub audit_engine: AuditEngineStatus,
-    pub audit_log_parts: Vec<AuditLogPart>,
-    pub audit_log_path: String,
+**Target Files:**
+- `src/config.rs` (389 lines)
+- `src/waf.rs` (421 lines)
 
-    // Collection timeouts
-    pub collection_timeout: i64,
+**Tests:** 29 total (14 config + 15 waf)
+- ✅ Configuration builder tests
+- ✅ Configuration validation tests
+- ✅ WAF creation tests
+- ✅ Transaction factory tests
+- ✅ Configuration inheritance tests
+- ✅ Error display tests
 
-    // Debug settings
-    pub debug_log_level: i32,
-}
+**Test Results:**
+- ✅ All 29 tests passing
+- ✅ 0 clippy warnings
+- ✅ Full documentation with examples
 
-pub struct WafConfigBuilder {
-    config: WafConfig,
-}
-
-impl WafConfigBuilder {
-    pub fn new() -> Self;
-    pub fn rule_engine(mut self, status: RuleEngineStatus) -> Self;
-    pub fn request_body_limit(mut self, limit: i64) -> Self;
-    pub fn audit_engine(mut self, status: AuditEngineStatus) -> Self;
-    pub fn build(self) -> WafConfig;
-}
-```
-
-**Source:** `coraza/waf.go`, `coraza/seclang/parser.go` (config directives)
-**Target:** `src/waf.rs` (~400 lines), `src/config.rs` (~300 lines)
-**Tests:** 15 tests (WAF creation, config builder, transaction factory)
-
-**Deliverable:** WAF infrastructure with configuration system
+**Deliverable:** ✅ WAF infrastructure with configuration system - COMPLETE
 
 ---
 
