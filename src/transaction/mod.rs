@@ -204,7 +204,13 @@ pub struct Transaction {
     last_phase: Option<RulePhase>,
 
     /// Current interruption (if any disruptive action was triggered)
-    interruption: Option<Interruption>,
+    pub(crate) interruption: Option<Interruption>,
+
+    /// Number of rules to skip in current phase (controlled by skip action)
+    pub(crate) skip: i32,
+
+    /// Marker ID to skip to (controlled by skipAfter action)
+    pub(crate) skip_after: String,
 
     /// Captured values from operators (rx, pm)
     captures: Vec<Option<String>>,
@@ -269,6 +275,8 @@ impl Transaction {
             force_response_body_variable: false,
             last_phase: None,
             interruption: None,
+            skip: 0,
+            skip_after: String::new(),
             captures: Vec::new(),
             capturing: false,
         }
@@ -1001,6 +1009,16 @@ impl TransactionState for Transaction {
 
     fn ctl_last_phase(&self) -> Option<RulePhase> {
         self.last_phase
+    }
+
+    // ===== Flow Control Methods =====
+
+    fn set_skip(&mut self, count: i32) {
+        self.skip = count;
+    }
+
+    fn set_skip_after(&mut self, marker: &str) {
+        self.skip_after = marker.to_string();
     }
 }
 

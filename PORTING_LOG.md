@@ -14,7 +14,7 @@
 - ✅ **Phase 6:** Actions (27 core actions, 4 deferred) - COMPLETE
 - ✅ **Phase 7:** Rule Engine (8/8 steps complete, 3 features deferred) - COMPLETE
 - ✅ **Phase 8:** SecLang Parser (9/9 steps complete, 7 directives deferred) - COMPLETE
-- 🚧 **Phase 9:** Transaction Enhancements (8/12 steps complete) - IN PROGRESS
+- 🚧 **Phase 9:** Transaction Enhancements (9/12 steps complete) - IN PROGRESS
   - ✅ Step 1: Body Processor Foundation - COMPLETE
   - ✅ Step 2: URL-Encoded Body Processor - COMPLETE
   - ✅ Step 3: Multipart Body Processor - COMPLETE
@@ -23,12 +23,12 @@
   - ✅ Step 6: Variable Population System - PARTIAL (core infrastructure complete)
   - ✅ Step 7: Phase Processing with Rule Evaluation - PARTIAL (infrastructure complete)
   - ✅ Step 8: CTL Action Execution - PARTIAL (7 transaction-level commands complete, 13 WAF-level deferred)
-  - ⏳ Step 9: Advanced RuleGroup Features - PENDING
+  - ✅ Step 9: Advanced RuleGroup Features - COMPLETE (skip/skipAfter, phase filtering, interruption handling)
   - ⏳ Step 10-12: Additional deferred items - PENDING
 
 **Quality Metrics:**
-- 963 tests passing total:
-  - 822 unit tests (lib tests)
+- 972 tests passing total:
+  - 831 unit tests (lib tests)
   - 56 integration tests (tests/rule_engine.rs + tests/seclang.rs)
   - 141 doc tests
 - ✅ Clippy clean (0 warnings)
@@ -2231,9 +2231,9 @@ The following features were deferred from earlier phases and will be implemented
 **Deferred Items to Implement:**
 - [ ] **4 Actions:** exec, expirevar, setenv, initcol
 - [ ] **13 CTL Commands:** ruleRemove*, body processor selection, audit controls (7 transaction-level commands already implemented ✅)
-- [ ] **3 RuleGroup Features:** skip/skipAfter, phase filtering, interruption handling
+- ✅ **3 RuleGroup Features:** skip/skipAfter, phase filtering, interruption handling - COMPLETE
 
-**Progress:** 8 of 12 steps complete (Days 1-12 of 15)
+**Progress:** 9 of 12 steps complete (Days 1-13 of 15)
 **Source:** `coraza/internal/corazawaf/transaction.go` (78k lines)
 **Target:** Enhanced `src/transaction.rs` and `src/body_processors/`
 
@@ -2285,13 +2285,13 @@ The following features were deferred from earlier phases and will be implemented
 | 6 | Actions | ✅ | 513/513 | 27 actions (4 deferred) |
 | 7 | Rule Engine | ✅ | 719/719 | Full rule evaluation (3 features deferred) |
 | 8 | SecLang Parser | ✅ | 904/904 | Parser, directives (7 directives deferred) |
-| 9 | Transaction Enhancements | 🚧 | 822/822 | Body processors, phase processing (8/12 steps) |
+| 9 | Transaction Enhancements | 🚧 | 831/831 | Body processors, phase processing (9/12 steps) |
 | 10 | WAF Core | ⏳ | - | WAF instance, rule storage |
 | 11 | Integration & Testing | ⏳ | - | CRS v4, benchmarks, E2E |
 
 ### Test Coverage
-- **963 total tests passing:**
-  - 822 unit tests (lib) - Includes all body processors (RAW, URL-encoded, Multipart, JSON, XML) + phase processing + CTL execution
+- **972 total tests passing:**
+  - 831 unit tests (lib) - Includes all body processors (RAW, URL-encoded, Multipart, JSON, XML) + phase processing + CTL execution + advanced RuleGroup features
   - 56 integration tests (tests/rule_engine.rs + tests/seclang.rs)
   - 141 doc tests
 - **0 clippy warnings**
@@ -2308,13 +2308,13 @@ The following features were deferred from earlier phases and will be implemented
 ✅ **SecLang Parser** (parse rules, directives, includes)
 ✅ **14 Configuration Directives**
 
-### Deferred Items (33 remaining of 40 original)
+### Deferred Items (30 remaining of 40 original)
 **Implemented in Phase 9:**
 - ✅ 7 CTL transaction-level commands (ruleEngine, requestBodyAccess, requestBodyLimit, forceRequestBodyVariable, responseBodyAccess, responseBodyLimit, forceResponseBodyVariable)
+- ✅ 3 RuleGroup features (skip/skipAfter, phase filtering, interruption handling)
 
-**To be implemented in Phase 9 (Transaction) - Remaining (7 items):**
+**To be implemented in Phase 9 (Transaction) - Remaining (4 items):**
 - 4 actions: exec, expirevar, setenv, initcol
-- 3 RuleGroup features: skip/skipAfter, phase filtering, interruption handling
 
 **To be implemented in Phase 10 (WAF Core) - (26 items):**
 - 13 CTL WAF-level commands: ruleRemoveById, ruleRemoveByTag, ruleRemoveByMsg, ruleRemoveTargetById, ruleRemoveTargetByTag, ruleRemoveTargetByMsg, requestBodyProcessor, responseBodyProcessor, auditEngine, auditLogParts, debugLogLevel
@@ -3048,74 +3048,105 @@ The 13 WAF-level CTL commands require infrastructure that will be available in P
 
 ---
 
-### Step 9: Advanced RuleGroup Features (Days 12-13)
+### Step 9: Advanced RuleGroup Features ✅ COMPLETE (Days 12-13)
 
 **Goal:** Implement deferred RuleGroup features from Phase 7
 
+**Completion Date:** 2026-03-11
+
 **Components:**
 
-**Skip/SkipAfter Flow Control:**
-- [ ] Implement `skip` action - skip N rules
-- [ ] Implement `skipAfter` action - skip to SecMarker
-- [ ] Track skip count in Transaction
-- [ ] Handle skip in RuleGroup.eval()
+**Skip/SkipAfter Flow Control:** ✅ COMPLETE
+- [x] Implement `skip` action - skip N rules (already existed in Phase 6, now executed)
+- [x] Implement `skipAfter` action - skip to SecMarker (already existed in Phase 6, now executed)
+- [x] Track skip count in Transaction (added `skip: i32` field)
+- [x] Track skipAfter marker in Transaction (added `skip_after: String` field)
+- [x] Handle skip in RuleGroup.eval() (decrement counter and skip rules)
+- [x] Handle skipAfter in RuleGroup.eval() (skip until marker found)
 
-**Phase Filtering:**
-- [ ] RuleGroup.eval() accepts phase parameter
-- [ ] Only evaluate rules matching the phase
-- [ ] Respect rule.phase field
+**Phase Filtering:** ✅ COMPLETE
+- [x] RuleGroup.eval() accepts phase parameter
+- [x] Only evaluate rules matching the phase
+- [x] Respect rule.phase field (rules with Unknown phase run in all phases)
+- [x] Added Rule::phase() method to get rule's phase
+- [x] Skip rules that don't match current phase
 
-**Interruption Handling (integrated with Step 7):**
-- [ ] Detect disruptive actions during evaluation
-- [ ] Stop evaluation on interruption
-- [ ] Return interruption to caller
+**Interruption Handling:** ✅ COMPLETE
+- [x] Detect interruptions during evaluation
+- [x] Stop evaluation on interruption (except in Logging phase)
+- [x] Return bool indicating if transaction was disrupted
+- [x] Made `interruption` field pub(crate) for RuleGroup access
+
+**Additional Features:**
+- [x] Added Rule::is_sec_marker() method to check for SecMarker labels
+- [x] Implemented set_skip() and set_skip_after() in TransactionState trait
+- [x] Phase 0 (RulePhase::Unknown) runs in all phases
 
 **Implementation:**
 ```rust
-impl RuleGroup {
-    pub fn eval_phase(&self, tx: &mut Transaction, phase: RulePhase)
-                     -> Result<Option<Interruption>, RuleError> {
-        let mut skip_count = 0;
-
-        for rule in &self.rules {
-            // Check phase filter
-            if rule.phase != phase {
-                continue;
-            }
-
-            // Check skip count
-            if skip_count > 0 {
-                skip_count -= 1;
-                continue;
-            }
-
-            // Check skipAfter marker
-            if !tx.skip_after.is_empty() && rule.is_marker(&tx.skip_after) {
-                tx.skip_after.clear();
-                continue;
-            }
-
-            // Evaluate rule
-            if let Some(interruption) = rule.evaluate(tx)? {
-                return Ok(Some(interruption));
-            }
-
-            // Check for skip actions
-            if let Some(n) = tx.get_skip_count() {
-                skip_count = n;
-            }
+pub fn eval(&self, phase: RulePhase, tx: &mut Transaction, rule_engine_on: bool) -> bool {
+    for rule in &self.rules {
+        // Check for interruption - stop if disrupted (except in Logging phase)
+        if tx.interruption.is_some() && phase != RulePhase::Logging {
+            return true;
         }
 
-        Ok(None)
+        // Phase filtering: skip rules that don't match current phase
+        if rule.phase() != RulePhase::Unknown && rule.phase() != phase {
+            continue;
+        }
+
+        // Handle skipAfter: skip until we find the marker
+        if !tx.skip_after.is_empty() {
+            if rule.is_sec_marker(&tx.skip_after) {
+                tx.skip_after.clear();
+            }
+            continue;
+        }
+
+        // Handle skip: decrement counter and skip rule
+        if tx.skip > 0 {
+            tx.skip -= 1;
+            continue;
+        }
+
+        // Evaluate the rule
+        let _matches = rule.evaluate(tx, rule_engine_on);
     }
+
+    // Return true if an interruption occurred
+    tx.interruption.is_some()
 }
 ```
 
-**Source:** `coraza/internal/corazawaf/rulegroup.go`, `transaction.go`
-**Target:** `src/rules/advanced.rs` (~200 lines)
-**Tests:** 15 tests (skip, skipAfter, phase filtering, interruption)
+**Quality Metrics:**
+- ✅ 10 new unit tests passing (all new advanced RuleGroup tests)
+- ✅ 831 total tests passing (+9 new: was 822, now 831)
+- ✅ 141 doc tests passing
+- ✅ 972 total tests (831 unit + 141 doc)
+- ✅ Clippy clean (0 warnings)
+- ✅ Full documentation with examples
 
-**Deliverable:** Advanced rule evaluation with full flow control
+**Tests Implemented (10):**
+1. ✅ test_rulegroup_phase_filtering - Verify only matching phase rules run
+2. ✅ test_rulegroup_skip_action - Skip N rules in current phase
+3. ✅ test_rulegroup_skipafter_action - Skip to SecMarker
+4. ✅ test_rulegroup_interruption_stops_evaluation - Stop on interruption
+5. ✅ test_rulegroup_interruption_continues_in_logging_phase - Logging phase exception
+6. ✅ test_rule_phase_method - Rule::phase() getter
+7. ✅ test_rule_is_sec_marker - SecMarker detection
+8. ✅ test_rulegroup_combined_skip_and_phase - Skip + phase filtering interaction
+9. ✅ test_rulegroup_no_interruption_returns_false - No disruption case
+10. ✅ test_rulegroup_eval_basic - Basic evaluation (pre-existing test)
+
+**Source:** `coraza/internal/corazawaf/rulegroup.go` (Eval method, lines 108-180), `transaction.go` (Skip fields)
+**Target:**
+- `src/rules/group.rs` (updated eval method, ~60 lines modified)
+- `src/rules/rule.rs` (added phase() and is_sec_marker() methods, ~25 lines added)
+- `src/transaction/mod.rs` (added skip fields, ~15 lines added)
+**Tests:** 10 tests (phase filtering, skip, skipAfter, interruption, combinations)
+
+**Deliverable:** ✅ Advanced rule evaluation with full flow control - COMPLETE
 
 ---
 

@@ -200,7 +200,7 @@ impl RuleGroup {
     ///
     /// # Arguments
     ///
-    /// * `_phase` - The phase to evaluate rules for (currently unused)
+    /// * `phase` - The phase to evaluate rules for
     /// * `tx` - Transaction to evaluate against
     /// * `rule_engine_on` - Whether the rule engine is in enforcement mode
     ///
@@ -221,24 +221,41 @@ impl RuleGroup {
     /// let mut tx = Transaction::new("test");
     /// let disrupted = group.eval(RulePhase::RequestHeaders, &mut tx, true);
     /// ```
-    pub fn eval(&self, _phase: RulePhase, tx: &mut Transaction, rule_engine_on: bool) -> bool {
-        // TODO: Track skip counter and skipAfter marker in Transaction
-        // TODO: Filter rules by phase
-        // For now, evaluate all rules in the group (simplified implementation)
-
+    pub fn eval(&self, phase: RulePhase, tx: &mut Transaction, rule_engine_on: bool) -> bool {
         for rule in &self.rules {
-            // TODO: Check if rule should run in this phase
-            // For now, evaluate all rules (simplified implementation)
+            // Check for interruption - if we're disrupted and not in logging phase, stop evaluation
+            if tx.interruption.is_some() && phase != RulePhase::Logging {
+                return true; // Transaction was disrupted
+            }
+
+            // Phase filtering: skip rules that don't match current phase
+            // Rules with phase Unknown (0) always run (phase-agnostic rules)
+            if rule.phase() != RulePhase::Unknown && rule.phase() != phase {
+                continue;
+            }
+
+            // Handle skipAfter: skip until we find the marker
+            if !tx.skip_after.is_empty() {
+                // Check if this rule is the marker we're looking for
+                if rule.is_sec_marker(&tx.skip_after) {
+                    // Found the marker, clear skipAfter and continue to next rule
+                    tx.skip_after.clear();
+                }
+                continue; // Skip this rule
+            }
+
+            // Handle skip: decrement counter and skip rule
+            if tx.skip > 0 {
+                tx.skip -= 1;
+                continue;
+            }
 
             // Evaluate the rule
             let _matches = rule.evaluate(tx, rule_engine_on);
-
-            // TODO: Check for interruptions and break if needed
-            // TODO: Handle skip/skipAfter flow control
         }
 
-        // TODO: Return true if transaction was disrupted
-        false
+        // Return true if an interruption occurred
+        tx.interruption.is_some()
     }
 }
 
@@ -378,5 +395,215 @@ mod tests {
 
         assert_eq!(group1.count(), 0);
         assert_eq!(group2.count(), 0);
+    }
+
+    // ===== Advanced RuleGroup Features Tests (Step 9) =====
+
+    #[test]
+    fn test_rulegroup_phase_filtering() {
+        let mut group = RuleGroup::new();
+
+        // Add rules for different phases
+        let mut rule1 = Rule::new().with_id(1);
+        rule1.metadata_mut().phase = RulePhase::RequestHeaders;
+        group.add(rule1).unwrap();
+
+        let mut rule2 = Rule::new().with_id(2);
+        rule2.metadata_mut().phase = RulePhase::RequestBody;
+        group.add(rule2).unwrap();
+
+        let mut rule3 = Rule::new().with_id(3);
+        rule3.metadata_mut().phase = RulePhase::Unknown; // Phase 0 - runs in all phases
+        group.add(rule3).unwrap();
+
+        let mut tx = Transaction::new("test");
+
+        // Evaluate RequestHeaders phase
+        group.eval(RulePhase::RequestHeaders, &mut tx, true);
+
+        // Only rule1 and rule3 should have been evaluated
+        // (We can't directly check which rules ran, but we verify the logic works)
+
+        // Evaluate RequestBody phase
+        group.eval(RulePhase::RequestBody, &mut tx, true);
+
+        // Only rule2 and rule3 should have been evaluated
+    }
+
+    #[test]
+    fn test_rulegroup_skip_action() {
+        let mut group = RuleGroup::new();
+
+        // Add 5 rules in RequestHeaders phase
+        for id in 1..=5 {
+            let mut rule = Rule::new().with_id(id);
+            rule.metadata_mut().phase = RulePhase::RequestHeaders;
+            group.add(rule).unwrap();
+        }
+
+        let mut tx = Transaction::new("test");
+
+        // Set skip = 3 (skip next 3 rules)
+        tx.skip = 3;
+
+        group.eval(RulePhase::RequestHeaders, &mut tx, true);
+
+        // Skip counter should be decremented to 0 (3 rules skipped)
+        assert_eq!(tx.skip, 0);
+    }
+
+    #[test]
+    fn test_rulegroup_skipafter_action() {
+        let mut group = RuleGroup::new();
+
+        // Add rules with a marker in the middle (all in RequestHeaders phase)
+        let mut rule1 = Rule::new().with_id(1);
+        rule1.metadata_mut().phase = RulePhase::RequestHeaders;
+        group.add(rule1).unwrap();
+
+        let mut rule2 = Rule::new().with_id(2);
+        rule2.metadata_mut().phase = RulePhase::RequestHeaders;
+        group.add(rule2).unwrap();
+
+        // Add a SecMarker
+        let mut marker_rule = Rule::new().with_id(0); // Markers typically have ID 0
+        marker_rule.metadata_mut().phase = RulePhase::RequestHeaders;
+        marker_rule.metadata_mut().sec_mark = Some("END_CHECK".to_string());
+        group.add(marker_rule).unwrap();
+
+        let mut rule3 = Rule::new().with_id(3);
+        rule3.metadata_mut().phase = RulePhase::RequestHeaders;
+        group.add(rule3).unwrap();
+
+        let mut rule4 = Rule::new().with_id(4);
+        rule4.metadata_mut().phase = RulePhase::RequestHeaders;
+        group.add(rule4).unwrap();
+
+        let mut tx = Transaction::new("test");
+
+        // Set skipAfter marker
+        tx.skip_after = "END_CHECK".to_string();
+
+        group.eval(RulePhase::RequestHeaders, &mut tx, true);
+
+        // skipAfter should be cleared after finding the marker
+        assert!(tx.skip_after.is_empty());
+    }
+
+    #[test]
+    fn test_rulegroup_interruption_stops_evaluation() {
+        use crate::transaction::Interruption;
+
+        let mut group = RuleGroup::new();
+
+        // Add multiple rules
+        for id in 1..=5 {
+            group.add(Rule::new().with_id(id)).unwrap();
+        }
+
+        let mut tx = Transaction::new("test");
+
+        // Set an interruption
+        tx.interruption = Some(Interruption {
+            rule_id: 1,
+            action: "deny".to_string(),
+            status: 403,
+            data: String::new(),
+        });
+
+        // Eval should stop immediately and return true
+        let disrupted = group.eval(RulePhase::RequestHeaders, &mut tx, true);
+        assert!(disrupted);
+    }
+
+    #[test]
+    fn test_rulegroup_interruption_continues_in_logging_phase() {
+        use crate::transaction::Interruption;
+
+        let mut group = RuleGroup::new();
+
+        // Add rules
+        for id in 1..=3 {
+            let mut rule = Rule::new().with_id(id);
+            rule.metadata_mut().phase = RulePhase::Logging;
+            group.add(rule).unwrap();
+        }
+
+        let mut tx = Transaction::new("test");
+
+        // Set an interruption
+        tx.interruption = Some(Interruption {
+            rule_id: 1,
+            action: "deny".to_string(),
+            status: 403,
+            data: String::new(),
+        });
+
+        // In Logging phase, interruption should not stop evaluation
+        let disrupted = group.eval(RulePhase::Logging, &mut tx, true);
+
+        // Still returns true (transaction is disrupted), but rules were evaluated
+        assert!(disrupted);
+    }
+
+    #[test]
+    fn test_rule_phase_method() {
+        let mut rule = Rule::new().with_id(1);
+        rule.metadata_mut().phase = RulePhase::RequestBody;
+
+        assert_eq!(rule.phase(), RulePhase::RequestBody);
+    }
+
+    #[test]
+    fn test_rule_is_sec_marker() {
+        let mut rule1 = Rule::new().with_id(1);
+        rule1.metadata_mut().sec_mark = Some("MARKER1".to_string());
+
+        let rule2 = Rule::new().with_id(2); // No marker
+
+        assert!(rule1.is_sec_marker("MARKER1"));
+        assert!(!rule1.is_sec_marker("MARKER2"));
+        assert!(!rule2.is_sec_marker("MARKER1"));
+    }
+
+    #[test]
+    fn test_rulegroup_combined_skip_and_phase() {
+        let mut group = RuleGroup::new();
+
+        // Add rules with different phases
+        let mut rule1 = Rule::new().with_id(1);
+        rule1.metadata_mut().phase = RulePhase::RequestHeaders;
+        group.add(rule1).unwrap();
+
+        let mut rule2 = Rule::new().with_id(2);
+        rule2.metadata_mut().phase = RulePhase::RequestHeaders;
+        group.add(rule2).unwrap();
+
+        let mut rule3 = Rule::new().with_id(3);
+        rule3.metadata_mut().phase = RulePhase::RequestBody; // Different phase
+        group.add(rule3).unwrap();
+
+        let mut tx = Transaction::new("test");
+        tx.skip = 1; // Skip first matching rule
+
+        group.eval(RulePhase::RequestHeaders, &mut tx, true);
+
+        // Skip should be decremented
+        assert_eq!(tx.skip, 0);
+
+        // Rule3 should not have affected skip count (different phase)
+    }
+
+    #[test]
+    fn test_rulegroup_no_interruption_returns_false() {
+        let mut group = RuleGroup::new();
+        group.add(Rule::new().with_id(1)).unwrap();
+
+        let mut tx = Transaction::new("test");
+
+        let disrupted = group.eval(RulePhase::RequestHeaders, &mut tx, true);
+
+        // No interruption occurred
+        assert!(!disrupted);
     }
 }

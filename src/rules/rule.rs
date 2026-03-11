@@ -10,6 +10,7 @@
 //! - Action execution
 //! - Rule chaining (AND logic)
 
+use crate::RulePhase;
 use crate::actions::Rule as RuleMetadata;
 use crate::collection::MatchData;
 use crate::operators::TransactionState;
@@ -145,6 +146,26 @@ impl Rule {
     /// Get the chained rule (if any).
     pub fn chain(&self) -> Option<&Rule> {
         self.chain.as_deref()
+    }
+
+    /// Get the rule's processing phase.
+    pub fn phase(&self) -> RulePhase {
+        self.metadata.phase
+    }
+
+    /// Check if this rule is a SecMarker with the given label.
+    ///
+    /// SecMarkers are used for flow control with skipAfter actions.
+    ///
+    /// # Arguments
+    ///
+    /// * `marker` - The marker label to check for
+    ///
+    /// # Returns
+    ///
+    /// `true` if this rule is a SecMarker with the given label
+    pub fn is_sec_marker(&self, marker: &str) -> bool {
+        self.metadata.sec_mark.as_deref() == Some(marker)
     }
 
     /// Evaluate the rule against a transaction.
