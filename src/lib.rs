@@ -8,6 +8,7 @@
 //! SecLang rulesets and is 100% compatible with the OWASP Core Rule Set v4.
 
 pub mod actions;
+pub mod body_processors;
 pub mod collection;
 pub mod operators;
 pub mod rules;

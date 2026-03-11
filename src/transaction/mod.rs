@@ -61,11 +61,23 @@ pub struct Transaction {
     /// REMOTE_ADDR
     remote_addr: Single,
 
+    /// REQUEST_BODY (raw body content)
+    pub(crate) request_body: Single,
+
+    /// REQUEST_BODY_LENGTH
+    pub(crate) request_body_length: Single,
+
     /// Captured values from operators (rx, pm)
     captures: Vec<Option<String>>,
 
     /// Whether capturing is enabled
     capturing: bool,
+}
+
+impl Default for Transaction {
+    fn default() -> Self {
+        Self::new("default")
+    }
 }
 
 impl Transaction {
@@ -82,6 +94,8 @@ impl Transaction {
             request_uri: Single::new(RuleVariable::RequestURI),
             request_method: Single::new(RuleVariable::RequestMethod),
             remote_addr: Single::new(RuleVariable::RemoteAddr),
+            request_body: Single::new(RuleVariable::RequestBody),
+            request_body_length: Single::new(RuleVariable::RequestBodyLength),
             captures: Vec::new(),
             capturing: false,
         }
