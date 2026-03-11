@@ -182,6 +182,40 @@ impl RuleGroup {
             .retain(|r| !r.metadata().tags.contains(&tag.to_string()));
     }
 
+    /// Update rules matching a tag with a callback.
+    ///
+    /// Returns the number of rules updated.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::rules::{RuleGroup, Rule, VariableSpec};
+    /// use coraza::RuleVariable;
+    ///
+    /// let mut group = RuleGroup::new();
+    /// let mut rule = Rule::new().with_id(1);
+    /// rule.metadata_mut().tags.push("attack".to_string());
+    /// group.add(rule).unwrap();
+    ///
+    /// let count = group.update_by_tag("attack", |rule| {
+    ///     rule.set_variables(vec![VariableSpec::new(RuleVariable::Args)]);
+    /// });
+    /// assert_eq!(count, 1);
+    /// ```
+    pub fn update_by_tag<F>(&mut self, tag: &str, mut update_fn: F) -> usize
+    where
+        F: FnMut(&mut Rule),
+    {
+        let mut count = 0;
+        for rule in &mut self.rules {
+            if rule.metadata().tags.contains(&tag.to_string()) {
+                update_fn(rule);
+                count += 1;
+            }
+        }
+        count
+    }
+
     /// Get all rules in the group.
     pub fn get_rules(&self) -> &[Rule] {
         &self.rules

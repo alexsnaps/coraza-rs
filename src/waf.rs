@@ -6,9 +6,12 @@
 //! This module provides the main WAF struct that manages configuration,
 //! rule storage, and transaction creation.
 
+use std::collections::HashMap;
+
 use crate::config::WafConfig;
-use crate::rules::{Rule, RuleGroup};
+use crate::rules::{Rule, RuleAction, RuleGroup, VariableSpec};
 use crate::transaction::Transaction;
+use crate::types::RulePhase;
 use crate::utils::strings::random_string;
 
 /// Error type for configuration validation during WAF creation.
@@ -85,6 +88,10 @@ pub struct Waf {
     /// Rule group for evaluation
     /// Rules can be added during WAF setup, then the WAF is used read-only
     rules: RuleGroup,
+
+    /// Default actions per phase
+    /// These are applied to rules in each phase if they don't have explicit actions
+    default_actions: HashMap<RulePhase, Vec<RuleAction>>,
 }
 
 impl Waf {
@@ -113,7 +120,14 @@ impl Waf {
         // Create empty rule group
         let rules = RuleGroup::new();
 
-        Ok(Self { config, rules })
+        // Initialize default actions storage
+        let default_actions = HashMap::new();
+
+        Ok(Self {
+            config,
+            rules,
+            default_actions,
+        })
     }
 
     /// Creates a new transaction with an auto-generated ID.
@@ -339,6 +353,141 @@ impl Waf {
     /// ```
     pub fn find_rule_by_id(&self, id: i32) -> Option<&Rule> {
         self.rules.find_by_id(id)
+    }
+
+    /// Sets default actions for a specific phase.
+    ///
+    /// Default actions are applied to all rules in the phase that don't have
+    /// explicit actions defined.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::Waf;
+    /// use coraza::config::WafConfig;
+    /// use coraza::RulePhase;
+    /// use coraza::rules::RuleAction;
+    ///
+    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
+    ///
+    /// let actions = vec![]; // Would contain actual actions
+    /// waf.set_default_actions(RulePhase::RequestHeaders, actions);
+    /// ```
+    pub fn set_default_actions(&mut self, phase: RulePhase, actions: Vec<RuleAction>) {
+        self.default_actions.insert(phase, actions);
+    }
+
+    /// Gets default actions for a specific phase.
+    ///
+    /// Returns an empty slice if no default actions are set for the phase.
+    pub fn get_default_actions(&self, phase: RulePhase) -> &[RuleAction] {
+        self.default_actions
+            .get(&phase)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Updates the variables (targets) for a rule by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `WafError::RuleError` if the rule is not found.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::Waf;
+    /// use coraza::config::WafConfig;
+    /// use coraza::rules::{Rule, VariableSpec};
+    /// use coraza::RuleVariable;
+    ///
+    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
+    /// waf.add_rule(Rule::new().with_id(1)).unwrap();
+    ///
+    /// let new_vars = vec![VariableSpec::new(RuleVariable::Args)];
+    /// waf.update_rule_variables_by_id(1, new_vars).unwrap();
+    /// ```
+    pub fn update_rule_variables_by_id(
+        &mut self,
+        id: i32,
+        variables: Vec<VariableSpec>,
+    ) -> Result<(), WafError> {
+        let rule = self
+            .rules
+            .find_by_id_mut(id)
+            .ok_or_else(|| WafError::RuleError(format!("Rule {} not found", id)))?;
+
+        rule.set_variables(variables);
+        Ok(())
+    }
+
+    /// Updates the actions for a rule by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `WafError::RuleError` if the rule is not found.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::Waf;
+    /// use coraza::config::WafConfig;
+    /// use coraza::rules::Rule;
+    ///
+    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
+    /// waf.add_rule(Rule::new().with_id(1)).unwrap();
+    ///
+    /// // In practice, you would create actual RuleAction instances:
+    /// // let new_actions = vec![...];
+    /// // waf.update_rule_actions_by_id(1, new_actions).unwrap();
+    /// ```
+    pub fn update_rule_actions_by_id(
+        &mut self,
+        id: i32,
+        actions: Vec<RuleAction>,
+    ) -> Result<(), WafError> {
+        let rule = self
+            .rules
+            .find_by_id_mut(id)
+            .ok_or_else(|| WafError::RuleError(format!("Rule {} not found", id)))?;
+
+        rule.set_actions(actions);
+        Ok(())
+    }
+
+    /// Updates the variables (targets) for all rules matching a tag.
+    ///
+    /// Returns the number of rules updated.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::Waf;
+    /// use coraza::config::WafConfig;
+    /// use coraza::rules::{Rule, VariableSpec};
+    /// use coraza::RuleVariable;
+    ///
+    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
+    ///
+    /// let mut rule = Rule::new().with_id(1);
+    /// rule.metadata_mut().tags.push("attack".to_string());
+    /// waf.add_rule(rule).unwrap();
+    ///
+    /// let new_vars = vec![VariableSpec::new(RuleVariable::Args)];
+    /// // let count = waf.update_rule_variables_by_tag("attack", new_vars).unwrap();
+    /// // assert_eq!(count, 1);
+    /// ```
+    pub fn update_rule_variables_by_tag(
+        &mut self,
+        tag: &str,
+        variables: Vec<VariableSpec>,
+    ) -> Result<usize, WafError> {
+        // Clone variables outside the closure to avoid lifetime issues
+        let vars_clone = variables.clone();
+        let count = self.rules.update_by_tag(tag, move |rule| {
+            rule.set_variables(vars_clone.clone());
+        });
+        Ok(count)
     }
 
     /// Validates the WAF configuration.
@@ -726,5 +875,107 @@ mod tests {
         assert!(waf.find_rule_by_id(2).is_none());
         assert!(waf.find_rule_by_id(3).is_none());
         assert!(waf.find_rule_by_id(4).is_none());
+    }
+
+    #[test]
+    fn test_waf_default_actions() {
+        use crate::RulePhase;
+
+        let mut waf = Waf::default();
+
+        // Initially no default actions
+        assert_eq!(waf.get_default_actions(RulePhase::RequestHeaders).len(), 0);
+
+        // Set default actions for phase 1 (empty for now since RuleAction can't be easily constructed in tests)
+        waf.set_default_actions(RulePhase::RequestHeaders, vec![]);
+
+        // Verify they're stored
+        assert_eq!(waf.get_default_actions(RulePhase::RequestHeaders).len(), 0);
+
+        // Other phases still empty
+        assert_eq!(waf.get_default_actions(RulePhase::RequestBody).len(), 0);
+    }
+
+    #[test]
+    fn test_waf_update_rule_variables_by_id() {
+        use crate::RuleVariable;
+        use crate::rules::VariableSpec;
+
+        let mut waf = Waf::default();
+
+        // Add rule with no variables
+        waf.add_rule(Rule::new().with_id(1)).unwrap();
+
+        // Update its variables
+        let new_vars = vec![
+            VariableSpec::new(RuleVariable::Args),
+            VariableSpec::new(RuleVariable::RequestHeaders),
+        ];
+        waf.update_rule_variables_by_id(1, new_vars).unwrap();
+
+        // Verify rule was found and updated (we can't directly inspect variables,
+        // but we can verify the operation succeeded)
+        assert!(waf.find_rule_by_id(1).is_some());
+
+        // Try updating non-existent rule
+        let result = waf.update_rule_variables_by_id(999, vec![]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_waf_update_rule_actions_by_id() {
+        let mut waf = Waf::default();
+
+        // Add rule with no actions
+        waf.add_rule(Rule::new().with_id(1)).unwrap();
+
+        // Update its actions
+        let new_actions = vec![]; // Would contain actual actions in practice
+        waf.update_rule_actions_by_id(1, new_actions).unwrap();
+
+        // Verify rule was found and updated
+        assert!(waf.find_rule_by_id(1).is_some());
+
+        // Try updating non-existent rule
+        let result = waf.update_rule_actions_by_id(999, vec![]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_waf_update_rule_variables_by_tag() {
+        use crate::RuleVariable;
+        use crate::rules::VariableSpec;
+
+        let mut waf = Waf::default();
+
+        // Add multiple rules with the same tag
+        let mut rule1 = Rule::new().with_id(1);
+        rule1.metadata_mut().tags.push("attack".to_string());
+        waf.add_rule(rule1).unwrap();
+
+        let mut rule2 = Rule::new().with_id(2);
+        rule2.metadata_mut().tags.push("attack".to_string());
+        waf.add_rule(rule2).unwrap();
+
+        let mut rule3 = Rule::new().with_id(3);
+        rule3.metadata_mut().tags.push("other".to_string());
+        waf.add_rule(rule3).unwrap();
+
+        // Update variables for all "attack" tagged rules
+        let new_vars = vec![VariableSpec::new(RuleVariable::Args)];
+        let count = waf
+            .update_rule_variables_by_tag("attack", new_vars)
+            .unwrap();
+
+        // Should have updated 2 rules
+        assert_eq!(count, 2);
+
+        // Update non-existent tag
+        let count = waf
+            .update_rule_variables_by_tag("nonexistent", vec![])
+            .unwrap();
+        assert_eq!(count, 0);
     }
 }

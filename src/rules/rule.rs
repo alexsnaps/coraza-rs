@@ -143,6 +143,20 @@ impl Rule {
         &self.actions
     }
 
+    /// Set the rule's variables (replaces existing variables).
+    ///
+    /// This is used by SecLang directives like `SecRuleUpdateTargetById`.
+    pub fn set_variables(&mut self, variables: Vec<VariableSpec>) {
+        self.variables = variables;
+    }
+
+    /// Set the rule's actions (replaces existing actions).
+    ///
+    /// This is used by SecLang directives like `SecRuleUpdateActionById`.
+    pub fn set_actions(&mut self, actions: Vec<RuleAction>) {
+        self.actions = actions;
+    }
+
     /// Get the chained rule (if any).
     pub fn chain(&self) -> Option<&Rule> {
         self.chain.as_deref()
