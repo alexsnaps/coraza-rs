@@ -5,9 +5,12 @@
 
 pub mod variables;
 
+use std::sync::Arc;
+
 use crate::RuleVariable;
 use crate::collection::{Keyed, Map, MapCollection, Single, SingleCollection};
 use crate::operators::TransactionState;
+use crate::rules::RuleGroup;
 use crate::types::{RuleEngineStatus, RulePhase};
 
 /// Interruption returned when a disruptive action is triggered.
@@ -227,6 +230,10 @@ pub struct Transaction {
     /// (set by ctl:ruleRemoveTargetById, ctl:ruleRemoveTargetByTag, ctl:ruleRemoveTargetByMsg)
     /// Map: rule_id -> Vec<(variable, key)>
     rule_remove_target_by_id: std::collections::BTreeMap<i32, Vec<(RuleVariable, String)>>,
+
+    /// Reference to WAF's rule group for CTL tag/msg-based exclusions
+    /// Optional because transactions created via Transaction::new() don't have a WAF reference
+    rules: Option<Arc<RuleGroup>>,
 }
 
 impl Default for Transaction {
@@ -291,12 +298,21 @@ impl Transaction {
             capturing: false,
             rule_remove_by_id: std::collections::BTreeSet::new(),
             rule_remove_target_by_id: std::collections::BTreeMap::new(),
+            rules: None, // No WAF reference for standalone transactions
         }
     }
 
     /// Get the transaction ID.
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Set the rules reference (called by WAF when creating transactions).
+    ///
+    /// This allows the transaction to access the WAF's rule set for CTL actions
+    /// like `ctl:ruleRemoveByTag` and `ctl:ruleRemoveByMsg`.
+    pub(crate) fn set_rules(&mut self, rules: Arc<RuleGroup>) {
+        self.rules = Some(rules);
     }
 
     /// Get a collection by variable type.
@@ -1269,6 +1285,10 @@ impl TransactionState for Transaction {
 
     fn ctl_remove_rule_target_by_id(&mut self, rule_id: i32, variable: RuleVariable, key: &str) {
         self.remove_rule_target_by_id(rule_id, variable, key);
+    }
+
+    fn ctl_get_rules(&self) -> Option<&Arc<RuleGroup>> {
+        self.rules.as_ref()
     }
 
     // ===== Flow Control Methods =====

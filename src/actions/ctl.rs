@@ -357,11 +357,45 @@ impl Action for CtlAction {
                 }
             }
 
-            CtlCommand::RuleRemoveByTag | CtlCommand::RuleRemoveByMsg => {
-                // Note: These require iterating through WAF.Rules to find matching rules,
-                // then adding their IDs to the exclusion list. This will be implemented
-                // when we have WAF context available in the transaction.
-                // For now, this is a placeholder - the parsing is valid but execution is deferred.
+            CtlCommand::RuleRemoveByTag => {
+                // Collect rule IDs that match the tag, then add to exclusion list
+                let matching_ids: Vec<i32> = if let Some(rules) = tx.ctl_get_rules() {
+                    rules
+                        .get_rules()
+                        .iter()
+                        .filter(|rule| rule.metadata().tags.contains(&self.value))
+                        .map(|rule| rule.metadata().id)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+
+                for id in matching_ids {
+                    tx.ctl_remove_rule_by_id(id);
+                }
+            }
+
+            CtlCommand::RuleRemoveByMsg => {
+                // Collect rule IDs that match the message, then add to exclusion list
+                let matching_ids: Vec<i32> = if let Some(rules) = tx.ctl_get_rules() {
+                    rules
+                        .get_rules()
+                        .iter()
+                        .filter(|rule| {
+                            rule.metadata()
+                                .msg
+                                .as_ref()
+                                .is_some_and(|msg| msg.as_str() == self.value)
+                        })
+                        .map(|rule| rule.metadata().id)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+
+                for id in matching_ids {
+                    tx.ctl_remove_rule_by_id(id);
+                }
             }
 
             CtlCommand::RuleRemoveTargetById => {
@@ -373,9 +407,51 @@ impl Action for CtlAction {
                 }
             }
 
-            CtlCommand::RuleRemoveTargetByTag | CtlCommand::RuleRemoveTargetByMsg => {
-                // Note: Similar to RuleRemoveByTag/ByMsg, these require WAF.Rules access
-                // to find matching rules. Deferred until WAF context is available.
+            CtlCommand::RuleRemoveTargetByTag => {
+                // Collect rule IDs that match the tag, then add target exclusions
+                if let Some(var) = self.collection {
+                    let matching_ids: Vec<i32> = if let Some(rules) = tx.ctl_get_rules() {
+                        rules
+                            .get_rules()
+                            .iter()
+                            .filter(|rule| rule.metadata().tags.contains(&self.value))
+                            .map(|rule| rule.metadata().id)
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+
+                    let key = self.key.as_deref().unwrap_or("");
+                    for id in matching_ids {
+                        tx.ctl_remove_rule_target_by_id(id, var, key);
+                    }
+                }
+            }
+
+            CtlCommand::RuleRemoveTargetByMsg => {
+                // Collect rule IDs that match the message, then add target exclusions
+                if let Some(var) = self.collection {
+                    let matching_ids: Vec<i32> = if let Some(rules) = tx.ctl_get_rules() {
+                        rules
+                            .get_rules()
+                            .iter()
+                            .filter(|rule| {
+                                rule.metadata()
+                                    .msg
+                                    .as_ref()
+                                    .is_some_and(|msg| msg.as_str() == self.value)
+                            })
+                            .map(|rule| rule.metadata().id)
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+
+                    let key = self.key.as_deref().unwrap_or("");
+                    for id in matching_ids {
+                        tx.ctl_remove_rule_target_by_id(id, var, key);
+                    }
+                }
             }
 
             // Body processor and audit settings - deferred to Phase 10
@@ -903,5 +979,186 @@ mod tests {
         assert!(tx.is_rule_target_removed(123, RuleVariable::Args, "username"));
         assert!(tx.is_rule_target_removed(123, RuleVariable::Args, "password"));
         assert!(!tx.is_rule_target_removed(123, RuleVariable::Args, "email"));
+    }
+
+    // ===== CTL Tag/Msg-Based Exclusion Tests =====
+
+    #[test]
+    fn test_ctl_execute_rule_remove_by_tag() {
+        use crate::config::WafConfig;
+        use crate::rules::Rule as WafRule;
+        use crate::waf::Waf;
+
+        // Create WAF with tagged rules
+        let mut waf = Waf::new(WafConfig::new()).unwrap();
+
+        let mut rule1 = WafRule::new().with_id(100);
+        rule1.metadata_mut().tags.push("attack".to_string());
+        waf.add_rule(rule1).unwrap();
+
+        let mut rule2 = WafRule::new().with_id(200);
+        rule2.metadata_mut().tags.push("attack".to_string());
+        waf.add_rule(rule2).unwrap();
+
+        let mut rule3 = WafRule::new().with_id(300);
+        rule3.metadata_mut().tags.push("sqli".to_string());
+        waf.add_rule(rule3).unwrap();
+
+        // Create transaction from WAF
+        let mut tx = waf.new_transaction_with_id("test-tag".to_string());
+
+        // Execute ctl:ruleRemoveByTag=attack
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action.init(&mut rule, "ruleRemoveByTag=attack").unwrap();
+        action.evaluate(&rule, &mut tx);
+
+        // Rules 100 and 200 should be excluded (they have "attack" tag)
+        assert!(tx.is_rule_removed(100));
+        assert!(tx.is_rule_removed(200));
+        // Rule 300 should not be excluded (has "sqli" tag)
+        assert!(!tx.is_rule_removed(300));
+    }
+
+    #[test]
+    fn test_ctl_execute_rule_remove_by_msg() {
+        use crate::config::WafConfig;
+        use crate::operators::Macro;
+        use crate::rules::Rule as WafRule;
+        use crate::waf::Waf;
+
+        // Create WAF with rules having messages
+        let mut waf = Waf::new(WafConfig::new()).unwrap();
+
+        let mut rule1 = WafRule::new().with_id(100);
+        rule1.metadata_mut().msg = Some(Macro::new("SQL Injection").unwrap());
+        waf.add_rule(rule1).unwrap();
+
+        let mut rule2 = WafRule::new().with_id(200);
+        rule2.metadata_mut().msg = Some(Macro::new("XSS Attack").unwrap());
+        waf.add_rule(rule2).unwrap();
+
+        let mut rule3 = WafRule::new().with_id(300);
+        rule3.metadata_mut().msg = Some(Macro::new("SQL Injection").unwrap());
+        waf.add_rule(rule3).unwrap();
+
+        // Create transaction from WAF
+        let mut tx = waf.new_transaction_with_id("test-msg".to_string());
+
+        // Execute ctl:ruleRemoveByMsg=SQL Injection
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action
+            .init(&mut rule, "ruleRemoveByMsg=SQL Injection")
+            .unwrap();
+        action.evaluate(&rule, &mut tx);
+
+        // Rules 100 and 300 should be excluded (message matches)
+        assert!(tx.is_rule_removed(100));
+        assert!(tx.is_rule_removed(300));
+        // Rule 200 should not be excluded (different message)
+        assert!(!tx.is_rule_removed(200));
+    }
+
+    #[test]
+    fn test_ctl_execute_rule_remove_target_by_tag() {
+        use crate::config::WafConfig;
+        use crate::rules::Rule as WafRule;
+        use crate::waf::Waf;
+
+        // Create WAF with tagged rules
+        let mut waf = Waf::new(WafConfig::new()).unwrap();
+
+        let mut rule1 = WafRule::new().with_id(100);
+        rule1.metadata_mut().tags.push("crs".to_string());
+        waf.add_rule(rule1).unwrap();
+
+        let mut rule2 = WafRule::new().with_id(200);
+        rule2.metadata_mut().tags.push("crs".to_string());
+        waf.add_rule(rule2).unwrap();
+
+        let mut rule3 = WafRule::new().with_id(300);
+        rule3.metadata_mut().tags.push("custom".to_string());
+        waf.add_rule(rule3).unwrap();
+
+        // Create transaction from WAF
+        let mut tx = waf.new_transaction_with_id("test-target-tag".to_string());
+
+        // Execute ctl:ruleRemoveTargetByTag=crs;ARGS:id
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action
+            .init(&mut rule, "ruleRemoveTargetByTag=crs;ARGS:id")
+            .unwrap();
+        action.evaluate(&rule, &mut tx);
+
+        // ARGS:id should be excluded from rules 100 and 200
+        assert!(tx.is_rule_target_removed(100, RuleVariable::Args, "id"));
+        assert!(tx.is_rule_target_removed(200, RuleVariable::Args, "id"));
+        // Rule 300 should not be affected (different tag)
+        assert!(!tx.is_rule_target_removed(300, RuleVariable::Args, "id"));
+        // Other variables should not be affected
+        assert!(!tx.is_rule_target_removed(100, RuleVariable::Args, "name"));
+    }
+
+    #[test]
+    fn test_ctl_execute_rule_remove_target_by_msg() {
+        use crate::config::WafConfig;
+        use crate::operators::Macro;
+        use crate::rules::Rule as WafRule;
+        use crate::waf::Waf;
+
+        // Create WAF with rules having messages
+        let mut waf = Waf::new(WafConfig::new()).unwrap();
+
+        let mut rule1 = WafRule::new().with_id(100);
+        rule1.metadata_mut().msg = Some(Macro::new("Parameter Attack").unwrap());
+        waf.add_rule(rule1).unwrap();
+
+        let mut rule2 = WafRule::new().with_id(200);
+        rule2.metadata_mut().msg = Some(Macro::new("Header Attack").unwrap());
+        waf.add_rule(rule2).unwrap();
+
+        let mut rule3 = WafRule::new().with_id(300);
+        rule3.metadata_mut().msg = Some(Macro::new("Parameter Attack").unwrap());
+        waf.add_rule(rule3).unwrap();
+
+        // Create transaction from WAF
+        let mut tx = waf.new_transaction_with_id("test-target-msg".to_string());
+
+        // Execute ctl:ruleRemoveTargetByMsg=Parameter Attack;REQUEST_HEADERS:user-agent
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action
+            .init(
+                &mut rule,
+                "ruleRemoveTargetByMsg=Parameter Attack;REQUEST_HEADERS:user-agent",
+            )
+            .unwrap();
+        action.evaluate(&rule, &mut tx);
+
+        // REQUEST_HEADERS:user-agent should be excluded from rules 100 and 300
+        assert!(tx.is_rule_target_removed(100, RuleVariable::RequestHeaders, "user-agent"));
+        assert!(tx.is_rule_target_removed(300, RuleVariable::RequestHeaders, "user-agent"));
+        // Rule 200 should not be affected (different message)
+        assert!(!tx.is_rule_target_removed(200, RuleVariable::RequestHeaders, "user-agent"));
+    }
+
+    #[test]
+    fn test_ctl_tag_msg_without_waf_reference() {
+        use crate::transaction::Transaction;
+
+        // Create transaction without WAF reference (standalone)
+        let mut tx = Transaction::new("standalone");
+
+        // Execute ctl:ruleRemoveByTag - should not panic, just do nothing
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action.init(&mut rule, "ruleRemoveByTag=attack").unwrap();
+        action.evaluate(&rule, &mut tx);
+
+        // No rules should be excluded (no WAF reference available)
+        assert!(!tx.is_rule_removed(100));
+        assert!(!tx.is_rule_removed(200));
     }
 }

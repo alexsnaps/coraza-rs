@@ -151,6 +151,13 @@ pub trait TransactionState {
     fn ctl_remove_rule_target_by_id(&mut self, rule_id: i32, variable: RuleVariable, key: &str) {
         let _ = (rule_id, variable, key);
     }
+
+    /// Get access to the WAF's rules for tag/msg-based CTL actions.
+    ///
+    /// Returns None for standalone transactions (not created from a WAF).
+    fn ctl_get_rules(&self) -> Option<&std::sync::Arc<crate::rules::RuleGroup>> {
+        None
+    }
 }
 
 /// A macro that can expand variable references at runtime.

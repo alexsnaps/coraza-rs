@@ -7,6 +7,7 @@
 //! rule storage, and transaction creation.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::config::WafConfig;
 use crate::rules::{Rule, RuleAction, RuleGroup, VariableSpec};
@@ -86,8 +87,9 @@ pub struct Waf {
     config: WafConfig,
 
     /// Rule group for evaluation
-    /// Rules can be added during WAF setup, then the WAF is used read-only
-    rules: RuleGroup,
+    /// Rules can be added during WAF setup, then the WAF is used read-only.
+    /// Wrapped in Arc to allow sharing with transactions for CTL rule exclusion.
+    rules: Arc<RuleGroup>,
 
     /// Default actions per phase
     /// These are applied to rules in each phase if they don't have explicit actions
@@ -117,8 +119,8 @@ impl Waf {
         // Validate configuration
         Self::validate_config(&config)?;
 
-        // Create empty rule group
-        let rules = RuleGroup::new();
+        // Create empty rule group wrapped in Arc for sharing with transactions
+        let rules = Arc::new(RuleGroup::new());
 
         // Initialize default actions storage
         let default_actions = HashMap::new();
@@ -171,6 +173,9 @@ impl Waf {
         tx.set_request_body_limit(self.config.request_body_limit());
         tx.set_response_body_access(self.config.response_body_access());
         tx.set_response_body_limit(self.config.response_body_limit());
+
+        // Share rules reference for CTL tag/msg-based exclusions
+        tx.set_rules(Arc::clone(&self.rules));
 
         tx
     }
@@ -235,7 +240,10 @@ impl Waf {
     /// assert_eq!(waf.rule_count(), 1);
     /// ```
     pub fn add_rule(&mut self, rule: Rule) -> Result<(), WafError> {
-        self.rules.add(rule).map_err(WafError::RuleError)
+        Arc::get_mut(&mut self.rules)
+            .expect("Cannot modify rules after sharing with transactions")
+            .add(rule)
+            .map_err(WafError::RuleError)
     }
 
     // Note: SecLang rule parsing (SecRule directives) will be added in future steps.
@@ -258,7 +266,9 @@ impl Waf {
     /// assert_eq!(waf.rule_count(), 1);
     /// ```
     pub fn remove_rule_by_id(&mut self, id: i32) {
-        self.rules.delete_by_id(id);
+        Arc::get_mut(&mut self.rules)
+            .expect("Cannot modify rules after sharing with transactions")
+            .delete_by_id(id);
     }
 
     /// Removes rules within an ID range (inclusive).
@@ -280,7 +290,9 @@ impl Waf {
     /// assert_eq!(waf.rule_count(), 1); // Only 200 remains
     /// ```
     pub fn remove_rules_by_id_range(&mut self, start: i32, end: i32) {
-        self.rules.delete_by_range(start, end);
+        Arc::get_mut(&mut self.rules)
+            .expect("Cannot modify rules after sharing with transactions")
+            .delete_by_range(start, end);
     }
 
     /// Removes rules by tag.
@@ -306,7 +318,9 @@ impl Waf {
     /// assert_eq!(waf.rule_count(), 1); // Only rule 2 remains
     /// ```
     pub fn remove_rules_by_tag(&mut self, tag: &str) {
-        self.rules.delete_by_tag(tag);
+        Arc::get_mut(&mut self.rules)
+            .expect("Cannot modify rules after sharing with transactions")
+            .delete_by_tag(tag);
     }
 
     /// Removes rules by message.
@@ -333,7 +347,9 @@ impl Waf {
     /// assert_eq!(waf.rule_count(), 1); // Only rule 2 remains
     /// ```
     pub fn remove_rules_by_msg(&mut self, msg: &str) {
-        self.rules.delete_by_msg(msg);
+        Arc::get_mut(&mut self.rules)
+            .expect("Cannot modify rules after sharing with transactions")
+            .delete_by_msg(msg);
     }
 
     /// Finds a rule by its ID.
@@ -412,8 +428,10 @@ impl Waf {
         id: i32,
         variables: Vec<VariableSpec>,
     ) -> Result<(), WafError> {
-        let rule = self
-            .rules
+        let rules = Arc::get_mut(&mut self.rules)
+            .expect("Cannot modify rules after sharing with transactions");
+
+        let rule = rules
             .find_by_id_mut(id)
             .ok_or_else(|| WafError::RuleError(format!("Rule {} not found", id)))?;
 
@@ -446,8 +464,10 @@ impl Waf {
         id: i32,
         actions: Vec<RuleAction>,
     ) -> Result<(), WafError> {
-        let rule = self
-            .rules
+        let rules = Arc::get_mut(&mut self.rules)
+            .expect("Cannot modify rules after sharing with transactions");
+
+        let rule = rules
             .find_by_id_mut(id)
             .ok_or_else(|| WafError::RuleError(format!("Rule {} not found", id)))?;
 
@@ -482,9 +502,12 @@ impl Waf {
         tag: &str,
         variables: Vec<VariableSpec>,
     ) -> Result<usize, WafError> {
+        let rules = Arc::get_mut(&mut self.rules)
+            .expect("Cannot modify rules after sharing with transactions");
+
         // Clone variables outside the closure to avoid lifetime issues
         let vars_clone = variables.clone();
-        let count = self.rules.update_by_tag(tag, move |rule| {
+        let count = rules.update_by_tag(tag, move |rule| {
             rule.set_variables(vars_clone.clone());
         });
         Ok(count)
