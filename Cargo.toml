@@ -32,3 +32,6 @@ mime = "0.3"
 
 # JSON parsing
 serde_json = "1.0"
+
+# XML parsing
+quick-xml = "0.36"

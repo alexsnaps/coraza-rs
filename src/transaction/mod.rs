@@ -88,6 +88,9 @@ pub struct Transaction {
     /// MULTIPART_STRICT_ERROR - Set to "1" when multipart parsing fails
     pub(crate) multipart_strict_error: Single,
 
+    /// REQUEST_XML - Parsed XML data (attributes and content)
+    pub(crate) request_xml: Map,
+
     /// Captured values from operators (rx, pm)
     captures: Vec<Option<String>>,
 
@@ -124,6 +127,7 @@ impl Transaction {
             files_combined_size: Single::new(RuleVariable::FilesCombinedSize),
             multipart_part_headers: Map::new_case_sensitive(RuleVariable::MultipartPartHeaders),
             multipart_strict_error: Single::new(RuleVariable::MultipartStrictError),
+            request_xml: Map::new_case_sensitive(RuleVariable::RequestXML),
             captures: Vec::new(),
             capturing: false,
         }

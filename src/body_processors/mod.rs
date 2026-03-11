@@ -33,6 +33,7 @@ pub mod json;
 pub mod multipart;
 pub mod raw;
 pub mod urlencoded;
+pub mod xml;
 
 /// Body processor error types
 #[derive(Debug)]
@@ -185,6 +186,7 @@ static BODY_PROCESSORS: LazyLock<RwLock<HashMap<String, BodyProcessorFactory>>> 
             "json".to_string(),
             json::create_json as BodyProcessorFactory,
         );
+        registry.insert("xml".to_string(), xml::create_xml as BodyProcessorFactory);
         RwLock::new(registry)
     });
 
