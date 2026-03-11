@@ -29,6 +29,7 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::{LazyLock, RwLock};
 
+pub mod json;
 pub mod multipart;
 pub mod raw;
 pub mod urlencoded;
@@ -179,6 +180,10 @@ static BODY_PROCESSORS: LazyLock<RwLock<HashMap<String, BodyProcessorFactory>>> 
         registry.insert(
             "multipart".to_string(),
             multipart::create_multipart as BodyProcessorFactory,
+        );
+        registry.insert(
+            "json".to_string(),
+            json::create_json as BodyProcessorFactory,
         );
         RwLock::new(registry)
     });
