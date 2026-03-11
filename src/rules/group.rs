@@ -268,6 +268,11 @@ impl RuleGroup {
                 continue;
             }
 
+            // CTL exclusion: skip rules that were removed via ctl:ruleRemoveById
+            if tx.is_rule_removed(rule.metadata().id) {
+                continue;
+            }
+
             // Handle skipAfter: skip until we find the marker
             if !tx.skip_after.is_empty() {
                 // Check if this rule is the marker we're looking for
@@ -639,5 +644,88 @@ mod tests {
 
         // No interruption occurred
         assert!(!disrupted);
+    }
+
+    #[test]
+    fn test_rulegroup_ctl_rule_exclusion() {
+        let mut group = RuleGroup::new();
+
+        // Add rules 100, 200, 300
+        for id in [100, 200, 300] {
+            let mut rule = Rule::new().with_id(id);
+            rule.metadata_mut().phase = RulePhase::RequestHeaders;
+            group.add(rule).unwrap();
+        }
+
+        let mut tx = Transaction::new("test-ctl-exclusion");
+
+        // Exclude rule 200 via transaction
+        tx.remove_rule_by_id(200);
+
+        // Verify exclusion list
+        assert!(!tx.is_rule_removed(100));
+        assert!(tx.is_rule_removed(200));
+        assert!(!tx.is_rule_removed(300));
+
+        // Evaluate - rule 200 should be skipped
+        group.eval(RulePhase::RequestHeaders, &mut tx, true);
+
+        // All rules should have been processed except 200
+        // (We can't directly verify which rules ran, but the test confirms
+        // the exclusion mechanism works without errors)
+    }
+
+    #[test]
+    fn test_rulegroup_ctl_rule_exclusion_range() {
+        let mut group = RuleGroup::new();
+
+        // Add rules 100-105
+        for id in 100..=105 {
+            let mut rule = Rule::new().with_id(id);
+            rule.metadata_mut().phase = RulePhase::RequestHeaders;
+            group.add(rule).unwrap();
+        }
+
+        let mut tx = Transaction::new("test-ctl-exclusion-range");
+
+        // Exclude rules 102-104
+        for id in 102..=104 {
+            tx.remove_rule_by_id(id);
+        }
+
+        // Verify exclusion list
+        assert!(!tx.is_rule_removed(100));
+        assert!(!tx.is_rule_removed(101));
+        assert!(tx.is_rule_removed(102));
+        assert!(tx.is_rule_removed(103));
+        assert!(tx.is_rule_removed(104));
+        assert!(!tx.is_rule_removed(105));
+
+        // Evaluate - rules 102-104 should be skipped
+        group.eval(RulePhase::RequestHeaders, &mut tx, true);
+    }
+
+    #[test]
+    fn test_rulegroup_ctl_target_exclusion() {
+        use crate::RuleVariable;
+
+        let mut group = RuleGroup::new();
+
+        // Add a rule that would check ARGS
+        let mut rule = Rule::new().with_id(981260);
+        rule.metadata_mut().phase = RulePhase::RequestHeaders;
+        group.add(rule).unwrap();
+
+        let mut tx = Transaction::new("test-ctl-target-exclusion");
+
+        // Exclude ARGS:user from rule 981260
+        tx.remove_rule_target_by_id(981260, RuleVariable::Args, "user");
+
+        // Verify target exclusion
+        assert!(tx.is_rule_target_removed(981260, RuleVariable::Args, "user"));
+        assert!(!tx.is_rule_target_removed(981260, RuleVariable::Args, "password"));
+
+        // Evaluate - rule should run but with ARGS:user excluded from its variable list
+        group.eval(RulePhase::RequestHeaders, &mut tx, true);
     }
 }

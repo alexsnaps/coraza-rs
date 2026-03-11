@@ -141,6 +141,16 @@ pub trait TransactionState {
     fn ctl_last_phase(&self) -> Option<crate::types::RulePhase> {
         None
     }
+
+    /// Remove a rule by ID for this transaction (called by ctl:ruleRemoveById).
+    fn ctl_remove_rule_by_id(&mut self, rule_id: i32) {
+        let _ = rule_id;
+    }
+
+    /// Remove a specific variable target from a rule (called by ctl:ruleRemoveTargetById).
+    fn ctl_remove_rule_target_by_id(&mut self, rule_id: i32, variable: RuleVariable, key: &str) {
+        let _ = (rule_id, variable, key);
+    }
 }
 
 /// A macro that can expand variable references at runtime.

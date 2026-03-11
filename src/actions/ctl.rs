@@ -338,15 +338,44 @@ impl Action for CtlAction {
                 }
             }
 
-            // These commands require WAF-level integration and will be implemented
-            // in Phase 10 when we have full WAF infrastructure
-            CtlCommand::RuleRemoveById
-            | CtlCommand::RuleRemoveByTag
-            | CtlCommand::RuleRemoveByMsg
-            | CtlCommand::RuleRemoveTargetById
-            | CtlCommand::RuleRemoveTargetByTag
-            | CtlCommand::RuleRemoveTargetByMsg => {
-                // Deferred to Phase 10 - requires WAF.Rules access
+            CtlCommand::RuleRemoveById => {
+                // Parse ID or ID range
+                if let Some(idx) = self.value.find('-')
+                    && idx > 0
+                    && let (Ok(start), Ok(end)) = (
+                        self.value[..idx].parse::<i32>(),
+                        self.value[idx + 1..].parse::<i32>(),
+                    )
+                {
+                    // Range: 100-199
+                    for id in start..=end {
+                        tx.ctl_remove_rule_by_id(id);
+                    }
+                } else if let Ok(id) = self.value.parse::<i32>() {
+                    // Single ID
+                    tx.ctl_remove_rule_by_id(id);
+                }
+            }
+
+            CtlCommand::RuleRemoveByTag | CtlCommand::RuleRemoveByMsg => {
+                // Note: These require iterating through WAF.Rules to find matching rules,
+                // then adding their IDs to the exclusion list. This will be implemented
+                // when we have WAF context available in the transaction.
+                // For now, this is a placeholder - the parsing is valid but execution is deferred.
+            }
+
+            CtlCommand::RuleRemoveTargetById => {
+                // Parse format: "id;VARIABLE:key"
+                // The variable/key were already parsed in init()
+                if let (Ok(rule_id), Some(var)) = (self.value.parse::<i32>(), self.collection) {
+                    let key = self.key.as_deref().unwrap_or("");
+                    tx.ctl_remove_rule_target_by_id(rule_id, var, key);
+                }
+            }
+
+            CtlCommand::RuleRemoveTargetByTag | CtlCommand::RuleRemoveTargetByMsg => {
+                // Note: Similar to RuleRemoveByTag/ByMsg, these require WAF.Rules access
+                // to find matching rules. Deferred until WAF context is available.
             }
 
             // Body processor and audit settings - deferred to Phase 10
@@ -738,5 +767,141 @@ mod tests {
         // Try to change it - should be silently ignored
         action.evaluate(&rule, &mut tx);
         assert_eq!(tx.response_body_limit(), 524288); // unchanged
+    }
+
+    // ===== CTL Rule Exclusion Tests =====
+
+    #[test]
+    fn test_ctl_execute_rule_remove_by_id_single() {
+        use crate::transaction::Transaction;
+
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action.init(&mut rule, "ruleRemoveById=123").unwrap();
+
+        let mut tx = Transaction::new("test-remove-1");
+        assert!(!tx.is_rule_removed(123));
+
+        action.evaluate(&rule, &mut tx);
+        assert!(tx.is_rule_removed(123));
+        assert!(!tx.is_rule_removed(124)); // other rules not affected
+    }
+
+    #[test]
+    fn test_ctl_execute_rule_remove_by_id_range() {
+        use crate::transaction::Transaction;
+
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action.init(&mut rule, "ruleRemoveById=100-199").unwrap();
+
+        let mut tx = Transaction::new("test-remove-2");
+        assert!(!tx.is_rule_removed(100));
+        assert!(!tx.is_rule_removed(150));
+        assert!(!tx.is_rule_removed(199));
+
+        action.evaluate(&rule, &mut tx);
+
+        // All rules in range should be removed
+        assert!(tx.is_rule_removed(100));
+        assert!(tx.is_rule_removed(150));
+        assert!(tx.is_rule_removed(199));
+
+        // Rules outside range should not be affected
+        assert!(!tx.is_rule_removed(99));
+        assert!(!tx.is_rule_removed(200));
+    }
+
+    #[test]
+    fn test_ctl_execute_rule_remove_target_by_id() {
+        use crate::transaction::Transaction;
+
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action
+            .init(&mut rule, "ruleRemoveTargetById=981260;ARGS:user")
+            .unwrap();
+
+        let mut tx = Transaction::new("test-remove-target-1");
+        assert!(!tx.is_rule_target_removed(981260, RuleVariable::Args, "user"));
+
+        action.evaluate(&rule, &mut tx);
+
+        // Specific target should be removed
+        assert!(tx.is_rule_target_removed(981260, RuleVariable::Args, "user"));
+
+        // Other targets should not be affected
+        assert!(!tx.is_rule_target_removed(981260, RuleVariable::Args, "password"));
+        assert!(!tx.is_rule_target_removed(981260, RuleVariable::RequestHeaders, "user"));
+        assert!(!tx.is_rule_target_removed(999, RuleVariable::Args, "user"));
+    }
+
+    #[test]
+    fn test_ctl_execute_rule_remove_target_no_key() {
+        use crate::transaction::Transaction;
+
+        let mut action = CtlAction::new();
+        let mut rule = Rule::default();
+        action
+            .init(&mut rule, "ruleRemoveTargetById=123;REQUEST_FILENAME:")
+            .unwrap();
+
+        let mut tx = Transaction::new("test-remove-target-2");
+        action.evaluate(&rule, &mut tx);
+
+        // Empty key should be stored as empty string
+        assert!(tx.is_rule_target_removed(123, RuleVariable::RequestFilename, ""));
+    }
+
+    #[test]
+    fn test_ctl_rule_remove_multiple() {
+        use crate::transaction::Transaction;
+
+        let mut tx = Transaction::new("test-remove-multi");
+
+        // Remove multiple rules via multiple actions
+        let mut action1 = CtlAction::new();
+        let mut rule = Rule::default();
+        action1.init(&mut rule, "ruleRemoveById=100").unwrap();
+        action1.evaluate(&rule, &mut tx);
+
+        let mut action2 = CtlAction::new();
+        action2.init(&mut rule, "ruleRemoveById=200").unwrap();
+        action2.evaluate(&rule, &mut tx);
+
+        let mut action3 = CtlAction::new();
+        action3.init(&mut rule, "ruleRemoveById=300-305").unwrap();
+        action3.evaluate(&rule, &mut tx);
+
+        assert!(tx.is_rule_removed(100));
+        assert!(tx.is_rule_removed(200));
+        assert!(tx.is_rule_removed(300));
+        assert!(tx.is_rule_removed(305));
+        assert!(!tx.is_rule_removed(306));
+    }
+
+    #[test]
+    fn test_ctl_rule_remove_target_multiple() {
+        use crate::transaction::Transaction;
+
+        let mut tx = Transaction::new("test-remove-target-multi");
+
+        // Remove multiple targets from same rule
+        let mut action1 = CtlAction::new();
+        let mut rule = Rule::default();
+        action1
+            .init(&mut rule, "ruleRemoveTargetById=123;ARGS:username")
+            .unwrap();
+        action1.evaluate(&rule, &mut tx);
+
+        let mut action2 = CtlAction::new();
+        action2
+            .init(&mut rule, "ruleRemoveTargetById=123;ARGS:password")
+            .unwrap();
+        action2.evaluate(&rule, &mut tx);
+
+        assert!(tx.is_rule_target_removed(123, RuleVariable::Args, "username"));
+        assert!(tx.is_rule_target_removed(123, RuleVariable::Args, "password"));
+        assert!(!tx.is_rule_target_removed(123, RuleVariable::Args, "email"));
     }
 }

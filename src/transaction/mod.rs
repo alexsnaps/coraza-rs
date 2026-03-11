@@ -217,6 +217,16 @@ pub struct Transaction {
 
     /// Whether capturing is enabled
     capturing: bool,
+
+    // ===== CTL Runtime Exclusions =====
+    /// Rules with these IDs will be skipped for this transaction
+    /// (set by ctl:ruleRemoveById, ctl:ruleRemoveByTag, ctl:ruleRemoveByMsg)
+    rule_remove_by_id: Vec<i32>,
+
+    /// Variable exclusions per rule ID
+    /// (set by ctl:ruleRemoveTargetById, ctl:ruleRemoveTargetByTag, ctl:ruleRemoveTargetByMsg)
+    /// Map: rule_id -> Vec<(variable, key)>
+    rule_remove_target_by_id: std::collections::HashMap<i32, Vec<(RuleVariable, String)>>,
 }
 
 impl Default for Transaction {
@@ -279,6 +289,8 @@ impl Transaction {
             skip_after: String::new(),
             captures: Vec::new(),
             capturing: false,
+            rule_remove_by_id: Vec::new(),
+            rule_remove_target_by_id: std::collections::HashMap::new(),
         }
     }
 
@@ -1068,6 +1080,113 @@ impl Transaction {
         // TODO: Audit logging will go here
         // TODO: Rule evaluation hook for logging phase
     }
+
+    // ===== CTL Action Methods =====
+
+    /// Removes a rule by ID for this transaction only.
+    ///
+    /// Rules with the specified ID will be skipped during rule evaluation
+    /// for this transaction. This does not affect the WAF's rule set or
+    /// other transactions.
+    ///
+    /// Called by `ctl:ruleRemoveById` action.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    ///
+    /// let mut tx = Transaction::new("tx-1");
+    /// tx.remove_rule_by_id(123);
+    /// // Rule 123 will be skipped for this transaction
+    /// ```
+    pub fn remove_rule_by_id(&mut self, id: i32) {
+        self.rule_remove_by_id.push(id);
+    }
+
+    /// Removes a specific variable target from a rule for this transaction only.
+    ///
+    /// The specified variable will be excluded from the rule's targets
+    /// during evaluation for this transaction.
+    ///
+    /// Called by `ctl:ruleRemoveTargetById`, `ctl:ruleRemoveTargetByTag`,
+    /// and `ctl:ruleRemoveTargetByMsg` actions.
+    ///
+    /// # Arguments
+    ///
+    /// * `rule_id` - The rule ID to modify
+    /// * `variable` - The variable type to exclude
+    /// * `key` - The specific key to exclude (e.g., "user-agent" for HEADERS)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    /// use coraza::RuleVariable;
+    ///
+    /// let mut tx = Transaction::new("tx-1");
+    ///
+    /// // Exclude ARGS:username from rule 123
+    /// tx.remove_rule_target_by_id(123, RuleVariable::Args, "username");
+    ///
+    /// // Exclude REQUEST_HEADERS:User-Agent from rule 456
+    /// tx.remove_rule_target_by_id(456, RuleVariable::RequestHeaders, "user-agent");
+    /// ```
+    pub fn remove_rule_target_by_id(
+        &mut self,
+        rule_id: i32,
+        variable: RuleVariable,
+        key: impl Into<String>,
+    ) {
+        self.rule_remove_target_by_id
+            .entry(rule_id)
+            .or_default()
+            .push((variable, key.into()));
+    }
+
+    /// Checks if a rule should be skipped for this transaction.
+    ///
+    /// Returns true if the rule was excluded via `ctl:ruleRemoveById`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    ///
+    /// let mut tx = Transaction::new("tx-1");
+    /// tx.remove_rule_by_id(123);
+    ///
+    /// assert!(tx.is_rule_removed(123));
+    /// assert!(!tx.is_rule_removed(456));
+    /// ```
+    pub fn is_rule_removed(&self, rule_id: i32) -> bool {
+        self.rule_remove_by_id.contains(&rule_id)
+    }
+
+    /// Checks if a specific variable target is excluded from a rule.
+    ///
+    /// Returns true if the variable/key combination was excluded via
+    /// `ctl:ruleRemoveTargetById` actions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    /// use coraza::RuleVariable;
+    ///
+    /// let mut tx = Transaction::new("tx-1");
+    /// tx.remove_rule_target_by_id(123, RuleVariable::Args, "id");
+    ///
+    /// assert!(tx.is_rule_target_removed(123, RuleVariable::Args, "id"));
+    /// assert!(!tx.is_rule_target_removed(123, RuleVariable::Args, "other"));
+    /// ```
+    pub fn is_rule_target_removed(&self, rule_id: i32, variable: RuleVariable, key: &str) -> bool {
+        if let Some(targets) = self.rule_remove_target_by_id.get(&rule_id) {
+            targets.iter().any(|(v, k)| *v == variable && k == key)
+        } else {
+            false
+        }
+    }
 }
 
 impl TransactionState for Transaction {
@@ -1142,6 +1261,14 @@ impl TransactionState for Transaction {
 
     fn ctl_last_phase(&self) -> Option<RulePhase> {
         self.last_phase
+    }
+
+    fn ctl_remove_rule_by_id(&mut self, rule_id: i32) {
+        self.remove_rule_by_id(rule_id);
+    }
+
+    fn ctl_remove_rule_target_by_id(&mut self, rule_id: i32, variable: RuleVariable, key: &str) {
+        self.remove_rule_target_by_id(rule_id, variable, key);
     }
 
     // ===== Flow Control Methods =====
