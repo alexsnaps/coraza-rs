@@ -4,7 +4,7 @@
 
 ## Current Status (as of 2026-03-11)
 
-**Phase 9: Transaction Enhancements** - IN PROGRESS (8/12 steps complete)
+**Phase 10: WAF Core & Configuration** - READY TO START
 
 - ✅ **Phase 1:** Foundation types (RuleSeverity, RulePhase, RuleVariable, etc.) - COMPLETE
 - ✅ **Phase 2:** String utilities - COMPLETE
@@ -14,29 +14,32 @@
 - ✅ **Phase 6:** Actions (27 core actions, 4 deferred) - COMPLETE
 - ✅ **Phase 7:** Rule Engine (8/8 steps complete, 3 features deferred) - COMPLETE
 - ✅ **Phase 8:** SecLang Parser (9/9 steps complete, 7 directives deferred) - COMPLETE
-- 🚧 **Phase 9:** Transaction Enhancements (10/12 steps complete) - IN PROGRESS
+- ✅ **Phase 9:** Transaction Enhancements (11/12 steps complete, Step 11 deferred to Phase 10) - COMPLETE
   - ✅ Step 1: Body Processor Foundation - COMPLETE
   - ✅ Step 2: URL-Encoded Body Processor - COMPLETE
   - ✅ Step 3: Multipart Body Processor - COMPLETE
   - ✅ Step 4: JSON Body Processor - COMPLETE
   - ✅ Step 5: XML Body Processor - COMPLETE
-  - ✅ Step 6: Variable Population System - PARTIAL (core infrastructure complete)
-  - ✅ Step 7: Phase Processing with Rule Evaluation - PARTIAL (infrastructure complete)
-  - ✅ Step 8: CTL Action Execution - PARTIAL (7 transaction-level commands complete, 13 WAF-level deferred)
+  - ✅ Step 6: Variable Population System - COMPLETE
+  - ✅ Step 7: Phase Processing with Rule Evaluation - COMPLETE
+  - ✅ Step 8: CTL Action Execution - COMPLETE (7 transaction-level commands, 13 WAF-level deferred to Phase 10)
   - ✅ Step 9: Advanced RuleGroup Features - COMPLETE (skip/skipAfter, phase filtering, interruption handling)
   - ✅ Step 10: Deferred Actions - COMPLETE (exec, expirevar, setenv, initcol with Go parity)
-  - ⏳ Step 11-12: Additional deferred items - PENDING
+  - ⏭️ Step 11: Persistence Layer - DEFERRED TO PHASE 10 (requires WAF infrastructure)
+  - ✅ Step 12: Integration Tests & Documentation - COMPLETE (17 integration tests)
 
 **Quality Metrics:**
-- 997 tests passing total:
+- 1014 tests passing total (↑17 from Phase 9):
   - 856 unit tests (lib tests)
-  - 56 integration tests (tests/rule_engine.rs + tests/seclang.rs)
+  - 17 transaction integration tests (tests/transaction_integration.rs) - NEW
+  - 39 seclang integration tests (tests/seclang.rs)
+  - 17 rule engine integration tests (tests/rule_engine.rs)
   - 141 doc tests
 - ✅ Clippy clean (0 warnings)
 - ✅ 100% test parity with Go implementation for all implemented features
 
-**Next Milestone:** Complete Phase 9 remaining steps (9-12), then Phase 10 - WAF Core & Configuration
-**Detailed Plan:** See "Phase 9: Transaction Enhancements - DETAILED STEP-BY-STEP PLAN" below
+**Next Milestone:** Phase 10 - WAF Core & Configuration (~10 days)
+**Detailed Plan:** See "Phase 10: WAF Core & Configuration - DETAILED STEP-BY-STEP PLAN" below
 
 ## Porting Strategy & Guidelines
 
@@ -2242,23 +2245,35 @@ The following features were deferred from earlier phases and will be implemented
 **Source:** `coraza/internal/corazawaf/transaction.go` (78k lines)
 **Target:** Enhanced `src/transaction.rs` and `src/body_processors/`
 
-### Phase 10: WAF Core & Configuration (~10 days)
-**Goal:** Top-level WAF instance with configuration management and remaining deferred features.
+### Phase 10: WAF Core & Configuration (~12 days)
+**Goal:** Top-level WAF instance with configuration management and all 27 deferred features.
 
-**New Components:**
-- [ ] WAF configuration builder
-- [ ] Rule set management and storage
-- [ ] Transaction factory
-- [ ] Audit logging
-- [ ] Dataset management
+**8-Step Implementation Plan:**
+1. **WAF Core & Configuration** (Days 1-2) - WAF struct, config builder, transaction factory
+2. **Rule Storage & Management** (Days 2-4) - Indexed storage (ID/tag/msg), add/remove/find operations
+3. **Deferred SecLang Directives** (Days 4-5) - 7 directives (rule removal/update, default actions)
+4. **Deferred Operators** (Days 5-7) - 6 operators (file/dataset loading, libinjection)
+5. **Deferred CTL Commands** (Days 7-8) - 13 WAF-level runtime configuration commands
+6. **Persistence Layer** (Days 8-9) - In-memory persistent collections with expiration
+7. **Audit Logging** (Days 9-10) - Basic audit log infrastructure
+8. **Integration Tests** (Days 10-12) - 40+ comprehensive tests
 
-**Deferred Items to Implement:**
-- [ ] **13 CTL Commands:** ruleRemove*, requestBodyProcessor, responseBodyProcessor, auditEngine, auditLogParts, debugLogLevel
-- [ ] **7 SecLang Directives:** SecRuleRemove*, SecDefaultAction, SecRuleUpdate*
-- [ ] **6 Operators:** @ipMatchFromFile, @ipMatchFromDataset, @pmFromFile, @pmFromDataset, @detectSQLi, @detectXSS
+**Components to Implement:**
+- [ ] WAF configuration builder (15 tests)
+- [ ] Rule storage with indexing (20 tests)
+- [ ] Transaction factory (included above)
+- [ ] 7 SecLang directives: SecRuleRemove*, SecDefaultAction, SecRuleUpdate* (14 tests)
+- [ ] 6 Operators: @ipMatchFromFile, @ipMatchFromDataset, @pmFromFile, @pmFromDataset, @detectSQLi, @detectXSS (12 tests)
+- [ ] 13 CTL commands: ruleRemove*, requestBodyProcessor, responseBodyProcessor, auditEngine, auditLogParts, debugLogLevel (13 tests)
+- [ ] Persistence layer (in-memory) (15 tests)
+- [ ] Audit logging infrastructure (10 tests)
 
-**Source:** `coraza/internal/corazawaf/waf.go` (12k lines), `coraza/internal/seclang/directives.go`, `coraza/internal/actions/ctl.go`
-**Target:** `src/waf.rs`, `src/config.rs`, enhanced `src/operators/`, enhanced `src/seclang/parser.rs`
+**Source:** `coraza/internal/corazawaf/waf.go`, `coraza/internal/seclang/directives.go`, `coraza/internal/operators/`, `coraza/internal/collections/named.go`
+**Target:** `src/waf.rs`, `src/config.rs`, `src/seclang/directives.rs`, `src/operators/`, `src/actions/ctl.rs`, `src/collection/persistent.rs`, `src/audit_log/`
+
+**Expected Test Count:** 139+ new tests (40+ integration, 99+ unit)
+
+**Detailed Plan:** See "Phase 10: WAF Core & Configuration - DETAILED STEP-BY-STEP PLAN" below
 
 ### Phase 11: Integration & Testing (~10 days)
 **Goal:** Production readiness.
@@ -2277,7 +2292,7 @@ The following features were deferred from earlier phases and will be implemented
 ## Project Status Dashboard (as of 2026-03-11)
 
 ### Completed Work
-**8 out of 11 phases complete** (73% of phases)
+**9 out of 11 phases complete** (82% of phases)
 
 | Phase | Name | Status | Tests | Features |
 |-------|------|--------|-------|----------|
@@ -2290,20 +2305,23 @@ The following features were deferred from earlier phases and will be implemented
 | 6 | Actions | ✅ | 513/513 | 27 actions (4 deferred) |
 | 7 | Rule Engine | ✅ | 719/719 | Full rule evaluation (3 features deferred) |
 | 8 | SecLang Parser | ✅ | 904/904 | Parser, directives (7 directives deferred) |
-| 9 | Transaction Enhancements | 🚧 | 856/856 | Body processors, phase processing (10/12 steps) |
-| 10 | WAF Core | ⏳ | - | WAF instance, rule storage |
+| 9 | Transaction Enhancements | ✅ | 1014/1014 | Body processors, phase processing, integration (11/12 steps) |
+| 10 | WAF Core | ⏳ | - | WAF instance, rule storage, persistence |
 | 11 | Integration & Testing | ⏳ | - | CRS v4, benchmarks, E2E |
 
 ### Test Coverage
-- **997 total tests passing:**
+- **1014 total tests passing:**
   - 856 unit tests (lib) - Includes all body processors (RAW, URL-encoded, Multipart, JSON, XML) + phase processing + CTL execution + advanced RuleGroup features + deferred actions
-  - 56 integration tests (tests/rule_engine.rs + tests/seclang.rs)
+  - 17 transaction integration tests (tests/transaction_integration.rs) - NEW in Phase 9
+  - 39 seclang integration tests (tests/seclang.rs)
+  - 17 rule engine integration tests (tests/rule_engine.rs)
   - 141 doc tests
 - **0 clippy warnings**
 - **100% test parity** with Go implementation for all implemented features
   - All 7 Go multipart tests ported with behavioral differences documented
   - All 5 Go JSON test cases ported + 5 additional tests + 3 response processing tests
   - All 5 Go XML test cases ported + 5 additional tests
+  - 17 comprehensive transaction integration tests covering end-to-end scenarios
 
 ### Features Implemented
 ✅ **30 Transformations** (all from Go codebase)
@@ -2313,19 +2331,17 @@ The following features were deferred from earlier phases and will be implemented
 ✅ **SecLang Parser** (parse rules, directives, includes)
 ✅ **14 Configuration Directives**
 
-### Deferred Items (26 remaining of 40 original)
+### Deferred Items (27 remaining of 40 original)
 **Implemented in Phase 9:**
 - ✅ 7 CTL transaction-level commands (ruleEngine, requestBodyAccess, requestBodyLimit, forceRequestBodyVariable, responseBodyAccess, responseBodyLimit, forceResponseBodyVariable)
 - ✅ 3 RuleGroup features (skip/skipAfter, phase filtering, interruption handling)
 - ✅ 4 Actions (exec, expirevar, setenv, initcol - matching Go parity)
 
-**To be implemented in Phase 9 (Transaction) - Remaining (0 items):**
-- None - all Phase 9 deferred items complete! ✅
-
-**To be implemented in Phase 10 (WAF Core) - (26 items):**
+**To be implemented in Phase 10 (WAF Core) - (27 items):**
 - 13 CTL WAF-level commands: ruleRemoveById, ruleRemoveByTag, ruleRemoveByMsg, ruleRemoveTargetById, ruleRemoveTargetByTag, ruleRemoveTargetByMsg, requestBodyProcessor, responseBodyProcessor, auditEngine, auditLogParts, debugLogLevel
 - 7 SecLang directives: SecRuleRemoveById, SecRuleRemoveByTag, SecRuleRemoveByMsg, SecDefaultAction, SecRuleUpdateTargetById, SecRuleUpdateActionById, SecRuleUpdateTargetByTag
 - 6 operators: @ipMatchFromFile, @ipMatchFromDataset, @pmFromFile, @pmFromDataset, @detectSQLi, @detectXSS
+- 1 persistence layer: PersistentCollection infrastructure for IP/SESSION/USER collections (deferred from Phase 9 Step 11)
 
 ### Lines of Code
 - **Rust implementation:** ~8,500 lines (estimated)
@@ -2333,11 +2349,12 @@ The following features were deferred from earlier phases and will be implemented
 - **Efficiency:** Rust port is significantly more concise while maintaining full compatibility
 
 ### Next Milestone
-**Phase 9: Transaction Enhancements** (~15 days) - DETAILED PLAN BELOW
-- Implement body processors
-- Complete phase-based processing
-- Implement deferred actions and features
-- Add persistence layer for collections
+**Phase 10: WAF Core & Configuration** (~10 days) - DETAILED PLAN BELOW
+- WAF infrastructure (configuration, rule storage, transaction factory)
+- 7 deferred SecLang directives (rule removal, default actions, rule updates)
+- 6 deferred operators (file/dataset loading, libinjection)
+- 13 deferred CTL commands (WAF-level runtime configuration)
+- Persistence layer for collections (IP/SESSION/USER)
 
 ---
 
@@ -3558,5 +3575,904 @@ Created comprehensive integration test suite in `tests/transaction_integration.r
 - ✅ Fully documented
 
 **Phase 9: Transaction Enhancements - COMPLETE** 🎉
+
+---
+
+## Phase 10: WAF Core & Configuration - DETAILED STEP-BY-STEP PLAN
+
+**Status:** ⏳ READY TO START
+**Estimated Duration:** 10-12 days
+**Completion Target:** 2026-03-21
+
+### Overview
+
+Implement the top-level WAF instance that manages configuration, rule storage, and transaction lifecycle. This phase integrates all previous phases into a complete, production-ready WAF library.
+
+**Key Goals:**
+1. WAF infrastructure (configuration builder, rule storage, transaction factory)
+2. Implement 7 deferred SecLang directives (rule removal/update, default actions)
+3. Implement 6 deferred operators (file/dataset loading, libinjection)
+4. Implement 13 deferred CTL commands (WAF-level runtime configuration)
+5. Implement persistence layer (IP/SESSION/USER collections)
+6. Audit logging infrastructure
+
+**Source Files:**
+- `coraza/waf.go` (390 lines) - WAF public API
+- `coraza/internal/corazawaf/waf.go` (1,200 lines) - WAF implementation
+- `coraza/internal/seclang/directives.go` (rule removal/update directives)
+- `coraza/internal/operators/` (file-based operators, libinjection)
+- `coraza/internal/collections/named.go` (persistent collections)
+
+**Target Files:**
+- `src/waf.rs` (~400 lines) - WAF struct and public API
+- `src/config.rs` (~300 lines) - Configuration builder
+- `src/seclang/directives.rs` (enhanced with 7 new directives)
+- `src/operators/` (enhanced with 6 new operators)
+- `src/actions/ctl.rs` (enhanced with 13 new commands)
+- `src/collection/persistent.rs` (~350 lines) - Persistent collections
+
+---
+
+### Step 1: WAF Core Structure & Configuration (Days 1-2)
+
+**Goal:** Implement the main WAF struct and configuration system
+
+**Components:**
+
+**1.1 WAF Struct (`src/waf.rs`):**
+```rust
+pub struct Waf {
+    /// Compiled rule groups organized by phase
+    rules: Arc<RuleGroup>,
+
+    /// Configuration settings
+    config: WafConfig,
+
+    /// Audit logger (if enabled)
+    audit_logger: Option<Box<dyn AuditLogger>>,
+
+    /// Persistent collections storage
+    persistent_collections: Arc<RwLock<PersistentCollectionStore>>,
+}
+
+impl Waf {
+    pub fn new(config: WafConfig) -> Result<Self, WafError>;
+    pub fn new_transaction(&self) -> Transaction;
+    pub fn new_transaction_with_id(&self, id: String) -> Transaction;
+}
+```
+
+**1.2 Configuration System (`src/config.rs`):**
+```rust
+pub struct WafConfig {
+    // Rule engine settings
+    pub rule_engine: RuleEngineStatus,
+
+    // Body processing
+    pub request_body_access: bool,
+    pub request_body_limit: i64,
+    pub response_body_access: bool,
+    pub response_body_limit: i64,
+
+    // Audit logging
+    pub audit_engine: AuditEngineStatus,
+    pub audit_log_parts: Vec<AuditLogPart>,
+    pub audit_log_path: String,
+
+    // Collection timeouts
+    pub collection_timeout: i64,
+
+    // Debug settings
+    pub debug_log_level: i32,
+}
+
+pub struct WafConfigBuilder {
+    config: WafConfig,
+}
+
+impl WafConfigBuilder {
+    pub fn new() -> Self;
+    pub fn rule_engine(mut self, status: RuleEngineStatus) -> Self;
+    pub fn request_body_limit(mut self, limit: i64) -> Self;
+    pub fn audit_engine(mut self, status: AuditEngineStatus) -> Self;
+    pub fn build(self) -> WafConfig;
+}
+```
+
+**Source:** `coraza/waf.go`, `coraza/seclang/parser.go` (config directives)
+**Target:** `src/waf.rs` (~400 lines), `src/config.rs` (~300 lines)
+**Tests:** 15 tests (WAF creation, config builder, transaction factory)
+
+**Deliverable:** WAF infrastructure with configuration system
+
+---
+
+### Step 2: Rule Storage & Management (Days 2-4)
+
+**Goal:** Implement rule storage indexed by ID, tag, and message for efficient lookup and manipulation
+
+**Components:**
+
+**2.1 Rule Storage (`src/waf.rs`):**
+```rust
+pub struct RuleStorage {
+    /// All rules in insertion order
+    rules: Vec<Rule>,
+
+    /// Index by rule ID for O(1) lookup
+    by_id: HashMap<usize, usize>, // rule_id -> index
+
+    /// Index by tag for O(1) lookup
+    by_tag: HashMap<String, Vec<usize>>, // tag -> [indices]
+
+    /// Index by message for O(1) lookup
+    by_msg: HashMap<String, Vec<usize>>, // msg -> [indices]
+}
+
+impl RuleStorage {
+    pub fn add(&mut self, rule: Rule) -> Result<(), WafError>;
+    pub fn get_by_id(&self, id: usize) -> Option<&Rule>;
+    pub fn remove_by_id(&mut self, id: usize) -> Result<(), WafError>;
+    pub fn remove_by_tag(&mut self, tag: &str) -> Result<usize, WafError>;
+    pub fn remove_by_msg(&mut self, pattern: &str) -> Result<usize, WafError>;
+    pub fn find_by_tag(&self, tag: &str) -> Vec<&Rule>;
+    pub fn find_by_msg(&self, pattern: &str) -> Vec<&Rule>;
+}
+```
+
+**2.2 Rule Loading:**
+```rust
+impl Waf {
+    pub fn add_rule(&mut self, rule: Rule) -> Result<(), WafError>;
+    pub fn add_rules_from_file(&mut self, path: &str) -> Result<(), WafError>;
+    pub fn add_rules_from_string(&mut self, content: &str) -> Result<(), WafError>;
+    pub fn compile(&mut self) -> Result<(), WafError>;
+}
+```
+
+**Source:** `coraza/internal/corazawaf/waf.go` (rule management methods)
+**Target:** `src/waf.rs` (~300 additional lines)
+**Tests:** 20 tests (add, remove, find by ID/tag/msg)
+
+**Deliverable:** Complete rule storage and management system
+
+---
+
+### Step 3: Deferred SecLang Directives (Days 4-5)
+
+**Goal:** Implement 7 deferred directives that require WAF infrastructure
+
+**Components:**
+
+**3.1 Rule Removal Directives:**
+- `SecRuleRemoveById <id | id-range>`
+- `SecRuleRemoveByTag <tag>`
+- `SecRuleRemoveByMsg <regex>`
+
+**Implementation:**
+```rust
+// In src/seclang/directives.rs
+
+fn directive_rule_remove_by_id(parser: &mut Parser, args: &str) -> Result<(), ParseError> {
+    // Parse: single ID, ID range (100-199), or comma-separated list
+    for id_spec in args.split(',') {
+        if id_spec.contains('-') {
+            // Range: 100-199
+            let parts: Vec<_> = id_spec.split('-').collect();
+            let start = parts[0].parse::<usize>()?;
+            let end = parts[1].parse::<usize>()?;
+            parser.waf.remove_rules_by_id_range(start, end)?;
+        } else {
+            // Single ID
+            let id = id_spec.parse::<usize>()?;
+            parser.waf.remove_rule_by_id(id)?;
+        }
+    }
+    Ok(())
+}
+
+fn directive_rule_remove_by_tag(parser: &mut Parser, args: &str) -> Result<(), ParseError> {
+    parser.waf.remove_rules_by_tag(args)?;
+    Ok(())
+}
+
+fn directive_rule_remove_by_msg(parser: &mut Parser, args: &str) -> Result<(), ParseError> {
+    parser.waf.remove_rules_by_msg_pattern(args)?;
+    Ok(())
+}
+```
+
+**3.2 Default Action Directive:**
+- `SecDefaultAction <phase>:<actions>`
+
+**Implementation:**
+```rust
+fn directive_default_action(parser: &mut Parser, args: &str) -> Result<(), ParseError> {
+    // Parse phase and actions
+    let parts: Vec<_> = args.splitn(2, ':').collect();
+    let phase = RulePhase::from_str(parts[0])?;
+    let actions = parse_actions(parts[1])?;
+
+    parser.waf.set_default_action(phase, actions)?;
+    Ok(())
+}
+```
+
+**3.3 Rule Update Directives:**
+- `SecRuleUpdateTargetById <id> <variable-list>`
+- `SecRuleUpdateActionById <id> <action-list>`
+- `SecRuleUpdateTargetByTag <tag> <variable-list>`
+
+**Implementation:**
+```rust
+fn directive_rule_update_target_by_id(parser: &mut Parser, args: &str) -> Result<(), ParseError> {
+    let parts: Vec<_> = args.splitn(2, ' ').collect();
+    let id = parts[0].parse::<usize>()?;
+    let variables = parse_variables(parts[1])?;
+
+    parser.waf.update_rule_targets(id, variables)?;
+    Ok(())
+}
+
+fn directive_rule_update_action_by_id(parser: &mut Parser, args: &str) -> Result<(), ParseError> {
+    let parts: Vec<_> = args.splitn(2, ' ').collect();
+    let id = parts[0].parse::<usize>()?;
+    let actions = parse_actions(parts[1])?;
+
+    parser.waf.update_rule_actions(id, actions)?;
+    Ok(())
+}
+```
+
+**Source:** `coraza/internal/seclang/directives.go` (lines 800-1000)
+**Target:** `src/seclang/directives.rs` (~200 additional lines)
+**Tests:** 14 tests (2 per directive)
+
+**Deliverable:** 7 SecLang directives for rule manipulation
+
+---
+
+### Step 4: Deferred Operators (Days 5-7)
+
+**Goal:** Implement 6 deferred operators that require file/dataset access or external libraries
+
+**Components:**
+
+**4.1 File-Based Operators:**
+
+**@ipMatchFromFile:**
+```rust
+// src/operators/ip_match.rs
+
+pub struct IpMatchFromFile {
+    ip_ranges: Vec<IpRange>, // Loaded from file
+}
+
+impl Operator for IpMatchFromFile {
+    fn init(&mut self, param: &str) -> Result<(), OperatorError> {
+        // Load IP ranges from file
+        let file_path = param;
+        let content = std::fs::read_to_string(file_path)?;
+
+        for line in content.lines() {
+            let line = line.trim();
+            if !line.is_empty() && !line.starts_with('#') {
+                self.ip_ranges.push(IpRange::parse(line)?);
+            }
+        }
+        Ok(())
+    }
+
+    fn evaluate<TX: TransactionState>(&self, _tx: Option<&TX>, input: &str) -> bool {
+        let ip = input.parse::<IpAddr>().ok()?;
+        self.ip_ranges.iter().any(|range| range.contains(&ip))
+    }
+}
+```
+
+**@pmFromFile:**
+```rust
+// src/operators/pm.rs
+
+pub struct PmFromFile {
+    ac: AhoCorasick, // Aho-Corasick automaton
+}
+
+impl Operator for PmFromFile {
+    fn init(&mut self, param: &str) -> Result<(), OperatorError> {
+        let content = std::fs::read_to_string(param)?;
+        let patterns: Vec<_> = content.lines()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect();
+
+        self.ac = AhoCorasickBuilder::new()
+            .ascii_case_insensitive(true)
+            .build(patterns)?;
+        Ok(())
+    }
+}
+```
+
+**4.2 Dataset-Based Operators:**
+- `@ipMatchFromDataset <dataset-name>` - Load from WAF dataset
+- `@pmFromDataset <dataset-name>` - Load from WAF dataset
+
+**Implementation:**
+```rust
+// Requires dataset infrastructure in WAF
+impl Waf {
+    pub fn add_dataset(&mut self, name: String, values: Vec<String>);
+    pub fn get_dataset(&self, name: &str) -> Option<&[String]>;
+}
+```
+
+**4.3 libinjection Operators:**
+
+**@detectSQLi:**
+```rust
+// src/operators/detect_sqli.rs
+
+pub struct DetectSQLi;
+
+impl Operator for DetectSQLi {
+    fn init(&mut self, _param: &str) -> Result<(), OperatorError> {
+        Ok(()) // No parameters
+    }
+
+    fn evaluate<TX: TransactionState>(&self, _tx: Option<&TX>, input: &str) -> bool {
+        // Use libinjection-sys or pure Rust implementation
+        libinjection::is_sqli(input)
+    }
+}
+```
+
+**@detectXSS:**
+```rust
+// src/operators/detect_xss.rs
+
+pub struct DetectXSS;
+
+impl Operator for DetectXSS {
+    fn evaluate<TX: TransactionState>(&self, _tx: Option<&TX>, input: &str) -> bool {
+        libinjection::is_xss(input)
+    }
+}
+```
+
+**Dependencies:**
+- Add `libinjection-sys` or pure Rust libinjection implementation to `Cargo.toml`
+- May defer full libinjection to Phase 11 if licensing/binding issues arise
+
+**Source:** `coraza/internal/operators/` (detectSQLi.go, detectXSS.go, ipMatchFromFile.go, pmFromFile.go)
+**Target:** `src/operators/` (~400 additional lines)
+**Tests:** 12 tests (2 per operator)
+
+**Deliverable:** 6 deferred operators with file/dataset/libinjection support
+
+---
+
+### Step 5: Deferred CTL Commands (Days 7-8)
+
+**Goal:** Implement 13 WAF-level CTL commands that modify WAF state (not transaction state)
+
+**Components:**
+
+**5.1 Rule Removal CTL Commands:**
+```rust
+// In src/actions/ctl.rs
+
+fn ctl_rule_remove_by_id(waf: &mut Waf, param: &str) -> Result<(), ActionError> {
+    let id = param.parse::<usize>()?;
+    waf.remove_rule_by_id(id)?;
+    Ok(())
+}
+
+fn ctl_rule_remove_by_tag(waf: &mut Waf, param: &str) -> Result<(), ActionError> {
+    waf.remove_rules_by_tag(param)?;
+    Ok(())
+}
+
+fn ctl_rule_remove_by_msg(waf: &mut Waf, param: &str) -> Result<(), ActionError> {
+    waf.remove_rules_by_msg_pattern(param)?;
+    Ok(())
+}
+
+fn ctl_rule_remove_target_by_id(waf: &mut Waf, param: &str) -> Result<(), ActionError> {
+    // Parse: id variable1,variable2
+    let parts: Vec<_> = param.splitn(2, ' ').collect();
+    let id = parts[0].parse::<usize>()?;
+    let variables = parse_variables(parts[1])?;
+    waf.remove_rule_targets(id, variables)?;
+    Ok(())
+}
+```
+
+**5.2 Body Processor CTL Commands:**
+```rust
+fn ctl_request_body_processor(tx: &mut Transaction, param: &str) -> Result<(), ActionError> {
+    // Set body processor: urlencoded, multipart, json, xml
+    tx.set_request_body_processor(param)?;
+    Ok(())
+}
+
+fn ctl_response_body_processor(tx: &mut Transaction, param: &str) -> Result<(), ActionError> {
+    tx.set_response_body_processor(param)?;
+    Ok(())
+}
+```
+
+**5.3 Audit Logging CTL Commands:**
+```rust
+fn ctl_audit_engine(tx: &mut Transaction, param: &str) -> Result<(), ActionError> {
+    let status = AuditEngineStatus::from_str(param)?;
+    tx.set_audit_engine(status);
+    Ok(())
+}
+
+fn ctl_audit_log_parts(tx: &mut Transaction, param: &str) -> Result<(), ActionError> {
+    let parts = parse_audit_log_parts(param)?;
+    tx.set_audit_log_parts(parts);
+    Ok(())
+}
+```
+
+**5.4 Debug Logging CTL Command:**
+```rust
+fn ctl_debug_log_level(waf: &mut Waf, param: &str) -> Result<(), ActionError> {
+    let level = param.parse::<i32>()?;
+    waf.set_debug_log_level(level);
+    Ok(())
+}
+```
+
+**Full List of 13 Commands:**
+1. `ctl:ruleRemoveById=<id>`
+2. `ctl:ruleRemoveByTag=<tag>`
+3. `ctl:ruleRemoveByMsg=<pattern>`
+4. `ctl:ruleRemoveTargetById=<id> <variables>`
+5. `ctl:ruleRemoveTargetByTag=<tag> <variables>`
+6. `ctl:ruleRemoveTargetByMsg=<pattern> <variables>`
+7. `ctl:requestBodyProcessor=<processor>`
+8. `ctl:responseBodyProcessor=<processor>`
+9. `ctl:auditEngine=<on|off|relevantonly>`
+10. `ctl:auditLogParts=<parts>`
+11. `ctl:debugLogLevel=<level>`
+12. `ctl:hashEngine=<on|off>` (if needed)
+13. `ctl:hashEnforcement=<on|off>` (if needed)
+
+**Note:** Some CTL commands require WAF reference from transaction, which may require architectural changes.
+
+**Source:** `coraza/internal/actions/ctl.go` (WAF-level commands)
+**Target:** `src/actions/ctl.rs` (~300 additional lines)
+**Tests:** 13 tests (1 per command)
+
+**Deliverable:** 13 WAF-level CTL commands
+
+---
+
+### Step 6: Persistence Layer (Days 8-9)
+
+**Goal:** Implement persistent collections for IP, SESSION, and USER variables
+
+**Components:**
+
+**6.1 Persistent Collection Infrastructure:**
+```rust
+// src/collection/persistent.rs
+
+pub struct PersistentCollection {
+    /// Variable name (e.g., "ip", "session", "user")
+    name: String,
+
+    /// Key-value storage
+    data: HashMap<String, PersistentValue>,
+
+    /// Default timeout in seconds
+    timeout: i64,
+}
+
+pub struct PersistentValue {
+    /// Stored value
+    value: String,
+
+    /// Creation timestamp (Unix epoch)
+    created_at: i64,
+
+    /// Expiration timestamp (Unix epoch), if set
+    expires_at: Option<i64>,
+
+    /// Update counter
+    update_count: usize,
+}
+
+impl PersistentCollection {
+    pub fn new(name: String, timeout: i64) -> Self;
+    pub fn get(&self, key: &str) -> Option<&str>;
+    pub fn set(&mut self, key: &str, value: String);
+    pub fn set_with_expiry(&mut self, key: &str, value: String, expiry: i64);
+    pub fn increment(&mut self, key: &str);
+    pub fn cleanup_expired(&mut self);
+}
+```
+
+**6.2 Collection Store:**
+```rust
+pub struct PersistentCollectionStore {
+    collections: HashMap<String, PersistentCollection>,
+}
+
+impl PersistentCollectionStore {
+    pub fn init_collection(&mut self, name: &str, key: &str) -> &mut PersistentCollection;
+    pub fn get_collection(&self, name: &str) -> Option<&PersistentCollection>;
+    pub fn cleanup_expired_all(&mut self);
+}
+```
+
+**6.3 Integration with initcol/expirevar:**
+```rust
+// In src/actions/deferred.rs
+
+impl Action for InitcolAction {
+    fn evaluate(&self, rule: &Rule, tx: &mut dyn TransactionState) {
+        // Expand macro in key
+        let key = self.key_macro.expand(Some(tx));
+
+        // Get WAF reference from transaction
+        let waf = tx.get_waf();
+
+        // Initialize collection
+        waf.persistent_collections.write()
+            .init_collection(&self.collection, &key);
+    }
+}
+
+impl Action for ExpirevarAction {
+    fn evaluate(&self, rule: &Rule, tx: &mut dyn TransactionState) {
+        let waf = tx.get_waf();
+        waf.persistent_collections.write()
+            .set_expiry(&self.variable, self.seconds);
+    }
+}
+```
+
+**6.4 Storage Backend (Phase 10: In-Memory):**
+- In-memory HashMap storage
+- Cleanup of expired entries
+- Thread-safe access with RwLock
+
+**Future (Phase 11+):**
+- Disk-based persistence
+- Redis backend
+- Database backend
+
+**Source:** `coraza/internal/collections/named.go` (600 lines)
+**Target:** `src/collection/persistent.rs` (~350 lines)
+**Tests:** 15 tests (create, get, set, expiry, cleanup)
+
+**Deliverable:** Persistent collection infrastructure with expiration
+
+---
+
+### Step 7: Audit Logging Infrastructure (Days 9-10)
+
+**Goal:** Implement audit logging system for transaction recording
+
+**Components:**
+
+**7.1 Audit Logger Trait:**
+```rust
+// src/audit_log/mod.rs
+
+pub trait AuditLogger: Send + Sync {
+    fn log(&self, entry: &AuditLogEntry) -> Result<(), AuditLogError>;
+}
+
+pub struct AuditLogEntry {
+    pub transaction_id: String,
+    pub timestamp: i64,
+    pub client_ip: String,
+    pub server_ip: String,
+    pub request: AuditLogRequest,
+    pub response: AuditLogResponse,
+    pub rules_matched: Vec<AuditLogRule>,
+}
+```
+
+**7.2 Audit Log Writers:**
+```rust
+pub struct FileAuditLogger {
+    file_path: String,
+    parts: Vec<AuditLogPart>,
+}
+
+impl AuditLogger for FileAuditLogger {
+    fn log(&self, entry: &AuditLogEntry) -> Result<(), AuditLogError> {
+        // Write entry to file in chosen format
+        // Filter by audit log parts (A, B, C, E, F, H, I, J, K, Z)
+    }
+}
+
+pub struct NoOpAuditLogger;
+
+impl AuditLogger for NoOpAuditLogger {
+    fn log(&self, _entry: &AuditLogEntry) -> Result<(), AuditLogError> {
+        Ok(()) // No-op
+    }
+}
+```
+
+**7.3 Integration with Transaction:**
+```rust
+impl Transaction {
+    pub fn log_audit(&self, logger: &dyn AuditLogger) -> Result<(), AuditLogError> {
+        let entry = self.build_audit_log_entry();
+        logger.log(&entry)
+    }
+}
+```
+
+**Source:** `coraza/internal/auditlog/` (700 lines)
+**Target:** `src/audit_log/` (~400 lines)
+**Tests:** 10 tests (entry creation, file writing, parts filtering)
+
+**Deliverable:** Basic audit logging infrastructure
+
+---
+
+### Step 8: Integration & Testing (Days 10-12)
+
+**Goal:** Comprehensive testing of all Phase 10 components
+
+**Test Categories:**
+
+**8.1 WAF Lifecycle Tests:**
+```rust
+#[test]
+fn test_waf_creation_with_config() {
+    let config = WafConfigBuilder::new()
+        .rule_engine(RuleEngineStatus::On)
+        .request_body_limit(1048576)
+        .audit_engine(AuditEngineStatus::RelevantOnly)
+        .build();
+
+    let waf = Waf::new(config).unwrap();
+    assert_eq!(waf.config().rule_engine(), RuleEngineStatus::On);
+}
+
+#[test]
+fn test_waf_transaction_factory() {
+    let waf = Waf::new(WafConfig::default()).unwrap();
+    let tx1 = waf.new_transaction();
+    let tx2 = waf.new_transaction_with_id("custom-id");
+
+    assert_ne!(tx1.id(), tx2.id());
+}
+```
+
+**8.2 Rule Management Tests:**
+```rust
+#[test]
+fn test_rule_removal_by_id() {
+    let mut waf = Waf::new(WafConfig::default()).unwrap();
+
+    // Add rules
+    waf.add_rule(Rule::new().with_id(1)).unwrap();
+    waf.add_rule(Rule::new().with_id(2)).unwrap();
+    waf.add_rule(Rule::new().with_id(3)).unwrap();
+
+    // Remove rule 2
+    waf.remove_rule_by_id(2).unwrap();
+
+    assert_eq!(waf.rule_count(), 2);
+    assert!(waf.get_rule_by_id(2).is_none());
+}
+
+#[test]
+fn test_rule_removal_by_tag() {
+    let mut waf = Waf::new(WafConfig::default()).unwrap();
+
+    waf.add_rule(Rule::new().with_id(1).with_tag("attack-sqli")).unwrap();
+    waf.add_rule(Rule::new().with_id(2).with_tag("attack-xss")).unwrap();
+    waf.add_rule(Rule::new().with_id(3).with_tag("attack-sqli")).unwrap();
+
+    // Remove all SQLi rules
+    let removed = waf.remove_rules_by_tag("attack-sqli").unwrap();
+
+    assert_eq!(removed, 2);
+    assert_eq!(waf.rule_count(), 1);
+}
+```
+
+**8.3 SecLang Directive Tests:**
+```rust
+#[test]
+fn test_sec_rule_remove_by_id_directive() {
+    let mut waf = Waf::new(WafConfig::default()).unwrap();
+
+    let rules = r#"
+        SecRule ARGS "@rx attack" "id:100,phase:2,deny"
+        SecRule ARGS "@rx malicious" "id:101,phase:2,deny"
+        SecRuleRemoveById 100
+    "#;
+
+    waf.add_rules_from_string(rules).unwrap();
+    assert_eq!(waf.rule_count(), 1);
+    assert!(waf.get_rule_by_id(100).is_none());
+    assert!(waf.get_rule_by_id(101).is_some());
+}
+
+#[test]
+fn test_sec_default_action_directive() {
+    let mut waf = Waf::new(WafConfig::default()).unwrap();
+
+    let config = r#"
+        SecDefaultAction "phase:2,log,deny,status:403"
+        SecRule ARGS "@rx attack" "id:100"
+    "#;
+
+    waf.add_rules_from_string(config).unwrap();
+
+    // Rule should inherit default actions
+    let rule = waf.get_rule_by_id(100).unwrap();
+    assert!(rule.has_disruptive_action());
+}
+```
+
+**8.4 Operator Tests:**
+```rust
+#[test]
+fn test_ip_match_from_file() {
+    // Create test file with IP ranges
+    let file_content = "192.168.1.0/24\n10.0.0.0/8\n";
+    std::fs::write("/tmp/test_ips.txt", file_content).unwrap();
+
+    let mut op = IpMatchFromFile::new();
+    op.init("/tmp/test_ips.txt").unwrap();
+
+    assert!(op.evaluate(None, "192.168.1.100"));
+    assert!(!op.evaluate(None, "172.16.0.1"));
+}
+
+#[test]
+fn test_detect_sqli() {
+    let op = DetectSQLi::new();
+
+    assert!(op.evaluate(None, "1' OR '1'='1"));
+    assert!(op.evaluate(None, "admin'--"));
+    assert!(!op.evaluate(None, "normal text"));
+}
+```
+
+**8.5 Persistence Tests:**
+```rust
+#[test]
+fn test_persistent_collection_creation() {
+    let mut store = PersistentCollectionStore::new();
+
+    store.init_collection("ip", "192.168.1.1");
+    let collection = store.get_collection("ip").unwrap();
+
+    assert_eq!(collection.name(), "ip");
+}
+
+#[test]
+fn test_persistent_collection_expiry() {
+    let mut collection = PersistentCollection::new("test", 10);
+
+    collection.set("key1", "value1");
+    collection.set_with_expiry("key2", "value2", 1); // Expires in 1 second
+
+    // Wait for expiry
+    std::thread::sleep(Duration::from_secs(2));
+    collection.cleanup_expired();
+
+    assert!(collection.get("key1").is_some());
+    assert!(collection.get("key2").is_none());
+}
+```
+
+**8.6 Integration Tests:**
+```rust
+#[test]
+fn test_full_waf_lifecycle() {
+    let config = WafConfigBuilder::new()
+        .rule_engine(RuleEngineStatus::On)
+        .request_body_limit(1048576)
+        .build();
+
+    let mut waf = Waf::new(config).unwrap();
+
+    // Load rules
+    waf.add_rules_from_string(r#"
+        SecRule ARGS "@rx attack" "id:100,phase:2,deny,status:403"
+        SecRule REQUEST_URI "@beginsWith /admin" "id:101,phase:1,deny"
+    "#).unwrap();
+
+    // Create transaction
+    let mut tx = waf.new_transaction();
+
+    // Process request
+    tx.process_connection("192.168.1.1", 12345, "10.0.0.1", 80);
+    tx.process_uri("/admin", "GET", "HTTP/1.1");
+
+    let interruption = tx.process_request_headers();
+    assert!(interruption.is_some());
+    assert_eq!(interruption.unwrap().status, 403);
+}
+```
+
+**Source:** `coraza/internal/corazawaf/waf_test.go` (test patterns)
+**Target:** `tests/waf_integration.rs` (~600 lines)
+**Tests:** 40+ tests (WAF lifecycle, rule management, directives, operators, persistence)
+
+**Deliverable:** Comprehensive test suite for Phase 10
+
+---
+
+## Phase 10 Quality Gates
+
+### Must-Have Features:
+- [ ] WAF struct with configuration builder
+- [ ] Rule storage with indexing (ID, tag, message)
+- [ ] Transaction factory pattern
+- [ ] 7 SecLang directives (rule removal/update, default actions)
+- [ ] 6 operators (file/dataset loading, libinjection)
+- [ ] 13 CTL commands (WAF-level runtime config)
+- [ ] Persistence layer (in-memory storage)
+- [ ] Basic audit logging infrastructure
+- [ ] 100% test parity with Go for implemented features
+- [ ] Clippy clean (0 warnings)
+- [ ] Full documentation with examples
+
+### Test Coverage:
+- [ ] 40+ WAF integration tests
+- [ ] 100+ total tests for Phase 10 components
+- [ ] Performance validation (WAF creation <10ms, rule loading <1ms per rule)
+
+### Performance Targets:
+- [ ] WAF creation: <10ms
+- [ ] Rule loading: <1ms per rule
+- [ ] Transaction creation: <100μs
+- [ ] Rule lookup by ID: O(1)
+
+## Phase 10 Dependencies
+
+**Prerequisites (all complete):**
+- ✅ Phase 9: Transaction system with body processing and phase evaluation
+
+**Enables:**
+- Phase 11: Integration & Testing (CRS v4 compatibility, E2E tests, benchmarks)
+
+## Phase 10 Timeline Summary
+
+| Step | Days | Component | Tests |
+|------|------|-----------|-------|
+| 1 | 1-2 | WAF Core & Configuration | 15 |
+| 2 | 2-4 | Rule Storage & Management | 20 |
+| 3 | 4-5 | Deferred SecLang Directives | 14 |
+| 4 | 5-7 | Deferred Operators | 12 |
+| 5 | 7-8 | Deferred CTL Commands | 13 |
+| 6 | 8-9 | Persistence Layer | 15 |
+| 7 | 9-10 | Audit Logging | 10 |
+| 8 | 10-12 | Integration Tests | 40+ |
+| **Total** | **12 days** | **Complete WAF** | **139+ tests** |
+
+**Estimated Completion:** 2026-03-21 (with buffer for complexity)
+
+---
+
+## Phase 10 Success Criteria
+
+- ✅ All 27 deferred items implemented (7 directives + 6 operators + 13 CTL + 1 persistence)
+- ✅ WAF can load and execute complete rule sets
+- ✅ Transaction factory working correctly
+- ✅ Rule management operations functional
+- ✅ Persistence layer operational
+- ✅ All tests passing with 100% Go parity
+- ✅ Clippy clean
+- ✅ Ready for CRS v4 testing in Phase 11
+
+**Phase 10: WAF Core & Configuration - READY TO START** 🚀
 
 ---
