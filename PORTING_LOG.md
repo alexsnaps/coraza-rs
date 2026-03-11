@@ -4,7 +4,7 @@
 
 ## Current Status (as of 2026-03-11)
 
-**Phase 10: WAF Core & Configuration** - IN PROGRESS (Step 1/8 complete)
+**Phase 10: WAF Core & Configuration** - IN PROGRESS (Step 2/8 complete)
 
 - ✅ **Phase 1:** Foundation types (RuleSeverity, RulePhase, RuleVariable, etc.) - COMPLETE
 - ✅ **Phase 2:** String utilities - COMPLETE
@@ -29,12 +29,12 @@
   - ✅ Step 12: Integration Tests & Documentation - COMPLETE (17 integration tests)
 
 **Quality Metrics:**
-- 1107 tests passing total (↑37 from Phase 10 Step 1):
-  - 885 unit tests (lib tests) - +29 from Step 1 (14 config + 15 waf)
+- 1122 tests passing total (↑15 from Phase 10 Step 2):
+  - 894 unit tests (lib tests) - +9 from Step 2
   - 17 transaction integration tests (tests/transaction_integration.rs)
   - 39 seclang integration tests (tests/seclang.rs)
   - 17 rule engine integration tests (tests/rule_engine.rs)
-  - 149 doc tests (+8 from Step 1)
+  - 155 doc tests (+6 from Step 2)
 - ✅ Clippy clean (0 warnings)
 - ✅ 100% test parity with Go implementation for all implemented features
 
@@ -3581,7 +3581,7 @@ Created comprehensive integration test suite in `tests/transaction_integration.r
 
 ## Phase 10: WAF Core & Configuration - DETAILED STEP-BY-STEP PLAN
 
-**Status:** 🚧 IN PROGRESS (Step 1/8 complete)
+**Status:** 🚧 IN PROGRESS (Step 2/8 complete)
 **Started:** 2026-03-11
 **Estimated Duration:** 10-12 days
 **Completion Target:** 2026-03-23
@@ -3706,54 +3706,88 @@ Implement the top-level WAF instance that manages configuration, rule storage, a
 
 ---
 
-### Step 2: Rule Storage & Management (Days 2-4)
+### Step 2: Rule Storage & Management ✅ COMPLETE
 
-**Goal:** Implement rule storage indexed by ID, tag, and message for efficient lookup and manipulation
+**Status:** ✅ COMPLETE (2026-03-11)
+**Goal:** Implement rule management API for adding, removing, and finding rules
 
-**Components:**
+**Implementation Details:**
 
-**2.1 Rule Storage (`src/waf.rs`):**
-```rust
-pub struct RuleStorage {
-    /// All rules in insertion order
-    rules: Vec<Rule>,
+**2.1 Rule Management Methods (`src/waf.rs` - expanded from 421 to 731 lines):**
+- ✅ `add_rule(&mut self, rule: Rule) -> Result<(), WafError>`
+  - Add single rule to WAF
+  - Validates no duplicate IDs using RuleGroup's existing check
+  - Returns `WafError::RuleError` on duplicate ID
+- ✅ `remove_rule_by_id(&mut self, id: i32)`
+  - Remove single rule by ID
+  - Delegates to `RuleGroup::delete_by_id()`
+- ✅ `remove_rules_by_id_range(&mut self, start: i32, end: i32)`
+  - Remove all rules in ID range (inclusive)
+  - Delegates to `RuleGroup::delete_by_range()`
+- ✅ `remove_rules_by_tag(&mut self, tag: &str)`
+  - Remove all rules with matching tag
+  - Delegates to `RuleGroup::delete_by_tag()`
+- ✅ `remove_rules_by_msg(&mut self, msg: &str)`
+  - Remove all rules with matching message (exact match)
+  - Delegates to `RuleGroup::delete_by_msg()`
+- ✅ `find_rule_by_id(&self, id: i32) -> Option<&Rule>`
+  - Find rule by ID, returns None if not found
+  - Delegates to `RuleGroup::find_by_id()`
+- ✅ `rule_count(&self) -> usize`
+  - Get total number of rules
+  - Delegates to `RuleGroup::rule_count()`
 
-    /// Index by rule ID for O(1) lookup
-    by_id: HashMap<usize, usize>, // rule_id -> index
+**2.2 Design Decisions:**
 
-    /// Index by tag for O(1) lookup
-    by_tag: HashMap<String, Vec<usize>>, // tag -> [indices]
+1. **Delegation to RuleGroup:**
+   - All rule management methods delegate to existing `RuleGroup` methods from Phase 7
+   - `RuleGroup` already has comprehensive indexing (by ID, tag, message)
+   - No need for separate `RuleStorage` struct - `RuleGroup` provides all needed functionality
+   - Avoids code duplication and maintains single source of truth
 
-    /// Index by message for O(1) lookup
-    by_msg: HashMap<String, Vec<usize>>, // msg -> [indices]
-}
+2. **Direct RuleGroup Ownership (not Arc):**
+   - Changed from `Arc<RuleGroup>` to `RuleGroup` ownership
+   - WAF is modified during setup phase (adding/removing rules)
+   - No need for Arc sharing until runtime (can add later if needed)
+   - Simpler API for rule manipulation
 
-impl RuleStorage {
-    pub fn add(&mut self, rule: Rule) -> Result<(), WafError>;
-    pub fn get_by_id(&self, id: usize) -> Option<&Rule>;
-    pub fn remove_by_id(&mut self, id: usize) -> Result<(), WafError>;
-    pub fn remove_by_tag(&mut self, tag: &str) -> Result<usize, WafError>;
-    pub fn remove_by_msg(&mut self, pattern: &str) -> Result<usize, WafError>;
-    pub fn find_by_tag(&self, tag: &str) -> Vec<&Rule>;
-    pub fn find_by_msg(&self, pattern: &str) -> Vec<&Rule>;
-}
-```
+3. **Error Handling:**
+   - `add_rule()` returns `Result<(), WafError>` for duplicate ID errors
+   - Removal methods are infallible (removing non-existent items is safe)
+   - Consistent with RuleGroup's existing error handling
 
-**2.2 Rule Loading:**
-```rust
-impl Waf {
-    pub fn add_rule(&mut self, rule: Rule) -> Result<(), WafError>;
-    pub fn add_rules_from_file(&mut self, path: &str) -> Result<(), WafError>;
-    pub fn add_rules_from_string(&mut self, content: &str) -> Result<(), WafError>;
-    pub fn compile(&mut self) -> Result<(), WafError>;
-}
-```
+4. **Deferred Features:**
+   - SecLang rule parsing (`add_rules_from_file`, `add_rules_from_string`) deferred to Step 3
+   - Requires Parser integration with WAF context
+   - Current API supports programmatic rule construction
 
-**Source:** `coraza/internal/corazawaf/waf.go` (rule management methods)
-**Target:** `src/waf.rs` (~300 additional lines)
-**Tests:** 20 tests (add, remove, find by ID/tag/msg)
+**Source Files:**
+- `coraza/internal/corazawaf/waf.go` (rule management methods)
+- `coraza/internal/corazawaf/rule_group.go` (indexing implementation)
 
-**Deliverable:** Complete rule storage and management system
+**Target Files:**
+- `src/waf.rs` (expanded: 421 → 731 lines, +310 lines)
+- `src/rules/group.rs` (existing methods reused from Phase 7)
+
+**Tests:** 10 new tests (all in `src/waf.rs`)
+- ✅ `test_waf_add_rule` - Basic rule addition
+- ✅ `test_waf_add_rule_duplicate_id` - Duplicate ID error handling
+- ✅ `test_waf_remove_rule_by_id` - Single rule removal
+- ✅ `test_waf_remove_rules_by_id_range` - Range removal
+- ✅ `test_waf_remove_rules_by_tag` - Tag-based removal
+- ✅ `test_waf_remove_rules_by_msg` - Message-based removal
+- ✅ `test_waf_find_rule_by_id` - Rule lookup
+- ✅ `test_waf_rule_count` - Count tracking
+- ✅ `test_waf_rule_count_initially_zero` - Initial state
+- ✅ `test_waf_multiple_rule_operations` - Combined operations
+
+**Test Results:**
+- ✅ All 10 new tests passing
+- ✅ Total: 1122 tests (894 lib + 155 doc + 73 integration)
+- ✅ 0 clippy warnings
+- ✅ Full documentation with examples
+
+**Deliverable:** ✅ Complete rule management API with delegation to RuleGroup - COMPLETE
 
 ---
 

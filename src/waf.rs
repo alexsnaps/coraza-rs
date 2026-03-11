@@ -7,10 +7,9 @@
 //! rule storage, and transaction creation.
 
 use crate::config::WafConfig;
-use crate::rules::RuleGroup;
+use crate::rules::{Rule, RuleGroup};
 use crate::transaction::Transaction;
 use crate::utils::strings::random_string;
-use std::sync::Arc;
 
 /// Error type for configuration validation during WAF creation.
 ///
@@ -83,9 +82,9 @@ pub struct Waf {
     /// Configuration settings
     config: WafConfig,
 
-    /// Compiled rules organized by phase
-    /// Wrapped in Arc for efficient sharing with transactions
-    rules: Arc<RuleGroup>,
+    /// Rule group for evaluation
+    /// Rules can be added during WAF setup, then the WAF is used read-only
+    rules: RuleGroup,
 }
 
 impl Waf {
@@ -112,7 +111,7 @@ impl Waf {
         Self::validate_config(&config)?;
 
         // Create empty rule group
-        let rules = Arc::new(RuleGroup::new());
+        let rules = RuleGroup::new();
 
         Ok(Self { config, rules })
     }
@@ -198,6 +197,148 @@ impl Waf {
     /// ```
     pub fn rule_count(&self) -> usize {
         self.rules.count()
+    }
+
+    /// Adds a single rule to the WAF.
+    ///
+    /// # Errors
+    ///
+    /// Returns `WafError::RuleError` if:
+    /// - A rule with the same ID already exists
+    /// - The rule is invalid
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::Waf;
+    /// use coraza::config::WafConfig;
+    /// use coraza::rules::Rule;
+    ///
+    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
+    /// let rule = Rule::new().with_id(1);
+    ///
+    /// waf.add_rule(rule).unwrap();
+    /// assert_eq!(waf.rule_count(), 1);
+    /// ```
+    pub fn add_rule(&mut self, rule: Rule) -> Result<(), WafError> {
+        self.rules.add(rule).map_err(WafError::RuleError)
+    }
+
+    // Note: SecLang rule parsing (SecRule directives) will be added in future steps.
+    // For now, rules must be constructed programmatically using the Rule builder.
+
+    /// Removes a rule by its ID.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::Waf;
+    /// use coraza::config::WafConfig;
+    /// use coraza::rules::Rule;
+    ///
+    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
+    /// waf.add_rule(Rule::new().with_id(1)).unwrap();
+    /// waf.add_rule(Rule::new().with_id(2)).unwrap();
+    ///
+    /// waf.remove_rule_by_id(1);
+    /// assert_eq!(waf.rule_count(), 1);
+    /// ```
+    pub fn remove_rule_by_id(&mut self, id: i32) {
+        self.rules.delete_by_id(id);
+    }
+
+    /// Removes rules within an ID range (inclusive).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::Waf;
+    /// use coraza::config::WafConfig;
+    /// use coraza::rules::Rule;
+    ///
+    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
+    /// waf.add_rule(Rule::new().with_id(100)).unwrap();
+    /// waf.add_rule(Rule::new().with_id(101)).unwrap();
+    /// waf.add_rule(Rule::new().with_id(102)).unwrap();
+    /// waf.add_rule(Rule::new().with_id(200)).unwrap();
+    ///
+    /// waf.remove_rules_by_id_range(100, 102);
+    /// assert_eq!(waf.rule_count(), 1); // Only 200 remains
+    /// ```
+    pub fn remove_rules_by_id_range(&mut self, start: i32, end: i32) {
+        self.rules.delete_by_range(start, end);
+    }
+
+    /// Removes rules by tag.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::Waf;
+    /// use coraza::config::WafConfig;
+    /// use coraza::rules::Rule;
+    ///
+    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
+    ///
+    /// let mut rule1 = Rule::new().with_id(1);
+    /// rule1.metadata_mut().tags.push("attack".to_string());
+    /// waf.add_rule(rule1).unwrap();
+    ///
+    /// let mut rule2 = Rule::new().with_id(2);
+    /// rule2.metadata_mut().tags.push("sqli".to_string());
+    /// waf.add_rule(rule2).unwrap();
+    ///
+    /// waf.remove_rules_by_tag("attack");
+    /// assert_eq!(waf.rule_count(), 1); // Only rule 2 remains
+    /// ```
+    pub fn remove_rules_by_tag(&mut self, tag: &str) {
+        self.rules.delete_by_tag(tag);
+    }
+
+    /// Removes rules by message.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::Waf;
+    /// use coraza::config::WafConfig;
+    /// use coraza::rules::Rule;
+    /// use coraza::operators::Macro;
+    ///
+    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
+    ///
+    /// let mut rule1 = Rule::new().with_id(1);
+    /// rule1.metadata_mut().msg = Some(Macro::new("SQL Injection").unwrap());
+    /// waf.add_rule(rule1).unwrap();
+    ///
+    /// let mut rule2 = Rule::new().with_id(2);
+    /// rule2.metadata_mut().msg = Some(Macro::new("XSS Attack").unwrap());
+    /// waf.add_rule(rule2).unwrap();
+    ///
+    /// waf.remove_rules_by_msg("SQL Injection");
+    /// assert_eq!(waf.rule_count(), 1); // Only rule 2 remains
+    /// ```
+    pub fn remove_rules_by_msg(&mut self, msg: &str) {
+        self.rules.delete_by_msg(msg);
+    }
+
+    /// Finds a rule by its ID.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::Waf;
+    /// use coraza::config::WafConfig;
+    /// use coraza::rules::Rule;
+    ///
+    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
+    /// waf.add_rule(Rule::new().with_id(123)).unwrap();
+    ///
+    /// assert!(waf.find_rule_by_id(123).is_some());
+    /// assert!(waf.find_rule_by_id(999).is_none());
+    /// ```
+    pub fn find_rule_by_id(&self, id: i32) -> Option<&Rule> {
+        self.rules.find_by_id(id)
     }
 
     /// Validates the WAF configuration.
@@ -420,5 +561,170 @@ mod tests {
 
         let err = WafError::AuditLogError("log failed".to_string());
         assert_eq!(err.to_string(), "Audit log error: log failed");
+    }
+
+    // ===== Rule Management Tests (Step 2) =====
+
+    #[test]
+    fn test_waf_add_rule() {
+        let mut waf = Waf::default();
+
+        let rule = Rule::new().with_id(1);
+        waf.add_rule(rule).unwrap();
+
+        assert_eq!(waf.rule_count(), 1);
+    }
+
+    #[test]
+    fn test_waf_add_rule_duplicate_id() {
+        let mut waf = Waf::default();
+
+        waf.add_rule(Rule::new().with_id(1)).unwrap();
+        let result = waf.add_rule(Rule::new().with_id(1));
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("duplicated"));
+    }
+
+    #[test]
+    fn test_waf_remove_rule_by_id() {
+        let mut waf = Waf::default();
+
+        waf.add_rule(Rule::new().with_id(1)).unwrap();
+        waf.add_rule(Rule::new().with_id(2)).unwrap();
+        waf.add_rule(Rule::new().with_id(3)).unwrap();
+
+        waf.remove_rule_by_id(2);
+
+        assert_eq!(waf.rule_count(), 2);
+        assert!(waf.find_rule_by_id(1).is_some());
+        assert!(waf.find_rule_by_id(2).is_none());
+        assert!(waf.find_rule_by_id(3).is_some());
+    }
+
+    #[test]
+    fn test_waf_remove_rules_by_id_range() {
+        let mut waf = Waf::default();
+
+        for id in 1..=10 {
+            waf.add_rule(Rule::new().with_id(id)).unwrap();
+        }
+
+        waf.remove_rules_by_id_range(3, 7);
+
+        assert_eq!(waf.rule_count(), 5); // 1, 2, 8, 9, 10 remain
+        assert!(waf.find_rule_by_id(1).is_some());
+        assert!(waf.find_rule_by_id(3).is_none());
+        assert!(waf.find_rule_by_id(5).is_none());
+        assert!(waf.find_rule_by_id(7).is_none());
+        assert!(waf.find_rule_by_id(8).is_some());
+    }
+
+    #[test]
+    fn test_waf_remove_rules_by_tag() {
+        let mut waf = Waf::default();
+
+        let mut rule1 = Rule::new().with_id(1);
+        rule1.metadata_mut().tags.push("attack-sqli".to_string());
+        waf.add_rule(rule1).unwrap();
+
+        let mut rule2 = Rule::new().with_id(2);
+        rule2.metadata_mut().tags.push("attack-xss".to_string());
+        waf.add_rule(rule2).unwrap();
+
+        let mut rule3 = Rule::new().with_id(3);
+        rule3.metadata_mut().tags.push("attack-sqli".to_string());
+        waf.add_rule(rule3).unwrap();
+
+        waf.remove_rules_by_tag("attack-sqli");
+
+        assert_eq!(waf.rule_count(), 1);
+        assert!(waf.find_rule_by_id(2).is_some());
+    }
+
+    #[test]
+    fn test_waf_remove_rules_by_msg() {
+        use crate::operators::Macro;
+
+        let mut waf = Waf::default();
+
+        let mut rule1 = Rule::new().with_id(1);
+        rule1.metadata_mut().msg = Some(Macro::new("SQL Injection detected").unwrap());
+        waf.add_rule(rule1).unwrap();
+
+        let mut rule2 = Rule::new().with_id(2);
+        rule2.metadata_mut().msg = Some(Macro::new("XSS Attack detected").unwrap());
+        waf.add_rule(rule2).unwrap();
+
+        let mut rule3 = Rule::new().with_id(3);
+        rule3.metadata_mut().msg = Some(Macro::new("SQL Injection detected").unwrap());
+        waf.add_rule(rule3).unwrap();
+
+        waf.remove_rules_by_msg("SQL Injection detected");
+
+        assert_eq!(waf.rule_count(), 1);
+        assert!(waf.find_rule_by_id(2).is_some());
+    }
+
+    #[test]
+    fn test_waf_find_rule_by_id() {
+        let mut waf = Waf::default();
+
+        waf.add_rule(Rule::new().with_id(100)).unwrap();
+        waf.add_rule(Rule::new().with_id(200)).unwrap();
+
+        assert!(waf.find_rule_by_id(100).is_some());
+        assert!(waf.find_rule_by_id(200).is_some());
+        assert!(waf.find_rule_by_id(300).is_none());
+
+        let rule = waf.find_rule_by_id(100).unwrap();
+        assert_eq!(rule.metadata().id, 100);
+    }
+
+    #[test]
+    fn test_waf_rule_count() {
+        let mut waf = Waf::default();
+
+        assert_eq!(waf.rule_count(), 0);
+
+        waf.add_rule(Rule::new().with_id(1)).unwrap();
+        assert_eq!(waf.rule_count(), 1);
+
+        waf.add_rule(Rule::new().with_id(2)).unwrap();
+        assert_eq!(waf.rule_count(), 2);
+
+        waf.remove_rule_by_id(1);
+        assert_eq!(waf.rule_count(), 1);
+    }
+
+    #[test]
+    fn test_waf_multiple_rule_operations() {
+        let mut waf = Waf::default();
+
+        // Add several rules with different metadata
+        for id in 1..=5 {
+            let mut rule = Rule::new().with_id(id);
+            if id % 2 == 0 {
+                rule.metadata_mut().tags.push("even".to_string());
+            }
+            waf.add_rule(rule).unwrap();
+        }
+
+        assert_eq!(waf.rule_count(), 5);
+
+        // Remove even-tagged rules
+        waf.remove_rules_by_tag("even");
+        assert_eq!(waf.rule_count(), 3); // 1, 3, 5 remain
+
+        // Remove by ID
+        waf.remove_rule_by_id(3);
+        assert_eq!(waf.rule_count(), 2); // 1, 5 remain
+
+        // Verify remaining rules
+        assert!(waf.find_rule_by_id(1).is_some());
+        assert!(waf.find_rule_by_id(5).is_some());
+        assert!(waf.find_rule_by_id(2).is_none());
+        assert!(waf.find_rule_by_id(3).is_none());
+        assert!(waf.find_rule_by_id(4).is_none());
     }
 }
