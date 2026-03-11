@@ -369,6 +369,12 @@ impl TestServer {
         Self { waf }
     }
 
+    /// Returns a reference to the underlying WAF instance.
+    #[allow(dead_code)]
+    pub fn waf(&self) -> &Waf {
+        &self.waf
+    }
+
     /// Creates a new test server with rules configured via a closure.
     ///
     /// # Examples
@@ -394,6 +400,7 @@ impl TestServer {
     /// );
     /// assert!(response.is_blocked());
     /// ```
+    #[allow(dead_code)]
     pub fn with_rules<F>(configure: F) -> Result<Self, String>
     where
         F: FnOnce(&mut Waf) -> Result<(), String>,
