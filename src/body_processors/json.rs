@@ -48,11 +48,26 @@ impl BodyProcessor for JsonBodyProcessor {
 
     fn process_response(
         &self,
-        _body: &[u8],
-        _tx: &mut Transaction,
+        body: &[u8],
+        tx: &mut Transaction,
         _options: &BodyProcessorOptions,
     ) -> Result<(), BodyProcessorError> {
-        // JSON processor doesn't process response bodies in this implementation
+        // Parse JSON response
+        let body_str = String::from_utf8_lossy(body).to_string();
+
+        // Parse JSON
+        let json_value: Value = serde_json::from_str(&body_str)
+            .map_err(|e| BodyProcessorError::Malformed("json".to_string(), e.to_string()))?;
+
+        // Flatten JSON into dot-notation map
+        let flattened = flatten_json(&json_value);
+
+        // Populate RESPONSE_ARGS with flattened values
+        let response_args = tx.response_args_mut();
+        for (key, value) in &flattened {
+            response_args.set_index(key, 0, value);
+        }
+
         Ok(())
     }
 }
@@ -366,5 +381,49 @@ mod tests {
         // Note: We can't check if collection is empty easily, but we can check specific keys don't exist
         assert!(tx.args_post().get("json").is_empty());
         assert_eq!(tx.request_body.get(), "{}");
+    }
+
+    #[test]
+    fn test_json_response_processing() {
+        let processor = JsonBodyProcessor;
+        let mut tx = Transaction::new("test-6");
+
+        let body = br#"{"status":"success","data":{"id":123,"name":"admin"}}"#;
+        processor
+            .process_response(body, &mut tx, &BodyProcessorOptions::default())
+            .unwrap();
+
+        // Check RESPONSE_ARGS populated
+        assert_eq!(tx.response_args().get("json.status"), vec!["success"]);
+        assert_eq!(tx.response_args().get("json.data.id"), vec!["123"]);
+        assert_eq!(tx.response_args().get("json.data.name"), vec!["admin"]);
+    }
+
+    #[test]
+    fn test_json_response_array() {
+        let processor = JsonBodyProcessor;
+        let mut tx = Transaction::new("test-7");
+
+        let body = br#"{"items":[{"id":1},{"id":2}]}"#;
+        processor
+            .process_response(body, &mut tx, &BodyProcessorOptions::default())
+            .unwrap();
+
+        // Check RESPONSE_ARGS populated
+        assert_eq!(tx.response_args().get("json.items"), vec!["2"]); // array length
+        assert_eq!(tx.response_args().get("json.items.0.id"), vec!["1"]);
+        assert_eq!(tx.response_args().get("json.items.1.id"), vec!["2"]);
+    }
+
+    #[test]
+    fn test_json_response_invalid() {
+        let processor = JsonBodyProcessor;
+        let mut tx = Transaction::new("test-8");
+
+        let body = b"{invalid json}";
+        let result = processor.process_response(body, &mut tx, &BodyProcessorOptions::default());
+
+        // Should fail with malformed error
+        assert!(result.is_err());
     }
 }

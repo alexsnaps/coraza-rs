@@ -172,6 +172,12 @@ pub struct Transaction {
     /// RESPONSE_BODY
     response_body: Single,
 
+    /// RESPONSE_ARGS - Parsed response arguments (from JSON, etc.)
+    response_args: Map,
+
+    /// RESPONSE_XML - Parsed XML response data
+    response_xml: Map,
+
     /// Last phase that was processed
     last_phase: Option<RulePhase>,
 
@@ -230,6 +236,8 @@ impl Transaction {
             response_content_type: Single::new(RuleVariable::ResponseContentType),
             response_content_length: Single::new(RuleVariable::ResponseContentLength),
             response_body: Single::new(RuleVariable::ResponseBody),
+            response_args: Map::new_case_sensitive(RuleVariable::ResponseArgs),
+            response_xml: Map::new_case_sensitive(RuleVariable::ResponseXML),
             last_phase: None,
             interruption: None,
             captures: Vec::new(),
@@ -333,6 +341,26 @@ impl Transaction {
     /// Get mutable RESPONSE_HEADERS collection.
     pub fn response_headers_mut(&mut self) -> &mut Map {
         &mut self.response_headers
+    }
+
+    /// Get RESPONSE_ARGS collection.
+    pub fn response_args(&self) -> &Map {
+        &self.response_args
+    }
+
+    /// Get mutable RESPONSE_ARGS collection.
+    pub fn response_args_mut(&mut self) -> &mut Map {
+        &mut self.response_args
+    }
+
+    /// Get RESPONSE_XML collection.
+    pub fn response_xml(&self) -> &Map {
+        &self.response_xml
+    }
+
+    /// Get mutable RESPONSE_XML collection.
+    pub fn response_xml_mut(&mut self) -> &mut Map {
+        &mut self.response_xml
     }
 
     /// Set the REQUEST_URI value.
