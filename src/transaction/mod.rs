@@ -8,6 +8,42 @@ pub mod variables;
 use crate::RuleVariable;
 use crate::collection::{Keyed, Map, MapCollection, Single, SingleCollection};
 use crate::operators::TransactionState;
+use crate::types::RulePhase;
+
+/// Interruption returned when a disruptive action is triggered.
+///
+/// An interruption indicates that a rule matched and triggered a disruptive
+/// action (deny, drop, redirect, allow) that should stop further processing.
+///
+/// # Example
+///
+/// ```
+/// use coraza::transaction::Interruption;
+///
+/// let interruption = Interruption {
+///     rule_id: 123,
+///     action: "deny".to_string(),
+///     status: 403,
+///     data: String::new(),
+/// };
+///
+/// assert_eq!(interruption.status, 403);
+/// assert_eq!(interruption.action, "deny");
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct Interruption {
+    /// Rule ID that caused the interruption
+    pub rule_id: usize,
+
+    /// Disruptive action: "deny", "drop", "redirect", "allow"
+    pub action: String,
+
+    /// HTTP status code to return
+    pub status: u16,
+
+    /// Additional data (used by proxy and redirect)
+    pub data: String,
+}
 
 /// A transaction represents a single HTTP request/response being processed.
 ///
@@ -136,6 +172,12 @@ pub struct Transaction {
     /// RESPONSE_BODY
     response_body: Single,
 
+    /// Last phase that was processed
+    last_phase: Option<RulePhase>,
+
+    /// Current interruption (if any disruptive action was triggered)
+    interruption: Option<Interruption>,
+
     /// Captured values from operators (rx, pm)
     captures: Vec<Option<String>>,
 
@@ -188,6 +230,8 @@ impl Transaction {
             response_content_type: Single::new(RuleVariable::ResponseContentType),
             response_content_length: Single::new(RuleVariable::ResponseContentLength),
             response_body: Single::new(RuleVariable::ResponseBody),
+            last_phase: None,
+            interruption: None,
             captures: Vec::new(),
             capturing: false,
         }
@@ -562,6 +606,193 @@ impl Transaction {
             self.response_content_type.set(mime_type);
         }
     }
+
+    // ===== Phase Processing Methods =====
+
+    /// Process request body with appropriate body processor.
+    ///
+    /// This method:
+    /// 1. Stores the raw body in REQUEST_BODY and REQUEST_BODY_LENGTH
+    /// 2. Determines the body processor from Content-Type
+    /// 3. Calls the appropriate body processor to parse the body
+    /// 4. Updates last_phase to RequestBody
+    ///
+    /// Returns an interruption if a disruptive action was triggered.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    /// use coraza::collection::Keyed;
+    ///
+    /// let mut tx = Transaction::new("tx-1");
+    /// tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+    ///
+    /// let body = b"username=admin&password=secret";
+    /// let result = tx.process_request_body(body);
+    ///
+    /// // Body is parsed and ARGS_POST is populated
+    /// assert_eq!(tx.args_post().get("username"), vec!["admin"]);
+    /// assert_eq!(tx.args_post().get("password"), vec!["secret"]);
+    /// ```
+    pub fn process_request_body(&mut self, body: &[u8]) -> Result<Option<Interruption>, String> {
+        // Check if already processed
+        if let Some(phase) = self.last_phase
+            && phase >= RulePhase::RequestBody
+        {
+            return Ok(None);
+        }
+
+        // Store raw body
+        let body_str = String::from_utf8_lossy(body).to_string();
+        self.request_body.set(&body_str);
+        self.request_body_length.set(body.len().to_string());
+
+        // Get Content-Type to determine body processor
+        let content_type_values = self.request_headers().get("content-type");
+        let content_type = content_type_values
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("");
+
+        // Determine body processor
+        let processor_name = if content_type.starts_with("application/x-www-form-urlencoded") {
+            Some("urlencoded")
+        } else if content_type.starts_with("multipart/form-data") {
+            Some("multipart")
+        } else if content_type.starts_with("application/json") {
+            Some("json")
+        } else if content_type.starts_with("application/xml")
+            || content_type.starts_with("text/xml")
+        {
+            Some("xml")
+        } else {
+            None
+        };
+
+        // Process body if we have a processor
+        if let Some(processor_name) = processor_name {
+            use crate::body_processors::{BodyProcessorOptions, get_body_processor};
+
+            match get_body_processor(processor_name) {
+                Ok(processor) => {
+                    let options = BodyProcessorOptions {
+                        mime: content_type.to_string(),
+                        ..Default::default()
+                    };
+
+                    if let Err(e) = processor.process_request(body, self, &options) {
+                        // Log error but don't fail the transaction
+                        eprintln!("Body processor error: {}", e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to get body processor: {}", e);
+                }
+            }
+        }
+
+        // Update phase
+        self.last_phase = Some(RulePhase::RequestBody);
+
+        // TODO: Rule evaluation hook will go here once we have WAF integration
+        // For now, just return no interruption
+        Ok(self.interruption.clone())
+    }
+
+    /// Process response headers and populate response variables.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    /// use coraza::collection::SingleCollection;
+    ///
+    /// let mut tx = Transaction::new("tx-1");
+    /// tx.add_response_header("Content-Type", "application/json");
+    ///
+    /// let result = tx.process_response_headers(200, "HTTP/1.1");
+    ///
+    /// // Response variables are populated
+    /// // (Note: Direct access to response_status not yet public)
+    /// ```
+    pub fn process_response_headers(
+        &mut self,
+        status_code: u16,
+        protocol: &str,
+    ) -> Option<Interruption> {
+        // Check if already processed
+        if let Some(phase) = self.last_phase
+            && phase >= RulePhase::ResponseHeaders
+        {
+            return None;
+        }
+
+        // Populate response variables
+        self.response_status.set(status_code.to_string());
+        self.response_protocol.set(protocol);
+
+        // Update phase
+        self.last_phase = Some(RulePhase::ResponseHeaders);
+
+        // TODO: Rule evaluation hook will go here
+        self.interruption.clone()
+    }
+
+    /// Process response body.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    ///
+    /// let mut tx = Transaction::new("tx-1");
+    /// tx.add_response_header("Content-Type", "application/json");
+    /// tx.process_response_headers(200, "HTTP/1.1");
+    ///
+    /// let body = b"{\"status\":\"ok\"}";
+    /// let result = tx.process_response_body(body);
+    /// ```
+    pub fn process_response_body(&mut self, body: &[u8]) -> Option<Interruption> {
+        // Check if already processed
+        if let Some(phase) = self.last_phase
+            && phase >= RulePhase::ResponseBody
+        {
+            return None;
+        }
+
+        // Store raw response body
+        let body_str = String::from_utf8_lossy(body).to_string();
+        self.response_body.set(&body_str);
+        self.response_content_length.set(body.len().to_string());
+
+        // Update phase
+        self.last_phase = Some(RulePhase::ResponseBody);
+
+        // TODO: Rule evaluation hook will go here
+        self.interruption.clone()
+    }
+
+    /// Process logging phase (final phase).
+    ///
+    /// This is the last phase where logging and audit actions occur.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    ///
+    /// let mut tx = Transaction::new("tx-1");
+    /// // ... process request and response ...
+    /// tx.process_logging();
+    /// ```
+    pub fn process_logging(&mut self) {
+        // Update phase
+        self.last_phase = Some(RulePhase::Logging);
+
+        // TODO: Audit logging will go here
+        // TODO: Rule evaluation hook for logging phase
+    }
 }
 
 impl TransactionState for Transaction {
@@ -834,5 +1065,235 @@ mod tests {
 
         // Should not add header with empty key
         assert!(tx.response_headers().find_all().is_empty());
+    }
+
+    #[test]
+    fn test_process_request_body_urlencoded() {
+        let mut tx = Transaction::new("tx-020");
+        tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+
+        let body = b"username=admin&password=secret&role=admin";
+        let result = tx.process_request_body(body);
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none()); // No interruption
+
+        // Check ARGS_POST populated
+        assert_eq!(tx.args_post().get("username"), vec!["admin"]);
+        assert_eq!(tx.args_post().get("password"), vec!["secret"]);
+        assert_eq!(tx.args_post().get("role"), vec!["admin"]);
+
+        // Check REQUEST_BODY stored
+        assert_eq!(
+            tx.request_body.get(),
+            "username=admin&password=secret&role=admin"
+        );
+        assert_eq!(tx.request_body_length.get(), "41");
+
+        // Check phase updated
+        assert_eq!(tx.last_phase, Some(RulePhase::RequestBody));
+    }
+
+    #[test]
+    fn test_process_request_body_json() {
+        let mut tx = Transaction::new("tx-021");
+        tx.add_request_header("Content-Type", "application/json");
+
+        let body = br#"{"user": "admin", "id": 123}"#;
+        let result = tx.process_request_body(body);
+
+        assert!(result.is_ok());
+
+        // Check JSON flattening in ARGS_POST
+        assert_eq!(tx.args_post().get("json.user"), vec!["admin"]);
+        assert_eq!(tx.args_post().get("json.id"), vec!["123"]);
+    }
+
+    #[test]
+    fn test_process_request_body_xml() {
+        let mut tx = Transaction::new("tx-022");
+        tx.add_request_header("Content-Type", "application/xml");
+
+        let body = br#"<user name="admin"><id>123</id></user>"#;
+        let result = tx.process_request_body(body);
+
+        assert!(result.is_ok());
+
+        // Check REQUEST_XML populated
+        assert_eq!(tx.request_xml.get("//@*"), vec!["admin"]);
+        assert_eq!(tx.request_xml.get("/*"), vec!["123"]);
+    }
+
+    #[test]
+    fn test_process_request_body_multipart() {
+        let mut tx = Transaction::new("tx-023");
+        tx.add_request_header(
+            "Content-Type",
+            "multipart/form-data; boundary=----WebKitFormBoundary",
+        );
+
+        let body = b"------WebKitFormBoundary\r\n\
+Content-Disposition: form-data; name=\"field1\"\r\n\
+\r\n\
+value1\r\n\
+------WebKitFormBoundary--\r\n";
+
+        let result = tx.process_request_body(body);
+
+        assert!(result.is_ok());
+
+        // Check ARGS_POST populated from multipart
+        assert_eq!(tx.args_post().get("field1"), vec!["value1"]);
+    }
+
+    #[test]
+    fn test_process_request_body_no_content_type() {
+        let mut tx = Transaction::new("tx-024");
+        // No Content-Type header
+
+        let body = b"some data";
+        let result = tx.process_request_body(body);
+
+        assert!(result.is_ok());
+
+        // Body is stored but not parsed
+        assert_eq!(tx.request_body.get(), "some data");
+        assert_eq!(tx.request_body_length.get(), "9");
+    }
+
+    #[test]
+    fn test_process_request_body_already_processed() {
+        let mut tx = Transaction::new("tx-025");
+        tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+
+        let body1 = b"key1=value1";
+        tx.process_request_body(body1).unwrap();
+
+        // Try to process again
+        let body2 = b"key2=value2";
+        tx.process_request_body(body2).unwrap();
+
+        // Should still have first body only
+        assert_eq!(tx.request_body.get(), "key1=value1");
+        assert_eq!(tx.args_post().get("key1"), vec!["value1"]);
+        assert!(tx.args_post().get("key2").is_empty());
+    }
+
+    #[test]
+    fn test_process_response_headers() {
+        let mut tx = Transaction::new("tx-026");
+        tx.add_response_header("Content-Type", "application/json; charset=utf-8");
+        tx.add_response_header("Server", "nginx");
+
+        let result = tx.process_response_headers(200, "HTTP/1.1");
+
+        assert!(result.is_none()); // No interruption
+
+        // Check variables populated
+        assert_eq!(tx.response_status.get(), "200");
+        assert_eq!(tx.response_protocol.get(), "HTTP/1.1");
+        assert_eq!(tx.response_content_type.get(), "application/json");
+
+        // Check phase updated
+        assert_eq!(tx.last_phase, Some(RulePhase::ResponseHeaders));
+    }
+
+    #[test]
+    fn test_process_response_headers_already_processed() {
+        let mut tx = Transaction::new("tx-027");
+
+        tx.process_response_headers(200, "HTTP/1.1");
+
+        // Try to process again
+        tx.process_response_headers(500, "HTTP/2.0");
+
+        // Should still have first values
+        assert_eq!(tx.response_status.get(), "200");
+        assert_eq!(tx.response_protocol.get(), "HTTP/1.1");
+    }
+
+    #[test]
+    fn test_process_response_body() {
+        let mut tx = Transaction::new("tx-028");
+        tx.process_response_headers(200, "HTTP/1.1");
+
+        let body = b"{\"status\":\"ok\",\"data\":123}";
+        let result = tx.process_response_body(body);
+
+        assert!(result.is_none()); // No interruption
+
+        // Check body stored
+        assert_eq!(tx.response_body.get(), r#"{"status":"ok","data":123}"#);
+        assert_eq!(tx.response_content_length.get(), "26");
+
+        // Check phase updated
+        assert_eq!(tx.last_phase, Some(RulePhase::ResponseBody));
+    }
+
+    #[test]
+    fn test_process_response_body_already_processed() {
+        let mut tx = Transaction::new("tx-029");
+        tx.process_response_headers(200, "HTTP/1.1");
+
+        tx.process_response_body(b"body1");
+
+        // Try to process again
+        tx.process_response_body(b"body2");
+
+        // Should still have first body
+        assert_eq!(tx.response_body.get(), "body1");
+    }
+
+    #[test]
+    fn test_process_logging() {
+        let mut tx = Transaction::new("tx-030");
+
+        tx.process_logging();
+
+        // Check phase updated
+        assert_eq!(tx.last_phase, Some(RulePhase::Logging));
+    }
+
+    #[test]
+    fn test_interruption_struct() {
+        let interruption = Interruption {
+            rule_id: 123,
+            action: "deny".to_string(),
+            status: 403,
+            data: String::new(),
+        };
+
+        assert_eq!(interruption.rule_id, 123);
+        assert_eq!(interruption.action, "deny");
+        assert_eq!(interruption.status, 403);
+    }
+
+    #[test]
+    fn test_phase_progression() {
+        let mut tx = Transaction::new("tx-031");
+
+        // Initially no phase
+        assert_eq!(tx.last_phase, None);
+
+        // Process connection
+        tx.process_connection("127.0.0.1", 54321, "10.0.0.1", 8080);
+        // Connection processing doesn't update phase (it's before phase 1)
+
+        // Process request body
+        tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+        tx.process_request_body(b"key=value").unwrap();
+        assert_eq!(tx.last_phase, Some(RulePhase::RequestBody));
+
+        // Process response headers
+        tx.process_response_headers(200, "HTTP/1.1");
+        assert_eq!(tx.last_phase, Some(RulePhase::ResponseHeaders));
+
+        // Process response body
+        tx.process_response_body(b"response");
+        assert_eq!(tx.last_phase, Some(RulePhase::ResponseBody));
+
+        // Process logging
+        tx.process_logging();
+        assert_eq!(tx.last_phase, Some(RulePhase::Logging));
     }
 }
