@@ -186,9 +186,7 @@ fn test_e2e_basic_request_with_parsed_config() {
     let waf = Waf::new(to_waf_config(parser.config())).expect("Failed to create WAF");
     let server = TestServer::new(waf);
 
-    let response = server.process(
-        TestRequest::get("/search?q=rust&category=web").build(),
-    );
+    let response = server.process(TestRequest::get("/search?q=rust&category=web").build());
 
     response.assert_status(200);
     response.assert_not_blocked();
@@ -280,9 +278,7 @@ fn test_e2e_multiple_requests_same_config() {
 
     // Process 10 different requests
     for i in 0..10 {
-        let response = server.process(
-            TestRequest::get(format!("/page?id={}", i)).build(),
-        );
+        let response = server.process(TestRequest::get(format!("/page?id={}", i)).build());
         response.assert_status(200);
         response.assert_not_blocked();
     }
@@ -662,9 +658,7 @@ fn test_stress_many_requests_through_waf() {
 
     // Process 100 requests
     for i in 0..100 {
-        let response = server.process(
-            TestRequest::get(format!("/test?id={}", i)).build(),
-        );
+        let response = server.process(TestRequest::get(format!("/test?id={}", i)).build());
         response.assert_status(200);
     }
 }

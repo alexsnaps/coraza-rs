@@ -321,10 +321,7 @@ fn test_transaction_variables_populated() {
     tx.add_request_header("Cookie", "session=abc123");
 
     // REQUEST_HEADERS should be populated
-    assert_eq!(
-        tx.request_headers().get("user-agent"),
-        vec!["TestBot/1.0"]
-    );
+    assert_eq!(tx.request_headers().get("user-agent"), vec!["TestBot/1.0"]);
 
     // REQUEST_COOKIES should be populated
     assert_eq!(tx.request_cookies().get("session"), vec!["abc123"]);
@@ -507,17 +504,11 @@ fn test_waf_overwrite_default_actions() {
     let action1 = RuleAction::new("deny", Box::new(DenyAction));
     waf.set_default_actions(RulePhase::RequestHeaders, vec![action1]);
 
-    assert_eq!(
-        waf.get_default_actions(RulePhase::RequestHeaders).len(),
-        1
-    );
+    assert_eq!(waf.get_default_actions(RulePhase::RequestHeaders).len(), 1);
 
     // Overwrite with empty vector
     waf.set_default_actions(RulePhase::RequestHeaders, vec![]);
-    assert_eq!(
-        waf.get_default_actions(RulePhase::RequestHeaders).len(),
-        0
-    );
+    assert_eq!(waf.get_default_actions(RulePhase::RequestHeaders).len(), 0);
 }
 
 #[test]
@@ -538,13 +529,7 @@ fn test_waf_default_actions_per_phase() {
         ],
     );
 
-    assert_eq!(
-        waf.get_default_actions(RulePhase::RequestHeaders).len(),
-        1
-    );
+    assert_eq!(waf.get_default_actions(RulePhase::RequestHeaders).len(), 1);
     assert_eq!(waf.get_default_actions(RulePhase::RequestBody).len(), 2);
-    assert_eq!(
-        waf.get_default_actions(RulePhase::ResponseHeaders).len(),
-        0
-    );
+    assert_eq!(waf.get_default_actions(RulePhase::ResponseHeaders).len(), 0);
 }
