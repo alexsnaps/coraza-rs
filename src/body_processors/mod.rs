@@ -29,6 +29,7 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::{LazyLock, RwLock};
 
+pub mod multipart;
 pub mod raw;
 pub mod urlencoded;
 
@@ -85,6 +86,9 @@ impl From<io::Error> for BodyProcessorError {
 /// Options passed to body processors
 #[derive(Debug, Clone, Default)]
 pub struct BodyProcessorOptions {
+    /// MIME type of the request body (e.g., "multipart/form-data; boundary=...")
+    pub mime: String,
+
     /// Upload directory for file uploads (multipart)
     pub upload_dir: String,
 
@@ -171,6 +175,10 @@ static BODY_PROCESSORS: LazyLock<RwLock<HashMap<String, BodyProcessorFactory>>> 
         registry.insert(
             "urlencoded".to_string(),
             urlencoded::create_urlencoded as BodyProcessorFactory,
+        );
+        registry.insert(
+            "multipart".to_string(),
+            multipart::create_multipart as BodyProcessorFactory,
         );
         RwLock::new(registry)
     });

@@ -67,6 +67,27 @@ pub struct Transaction {
     /// REQUEST_BODY_LENGTH
     pub(crate) request_body_length: Single,
 
+    /// FILES - Original file names from multipart/form-data
+    pub(crate) files: Map,
+
+    /// FILES_TMP_NAMES - Temporary file paths for uploaded files
+    pub(crate) files_tmp_names: Map,
+
+    /// FILES_SIZES - Sizes of uploaded files
+    pub(crate) files_sizes: Map,
+
+    /// FILES_NAMES - Form field names for uploaded files
+    pub(crate) files_names: Map,
+
+    /// FILES_COMBINED_SIZE - Total size of all uploaded files
+    pub(crate) files_combined_size: Single,
+
+    /// MULTIPART_PART_HEADERS - Headers from each multipart part
+    pub(crate) multipart_part_headers: Map,
+
+    /// MULTIPART_STRICT_ERROR - Set to "1" when multipart parsing fails
+    pub(crate) multipart_strict_error: Single,
+
     /// Captured values from operators (rx, pm)
     captures: Vec<Option<String>>,
 
@@ -96,6 +117,13 @@ impl Transaction {
             remote_addr: Single::new(RuleVariable::RemoteAddr),
             request_body: Single::new(RuleVariable::RequestBody),
             request_body_length: Single::new(RuleVariable::RequestBodyLength),
+            files: Map::new_case_sensitive(RuleVariable::Files),
+            files_tmp_names: Map::new_case_sensitive(RuleVariable::FilesTmpNames),
+            files_sizes: Map::new_case_sensitive(RuleVariable::FilesSizes),
+            files_names: Map::new_case_sensitive(RuleVariable::FilesNames),
+            files_combined_size: Single::new(RuleVariable::FilesCombinedSize),
+            multipart_part_headers: Map::new_case_sensitive(RuleVariable::MultipartPartHeaders),
+            multipart_strict_error: Single::new(RuleVariable::MultipartStrictError),
             captures: Vec::new(),
             capturing: false,
         }
