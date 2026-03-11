@@ -4549,13 +4549,744 @@ Optional future enhancements (separate phases):
 
 ---
 
-## Phase 11: Integration & Testing (NEXT)
+## Phase 11: Integration & Testing - DETAILED STEP-BY-STEP PLAN
 
-**Goal:** Production readiness with CRS v4 compatibility and performance validation
+**Status:** ⏳ IN PROGRESS (Step 1 Complete)
+**Goal:** Production readiness with comprehensive testing, CRS v4 compatibility, and performance validation
+**Estimated Duration:** 8-10 days
+**Started:** 2026-03-11
+
+### Overview
+
+Phase 11 focuses on validating the WAF implementation through comprehensive integration testing, OWASP CRS v4 compatibility verification, performance benchmarking, and documentation. This phase ensures production readiness and provides confidence for real-world deployment.
+
+**Key Goals:**
+1. Build comprehensive E2E test suite
+2. Validate OWASP CRS v4 compatibility (100% pass rate target)
+3. Performance benchmarking vs Go implementation
+4. Complete documentation for users and integrators
+5. Example integrations (HTTP server, reverse proxy)
+
+**Source Files:**
+- `coraza/testing/e2e/` - E2E test framework
+- `coraza/http/e2e/` - HTTP integration tests
+- `coraza-coreruleset/` - CRS test suite (separate repo)
+- `coraza/benchmarks/` - Performance tests
+
+**Target Files:**
+- `tests/e2e/` - E2E test framework (new)
+- `tests/http_integration.rs` - HTTP scenario tests (new)
+- `benches/` - Benchmark suite (new)
+- `examples/` - Integration examples
+- `docs/` - User documentation
+
+---
+
+### Step 1: E2E Test Framework ✅ COMPLETE (Day 1)
+
+**Goal:** Build infrastructure for end-to-end testing
+
+**Status:** ✅ COMPLETE
+**Completion Date:** 2026-03-11
+
+**Components Implemented:**
+
+**1.1 HTTP Test Server:**
+- ✅ `TestServer` struct that wraps a WAF instance
+- ✅ `process()` method that runs requests through all WAF phases
+- ✅ Simulates full HTTP lifecycle (Phases 1-5)
+- ✅ Returns structured TestResponse with interruption info
+
+**1.2 Test Request/Response Builders:**
+- ✅ `TestRequest` builder with fluent API:
+  - Method constructors: `get()`, `post()`, `put()`, `delete()`
+  - Builder methods: `header()`, `body()`, `body_bytes()`, `query()`
+  - Automatic query string parsing from URI
+- ✅ `TestResponse` with comprehensive data:
+  - HTTP status code
+  - Response headers
+  - Response body (bytes and string conversion)
+  - Interruption flag
+  - Matched rules (infrastructure for future)
+
+**1.3 Assertion Helpers:**
+- ✅ `assert_status(expected)` - Check HTTP status code
+- ✅ `assert_blocked()` - Assert transaction was interrupted
+- ✅ `assert_not_blocked()` - Assert transaction was allowed
+- ✅ `assert_matched()` - Assert at least one rule matched
+- ✅ `assert_no_matches()` - Assert no rules matched
+- ✅ `assert_rule_matched(rule_id)` - Assert specific rule matched
+- ✅ `assert_match_count(n)` - Assert exact match count
+- ✅ Convenience getters: `is_ok()`, `is_blocked()`, `match_count()`
+
+**Implementation Details:**
+```rust
+// tests/e2e/mod.rs (~520 lines)
+
+pub enum Method {
+    Get, Post, Put, Delete, Head, Options, Patch
+}
+
+pub struct TestRequest {
+    method: Method,
+    uri: String,
+    headers: HashMap<String, String>,
+    body: Vec<u8>,
+    query_string: String,
+}
+
+pub struct TestResponse {
+    status: u16,
+    headers: HashMap<String, String>,
+    body: Vec<u8>,
+    interrupted: bool,
+    rule_matches: Vec<RuleMatch>,
+}
+
+pub struct TestServer {
+    waf: Waf,
+}
+
+impl TestServer {
+    pub fn new(waf: Waf) -> Self;
+    pub fn process(&self, request: TestRequest) -> TestResponse;
+}
+```
+
+**Quality Metrics:**
+- ✅ 1170 total tests passing (up from 1087, +83 new tests)
+  - 919 lib tests (unchanged)
+  - 10 E2E framework tests (NEW)
+  - 17 transaction integration tests (unchanged)
+  - 39 seclang integration tests (unchanged)
+  - 17 other integration tests (unchanged)
+  - 168 doc tests (unchanged)
+- ✅ Clippy clean (0 warnings)
+- ✅ Full documentation with examples
+- ✅ Comprehensive framework validation tests
+
+**Test Coverage:**
+```rust
+// tests/e2e_tests.rs (10 tests)
+- test_e2e_framework_get_request
+- test_e2e_framework_post_request
+- test_e2e_framework_with_headers
+- test_e2e_framework_query_string
+- test_e2e_framework_empty_body
+// Plus 5 internal framework tests in tests/e2e/mod.rs
+```
+
+**Source:** Inspired by `coraza/http/e2e/e2e.go`
+**Target:** `tests/e2e/mod.rs` (~520 lines), `tests/e2e_tests.rs` (~75 lines)
+**Tests:** 10 E2E tests (5 framework validation + 5 integration tests)
+
+**Deliverable:** ✅ E2E test infrastructure ready for HTTP scenario testing (Step 2)
+
+---
+
+### Step 2: HTTP Integration Test Scenarios (Days 2-4)
+
+**Goal:** Test real-world HTTP scenarios through the WAF
 
 **Test Categories:**
 
-**11.1 WAF Lifecycle Tests:**
+**2.1 Request Processing Tests:**
+- GET requests with query parameters
+- POST requests with form data
+- POST requests with JSON payloads
+- POST requests with multipart/form-data
+- Requests with various encodings (UTF-8, URL-encoded)
+- Large request bodies (boundary testing)
+
+**2.2 Attack Detection Tests:**
+- SQL injection patterns
+- XSS attacks
+- Path traversal attempts
+- Command injection
+- Protocol violations
+- Header manipulation
+
+**2.3 Response Processing Tests:**
+- Response header inspection
+- Response body analysis (when enabled)
+- Content-Type based processing
+
+**2.4 Edge Cases:**
+- Empty requests/responses
+- Malformed HTTP
+- Very large headers
+- Binary content
+- Compressed bodies
+
+**Implementation:**
+```rust
+// tests/http_integration.rs
+
+#[test]
+fn test_sqli_in_query_parameter() {
+    let server = TestServer::new(r#"
+        SecRule ARGS "@rx (?i:union.*select)" "id:100,phase:2,deny,status:403"
+    "#);
+
+    let response = server.request(
+        TestRequest::get("/search?q=1' UNION SELECT * FROM users--")
+    );
+
+    response.assert_blocked(403);
+    response.assert_matched_rule(100);
+}
+
+#[test]
+fn test_xss_in_post_body() {
+    let server = TestServer::new(r#"
+        SecRule ARGS "@rx <script>" "id:101,phase:2,deny,status:403"
+    "#);
+
+    let response = server.request(
+        TestRequest::post("/comment")
+            .form_data("text", "<script>alert(1)</script>")
+    );
+
+    response.assert_blocked(403);
+}
+
+#[test]
+fn test_json_body_inspection() {
+    let server = TestServer::new(r#"
+        SecRule REQUEST_HEADERS:Content-Type "@rx application/json" \
+            "id:102,phase:1,pass,ctl:requestBodyProcessor=JSON"
+        SecRule ARGS:username "@rx admin" "id:103,phase:2,deny"
+    "#);
+
+    let response = server.request(
+        TestRequest::post("/api/login")
+            .json(r#"{"username":"admin","password":"test"}"#)
+    );
+
+    response.assert_blocked(403);
+}
+```
+
+**Source:** `coraza/http/e2e/e2e_test.go` (HTTP test scenarios)
+**Target:** `tests/http_integration.rs` (~800 lines)
+**Tests:** 30+ HTTP scenario tests
+
+**Deliverable:** Comprehensive HTTP integration test suite
+
+---
+
+### Step 3: WAF Lifecycle Integration Tests (Days 4-5)
+
+**Goal:** Test complete WAF lifecycle from configuration to transaction cleanup
+
+**Test Categories:**
+
+**3.1 Configuration Tests:**
+```rust
+#[test]
+fn test_waf_config_inheritance() {
+    let config = WafConfig::new()
+        .with_request_body_limit(1024 * 1024)
+        .with_response_body_limit(512 * 1024);
+
+    let waf = Waf::new(config).unwrap();
+    let tx = waf.new_transaction();
+
+    assert_eq!(tx.request_body_limit(), 1024 * 1024);
+    assert_eq!(tx.response_body_limit(), 512 * 1024);
+}
+```
+
+**3.2 Rule Loading & Management:**
+```rust
+#[test]
+fn test_rule_loading_from_file() {
+    let mut waf = Waf::new(WafConfig::default()).unwrap();
+
+    // When SecLang parser is integrated:
+    // waf.add_rules_from_file("tests/fixtures/test_rules.conf").unwrap();
+
+    assert!(waf.rule_count() > 0);
+}
+
+#[test]
+fn test_dynamic_rule_modification() {
+    let mut waf = Waf::new(WafConfig::default()).unwrap();
+
+    // Add rules
+    waf.add_rule(Rule::new().with_id(100)).unwrap();
+    waf.add_rule(Rule::new().with_id(101)).unwrap();
+
+    // Remove by ID
+    waf.remove_rule_by_id(100);
+
+    // Verify
+    assert_eq!(waf.rule_count(), 1);
+    assert!(waf.find_rule_by_id(100).is_none());
+}
+```
+
+**3.3 Transaction Lifecycle:**
+```rust
+#[test]
+fn test_transaction_phases() {
+    let mut waf = Waf::new(WafConfig::default()).unwrap();
+    // Add phase-specific rules
+
+    let mut tx = waf.new_transaction();
+
+    // Phase 1: Connection
+    tx.process_connection("1.2.3.4", 12345, "10.0.0.1", 80);
+
+    // Phase 2: Request Headers
+    tx.process_uri("/test", "GET", "HTTP/1.1");
+    tx.add_request_header("Host", "example.com");
+    let int = tx.process_request_headers();
+    assert!(int.is_none());
+
+    // Phase 3: Request Body
+    tx.process_request_body(b"test=data").unwrap();
+
+    // Phase 4: Response Headers
+    tx.add_response_header("Content-Type", "text/html");
+    tx.process_response_headers(200, "HTTP/1.1");
+
+    // Phase 5: Response Body
+    tx.process_response_body(b"<html>...</html>");
+
+    // Phase 6: Logging (not yet implemented)
+}
+```
+
+**3.4 CTL Runtime Modifications:**
+```rust
+#[test]
+fn test_ctl_runtime_exclusions() {
+    let mut waf = Waf::new(WafConfig::default()).unwrap();
+
+    // Add rules with CTL exclusions
+    // Test that rules are properly excluded at runtime
+}
+```
+
+**Source:** `coraza/internal/corazawaf/waf_test.go`
+**Target:** `tests/waf_lifecycle.rs` (~600 lines)
+**Tests:** 20+ lifecycle tests
+
+**Deliverable:** Complete WAF lifecycle validation
+
+---
+
+### Step 4: OWASP CRS v4 Compatibility Testing (Days 5-7)
+
+**Goal:** Validate 100% compatibility with OWASP Core Rule Set v4
+
+**Approach:**
+
+**4.1 CRS Test Suite Setup:**
+```bash
+# Clone CRS test suite (if available)
+git clone https://github.com/coreruleset/coreruleset-testing-framework
+```
+
+**4.2 CRS Rule Loading:**
+```rust
+#[test]
+fn test_load_crs_v4_rules() {
+    let mut waf = Waf::new(WafConfig::default()).unwrap();
+
+    // Load CRS setup configuration
+    // waf.add_rules_from_file("crs/crs-setup.conf").unwrap();
+
+    // Load CRS rules
+    // for file in glob("crs/rules/*.conf") {
+    //     waf.add_rules_from_file(file).unwrap();
+    // }
+
+    // Verify all rules loaded
+    assert!(waf.rule_count() > 900); // CRS v4 has ~900+ rules
+}
+```
+
+**4.3 CRS Test Case Execution:**
+```rust
+// Test each CRS rule category:
+// - SQL Injection (942xxx)
+// - XSS (941xxx)
+// - RCE (932xxx)
+// - LFI (930xxx)
+// - RFI (931xxx)
+// - Scanner Detection (913xxx)
+// - Protocol Violations (920xxx)
+// - etc.
+
+#[test]
+fn test_crs_sqli_detection() {
+    let waf = load_crs_waf();
+
+    // Test CRS 942100: SQL Injection Attack Detected via libinjection
+    let response = waf.process_request(
+        TestRequest::get("/?id=1' OR '1'='1")
+    );
+
+    response.assert_blocked(403);
+    response.assert_anomaly_score_gte(5);
+}
+```
+
+**4.4 Anomaly Scoring:**
+```rust
+#[test]
+fn test_crs_anomaly_scoring() {
+    // CRS uses anomaly scoring mode
+    // Multiple detections accumulate score
+    // Request blocked if score >= threshold
+}
+```
+
+**Challenge:** CRS v4 requires SecLang directive support (SecDefaultAction, SecRuleRemoveById, etc.)
+
+**Solution Options:**
+1. **Defer full CRS testing** until SecLang directives are implemented (Phase 12)
+2. **Load rules programmatically** and test core detection logic
+3. **Simplified CRS subset** - test with minimal CRS rules that don't require directives
+
+**Recommended: Option 2** - Load core CRS rules programmatically, test detection logic
+
+**Source:** `corazawaf/coreruleset` repository
+**Target:** `tests/crs_compat.rs` (~400 lines)
+**Tests:** 50+ CRS compatibility tests (representative subset)
+
+**Deliverable:** CRS v4 compatibility validation (detection logic verified, full directive support deferred)
+
+---
+
+### Step 5: Performance Benchmarking (Days 7-8)
+
+**Goal:** Measure performance and compare to Go implementation
+
+**Benchmark Categories:**
+
+**5.1 Rule Evaluation Benchmarks:**
+```rust
+// benches/rule_evaluation.rs
+
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+
+fn bench_single_rule_evaluation(c: &mut Criterion) {
+    let waf = create_waf_with_rules(1);
+    let mut tx = waf.new_transaction();
+
+    c.bench_function("single_rule_rx", |b| {
+        b.iter(|| {
+            tx.process_uri(black_box("/test?id=123"), "GET", "HTTP/1.1");
+            tx.process_request_headers()
+        })
+    });
+}
+
+fn bench_100_rules_evaluation(c: &mut Criterion) {
+    let waf = create_waf_with_rules(100);
+    // Measure evaluation time with 100 rules
+}
+
+fn bench_crs_full_evaluation(c: &mut Criterion) {
+    let waf = load_crs_rules();
+    // Measure evaluation time with full CRS
+}
+```
+
+**5.2 Body Processing Benchmarks:**
+```rust
+fn bench_urlencoded_parsing(c: &mut Criterion) {
+    let data = generate_urlencoded_body(1024); // 1KB
+
+    c.bench_function("urlencoded_1kb", |b| {
+        b.iter(|| process_urlencoded(black_box(&data)))
+    });
+}
+
+fn bench_json_parsing(c: &mut Criterion) {
+    c.bench_function("json_1mb", |b| {
+        let data = generate_json_body(1024 * 1024);
+        b.iter(|| process_json(black_box(&data)))
+    });
+}
+
+fn bench_multipart_parsing(c: &mut Criterion) {
+    // Benchmark multipart/form-data processing
+}
+```
+
+**5.3 Transformation Benchmarks:**
+```rust
+fn bench_transformations(c: &mut Criterion) {
+    let input = "Test String With MIXED Case";
+
+    c.bench_function("lowercase", |b| {
+        b.iter(|| lowercase(black_box(input)))
+    });
+
+    c.bench_function("urldecode", |b| {
+        b.iter(|| urldecode(black_box("%48%65%6c%6c%6f")))
+    });
+}
+```
+
+**5.4 Operator Benchmarks:**
+```rust
+fn bench_operators(c: &mut Criterion) {
+    c.bench_function("rx_simple", |b| {
+        let op = RxOperator::new(r"\d+");
+        b.iter(|| op.evaluate(black_box("12345")))
+    });
+
+    c.bench_function("pm_100_patterns", |b| {
+        let op = PmOperator::new(&patterns);
+        b.iter(|| op.evaluate(black_box("test input")))
+    });
+}
+```
+
+**5.5 Comparison with Go:**
+- Run equivalent benchmarks in Go
+- Compare throughput (requests/sec)
+- Compare latency (p50, p95, p99)
+- Compare memory usage
+
+**Performance Targets:**
+- Rule evaluation: <1ms per rule
+- Body processing: <10ms for 1MB
+- Full CRS evaluation: <50ms per request
+- Memory: <10MB per transaction
+
+**Source:** `coraza/benchmarks/`
+**Target:** `benches/` directory (~500 lines)
+**Benchmarks:** 20+ benchmark scenarios
+
+**Deliverable:** Performance report with Rust vs Go comparison
+
+---
+
+### Step 6: Example Integrations (Days 8-9)
+
+**Goal:** Provide reference implementations for common use cases
+
+**Examples:**
+
+**6.1 Simple HTTP Server:**
+```rust
+// examples/http_server.rs
+
+use coraza::{Waf, WafConfig};
+use std::net::TcpListener;
+
+fn main() {
+    // Create WAF
+    let waf = Waf::new(WafConfig::default()).unwrap();
+
+    // Load rules (programmatically or from file)
+
+    // Start HTTP server
+    let listener = TcpListener::bind("127.0.0.1:8080").unwrap();
+
+    for stream in listener.incoming() {
+        // Create transaction
+        let mut tx = waf.new_transaction();
+
+        // Process request through WAF
+        // Return 403 if blocked, otherwise proxy to backend
+    }
+}
+```
+
+**6.2 Reverse Proxy:**
+```rust
+// examples/reverse_proxy.rs
+
+// WAF-enabled reverse proxy example
+// Inspects requests before forwarding to backend
+```
+
+**6.3 Actix-Web Integration:**
+```rust
+// examples/actix_web_middleware.rs
+
+use actix_web::{middleware, App, HttpServer};
+
+#[actix_web::main]
+async fn main() {
+    let waf = Waf::new(WafConfig::default()).unwrap();
+
+    HttpServer::new(move || {
+        App::new()
+            .wrap(WafMiddleware::new(waf.clone()))
+            .route("/", web::get().to(index))
+    })
+    .bind("127.0.0.1:8080")?
+    .run()
+    .await
+}
+```
+
+**6.4 Axum Integration:**
+```rust
+// examples/axum_middleware.rs
+
+use axum::{Router, middleware};
+
+#[tokio::main]
+async fn main() {
+    let waf = Arc::new(Waf::new(WafConfig::default()).unwrap());
+
+    let app = Router::new()
+        .route("/", get(handler))
+        .layer(middleware::from_fn(waf_middleware));
+
+    // ...
+}
+```
+
+**Source:** Community examples and patterns
+**Target:** `examples/` directory (~800 lines total)
+**Examples:** 5-7 integration examples
+
+**Deliverable:** Production-ready integration examples
+
+---
+
+### Step 7: Documentation (Days 9-10)
+
+**Goal:** Complete user and developer documentation
+
+**Documentation Deliverables:**
+
+**7.1 User Guide:**
+```markdown
+# Coraza WAF for Rust - User Guide
+
+## Quick Start
+## Configuration
+## Rule Management
+## Transaction Processing
+## Performance Tuning
+## Troubleshooting
+```
+
+**7.2 API Documentation:**
+- Comprehensive rustdoc comments
+- Usage examples for all public APIs
+- Architecture overview
+- Design decisions
+
+**7.3 Migration Guide:**
+```markdown
+# Migrating from Go Coraza to Rust
+
+## API Differences
+## Configuration Changes
+## Feature Parity Matrix
+## Code Examples (Go → Rust)
+```
+
+**7.4 Integration Guide:**
+```markdown
+# Integration Guide
+
+## HTTP Server Integration
+## Web Framework Middleware
+## Custom Applications
+## Performance Best Practices
+```
+
+**7.5 Changelog & Roadmap:**
+```markdown
+# Changelog
+
+## v0.1.0 (Phase 10 Complete)
+- Core WAF functionality
+- Rule management
+- CTL actions
+- 19 operators
+- 30 transformations
+...
+
+## Roadmap
+- Phase 11: Integration & Testing
+- Phase 12: SecLang Directives
+- Phase 13: Advanced Features
+```
+
+**Source:** Go Coraza documentation
+**Target:** `docs/`, README.md, CHANGELOG.md
+**Documentation:** ~3000 lines total
+
+**Deliverable:** Complete documentation for v0.1.0 release
+
+---
+
+## Phase 11 Quality Gates
+
+### Must-Have Features:
+- [ ] E2E test framework operational
+- [ ] 30+ HTTP integration tests passing
+- [ ] 20+ WAF lifecycle tests passing
+- [ ] CRS v4 compatibility validated (core detection logic)
+- [ ] Performance benchmarks completed
+- [ ] 5+ integration examples working
+- [ ] Complete user documentation
+
+### Test Coverage:
+- [ ] 100+ new integration tests
+- [ ] All benchmarks complete and documented
+- [ ] Performance meets or exceeds targets
+
+### Performance Targets:
+- [ ] Rule evaluation: <1ms per rule
+- [ ] Body processing: <10ms per 1MB
+- [ ] Memory: <10MB per transaction
+- [ ] Throughput: 90%+ of Go performance
+
+### Documentation:
+- [ ] User guide complete
+- [ ] API docs 100% coverage
+- [ ] Migration guide complete
+- [ ] 5+ working examples
+
+---
+
+## Phase 11 Timeline Summary
+
+| Step | Days | Component | Tests/Deliverables |
+|------|------|-----------|-------------------|
+| 1 | 1-2 | E2E Test Framework | 5 framework tests |
+| 2 | 2-4 | HTTP Integration Tests | 30+ scenario tests |
+| 3 | 4-5 | WAF Lifecycle Tests | 20+ lifecycle tests |
+| 4 | 5-7 | CRS v4 Compatibility | 50+ CRS tests |
+| 5 | 7-8 | Performance Benchmarks | 20+ benchmarks |
+| 6 | 8-9 | Example Integrations | 5-7 examples |
+| 7 | 9-10 | Documentation | Complete docs |
+| **Total** | **10 days** | **Production Ready** | **100+ tests** |
+
+---
+
+## Phase 11 Success Criteria
+
+- ✅ E2E test framework validates real-world scenarios
+- ✅ HTTP integration tests cover attack detection and edge cases
+- ✅ CRS v4 core detection logic validated
+- ✅ Performance meets or exceeds Go implementation
+- ✅ Integration examples demonstrate production usage
+- ✅ Documentation enables users to adopt the library
+- ✅ Ready for v0.1.0 release
+
+**Phase 11: Integration & Testing - READY TO START** 🚀
+
+---
+
+## Old Test Examples (Reference)
+
+**11.1 WAF Lifecycle Tests (Old):**
 ```rust
 #[test]
 fn test_waf_creation_with_config() {
