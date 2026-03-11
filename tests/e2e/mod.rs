@@ -350,9 +350,10 @@ impl TestResponse {
 ///
 /// ```
 /// use coraza::waf::Waf;
+/// use coraza::config::WafConfig;
 /// use coraza_tests::e2e::{TestServer, TestRequest};
 ///
-/// let waf = Waf::new().build();
+/// let waf = Waf::new(WafConfig::new()).unwrap();
 /// let server = TestServer::new(waf);
 ///
 /// let response = server.process(TestRequest::get("/").build());
@@ -366,6 +367,45 @@ impl TestServer {
     /// Creates a new test server with the given WAF instance.
     pub fn new(waf: Waf) -> Self {
         Self { waf }
+    }
+
+    /// Creates a new test server with rules configured via a closure.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza_tests::e2e::{TestServer, TestRequest};
+    /// use coraza::rules::{Rule, VariableSpec};
+    /// use coraza::types::{RulePhase, RuleVariable};
+    /// use coraza::operators::Operator;
+    ///
+    /// let server = TestServer::with_rules(|waf| {
+    ///     let rule = Rule::new(100, RulePhase::RequestBody)
+    ///         .with_variable(VariableSpec::parse("ARGS")?)
+    ///         .with_operator(Operator::new_rx("attack")?)
+    ///         .with_disruptive_action("deny", Some(403))
+    ///         .build()?;
+    ///     waf.add_rule(rule)?;
+    ///     Ok(())
+    /// }).unwrap();
+    ///
+    /// let response = server.process(
+    ///     TestRequest::get("/?input=attack").build()
+    /// );
+    /// assert!(response.is_blocked());
+    /// ```
+    pub fn with_rules<F>(configure: F) -> Result<Self, String>
+    where
+        F: FnOnce(&mut Waf) -> Result<(), String>,
+    {
+        use coraza::config::WafConfig;
+
+        let mut waf =
+            Waf::new(WafConfig::new()).map_err(|e| format!("Failed to create WAF: {}", e))?;
+
+        configure(&mut waf)?;
+
+        Ok(Self { waf })
     }
 
     /// Processes a request through the WAF and returns the response.
