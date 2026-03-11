@@ -400,9 +400,19 @@ impl Transaction {
         &mut self.response_xml
     }
 
+    /// Get the REQUEST_URI value.
+    pub fn request_uri(&self) -> &str {
+        self.request_uri.get()
+    }
+
     /// Set the REQUEST_URI value.
     pub fn set_request_uri(&mut self, uri: impl Into<String>) {
         self.request_uri.set(uri);
+    }
+
+    /// Get the REQUEST_METHOD value.
+    pub fn request_method(&self) -> &str {
+        self.request_method.get()
     }
 
     /// Set the REQUEST_METHOD value.
@@ -410,9 +420,94 @@ impl Transaction {
         self.request_method.set(method);
     }
 
+    /// Get the REMOTE_ADDR value.
+    pub fn remote_addr(&self) -> &str {
+        self.remote_addr.get()
+    }
+
     /// Set the REMOTE_ADDR value.
     pub fn set_remote_addr(&mut self, addr: impl Into<String>) {
         self.remote_addr.set(addr);
+    }
+
+    /// Get the REMOTE_PORT value.
+    pub fn remote_port(&self) -> &str {
+        self.remote_port.get()
+    }
+
+    /// Get the SERVER_ADDR value.
+    pub fn server_addr(&self) -> &str {
+        self.server_addr.get()
+    }
+
+    /// Get the SERVER_PORT value.
+    pub fn server_port(&self) -> &str {
+        self.server_port.get()
+    }
+
+    /// Get the SERVER_NAME value.
+    pub fn server_name(&self) -> &str {
+        self.server_name.get()
+    }
+
+    /// Get the REQUEST_PROTOCOL value.
+    pub fn request_protocol(&self) -> &str {
+        self.request_protocol.get()
+    }
+
+    /// Get the QUERY_STRING value.
+    pub fn query_string(&self) -> &str {
+        self.query_string.get()
+    }
+
+    /// Get the REQUEST_BODY value.
+    pub fn request_body(&self) -> &str {
+        self.request_body.get()
+    }
+
+    /// Get the RESPONSE_STATUS value.
+    pub fn response_status(&self) -> &str {
+        self.response_status.get()
+    }
+
+    /// Get the RESPONSE_PROTOCOL value.
+    pub fn response_protocol(&self) -> &str {
+        self.response_protocol.get()
+    }
+
+    /// Get the RESPONSE_CONTENT_TYPE value.
+    pub fn response_content_type(&self) -> &str {
+        self.response_content_type.get()
+    }
+
+    /// Get the RESPONSE_BODY value.
+    pub fn response_body(&self) -> &str {
+        self.response_body.get()
+    }
+
+    /// Get the FILES_COMBINED_SIZE value.
+    pub fn files_combined_size(&self) -> &str {
+        self.files_combined_size.get()
+    }
+
+    /// Get the FILES collection.
+    pub fn files(&self) -> &Map {
+        &self.files
+    }
+
+    /// Get the FILES_TMP_NAMES collection.
+    pub fn files_tmp_names(&self) -> &Map {
+        &self.files_tmp_names
+    }
+
+    /// Get the FILES_NAMES collection.
+    pub fn files_names(&self) -> &Map {
+        &self.files_names
+    }
+
+    /// Get the REQUEST_XML collection.
+    pub fn request_xml(&self) -> &Map {
+        &self.request_xml
     }
 
     /// Enable or disable capturing for operators.
@@ -500,6 +595,38 @@ impl Transaction {
         self.last_phase
     }
 
+    // ===== Flow Control & Interruption =====
+
+    /// Get the current interruption, if any.
+    pub fn interruption(&self) -> Option<&Interruption> {
+        self.interruption.as_ref()
+    }
+
+    /// Set an interruption (used for testing and internal rule actions).
+    pub fn set_interruption(&mut self, interruption: Option<Interruption>) {
+        self.interruption = interruption;
+    }
+
+    /// Get the skip counter (number of rules to skip).
+    pub fn skip(&self) -> i32 {
+        self.skip
+    }
+
+    /// Set the skip counter (used by skip action).
+    pub fn set_skip(&mut self, count: i32) {
+        self.skip = count;
+    }
+
+    /// Get the skip_after marker.
+    pub fn skip_after(&self) -> &str {
+        &self.skip_after
+    }
+
+    /// Set the skip_after marker (used by skipAfter action).
+    pub fn set_skip_after(&mut self, marker: impl Into<String>) {
+        self.skip_after = marker.into();
+    }
+
     // ===== HTTP Processing Methods =====
 
     /// Process connection information (Phase 1).
@@ -523,6 +650,12 @@ impl Transaction {
         server_addr: &str,
         server_port: u16,
     ) {
+        // Prevent duplicate processing - connection can only be processed once
+        // Check if connection variables are already set
+        if !self.remote_addr.get().is_empty() {
+            return;
+        }
+
         self.remote_addr.set(client_addr);
         self.remote_port.set(client_port.to_string());
         self.server_addr.set(server_addr);
@@ -588,8 +721,8 @@ impl Transaction {
             (uri_without_anchor, "")
         };
 
-        // Set cleaned request URI
-        self.request_uri.set(uri_without_anchor);
+        // Set cleaned request URI (path only, without query string)
+        self.request_uri.set(path);
 
         // Extract basename (last component of path)
         if let Some(last_slash) = path.rfind(['/', '\\']) {
@@ -1150,7 +1283,8 @@ mod tests {
         let mut tx = Transaction::new("tx-010");
         tx.process_uri("/search?q=test&page=2", "POST", "HTTP/2.0");
 
-        assert_eq!(tx.request_uri.get(), "/search?q=test&page=2");
+        // REQUEST_URI should be path only (without query string)
+        assert_eq!(tx.request_uri.get(), "/search");
         assert_eq!(tx.request_filename.get(), "/search");
         assert_eq!(tx.request_basename.get(), "search");
         assert_eq!(tx.query_string.get(), "q=test&page=2");

@@ -90,13 +90,13 @@ impl BodyProcessor for MultipartBodyProcessor {
                 // Save to temporary file if upload_dir is set
                 if !options.upload_dir.is_empty() {
                     let temp_file = save_to_temp(&options.upload_dir, &part.data)?;
-                    tx.files_tmp_names.add("", &temp_file);
+                    tx.files_tmp_names.add(&part.name, &temp_file);
                 }
 
-                // Populate FILES collections
-                tx.files.add("", filename);
+                // Populate FILES collections (keyed by field name)
+                tx.files.add(&part.name, filename);
                 tx.files_sizes.set_index(filename, 0, &size.to_string());
-                tx.files_names.add("", &part.name);
+                tx.files_names.add(&part.name, &part.name);
             } else {
                 // Regular form field - add to ARGS_POST
                 let value = String::from_utf8_lossy(&part.data).to_string();
