@@ -221,12 +221,12 @@ pub struct Transaction {
     // ===== CTL Runtime Exclusions =====
     /// Rules with these IDs will be skipped for this transaction
     /// (set by ctl:ruleRemoveById, ctl:ruleRemoveByTag, ctl:ruleRemoveByMsg)
-    rule_remove_by_id: Vec<i32>,
+    rule_remove_by_id: std::collections::BTreeSet<i32>,
 
     /// Variable exclusions per rule ID
     /// (set by ctl:ruleRemoveTargetById, ctl:ruleRemoveTargetByTag, ctl:ruleRemoveTargetByMsg)
     /// Map: rule_id -> Vec<(variable, key)>
-    rule_remove_target_by_id: std::collections::HashMap<i32, Vec<(RuleVariable, String)>>,
+    rule_remove_target_by_id: std::collections::BTreeMap<i32, Vec<(RuleVariable, String)>>,
 }
 
 impl Default for Transaction {
@@ -289,8 +289,8 @@ impl Transaction {
             skip_after: String::new(),
             captures: Vec::new(),
             capturing: false,
-            rule_remove_by_id: Vec::new(),
-            rule_remove_target_by_id: std::collections::HashMap::new(),
+            rule_remove_by_id: std::collections::BTreeSet::new(),
+            rule_remove_target_by_id: std::collections::BTreeMap::new(),
         }
     }
 
@@ -1101,7 +1101,7 @@ impl Transaction {
     /// // Rule 123 will be skipped for this transaction
     /// ```
     pub fn remove_rule_by_id(&mut self, id: i32) {
-        self.rule_remove_by_id.push(id);
+        self.rule_remove_by_id.insert(id);
     }
 
     /// Removes a specific variable target from a rule for this transaction only.
