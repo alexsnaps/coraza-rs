@@ -437,8 +437,8 @@ impl TestServer {
             tx.add_request_header(key, value);
         }
 
-        // Check for interruption after Phase 1
-        if tx.interruption().is_some() {
+        // Process request headers and evaluate Phase 1 rules
+        if let Some(_interruption) = tx.process_request_headers() {
             return self.build_blocked_response(&tx, rule_matches);
         }
 

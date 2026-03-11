@@ -912,6 +912,50 @@ impl Transaction {
 
     // ===== Phase Processing Methods =====
 
+    /// Process request headers and evaluate Phase 1 rules.
+    ///
+    /// Should be called after all request headers have been added via
+    /// `add_request_header()`. This triggers rule evaluation for Phase 1.
+    ///
+    /// Returns an interruption if a disruptive action was triggered.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use coraza::waf::Waf;
+    /// use coraza::config::WafConfig;
+    ///
+    /// let waf = Waf::new(WafConfig::new()).unwrap();
+    /// let mut tx = waf.new_transaction();
+    ///
+    /// tx.process_uri("/test", "GET", "HTTP/1.1");
+    /// tx.add_request_header("Host", "example.com");
+    /// tx.add_request_header("User-Agent", "Test");
+    ///
+    /// // Evaluate Phase 1 rules
+    /// let interruption = tx.process_request_headers();
+    /// assert!(interruption.is_none()); // No rules triggered
+    /// ```
+    pub fn process_request_headers(&mut self) -> Option<Interruption> {
+        // Check if already processed
+        if let Some(phase) = self.last_phase
+            && phase >= RulePhase::RequestHeaders
+        {
+            return None;
+        }
+
+        // Update phase
+        self.last_phase = Some(RulePhase::RequestHeaders);
+
+        // Evaluate rules for Phase 1 (Request Headers)
+        if let Some(rules) = self.rules.clone() {
+            let rule_engine_on = self.rule_engine == RuleEngineStatus::On;
+            rules.eval(RulePhase::RequestHeaders, self, rule_engine_on);
+        }
+
+        self.interruption.clone()
+    }
+
     /// Process request body with appropriate body processor.
     ///
     /// This method:
@@ -998,8 +1042,12 @@ impl Transaction {
         // Update phase
         self.last_phase = Some(RulePhase::RequestBody);
 
-        // TODO: Rule evaluation hook will go here once we have WAF integration
-        // For now, just return no interruption
+        // Evaluate rules for Phase 2 (Request Body)
+        if let Some(rules) = self.rules.clone() {
+            let rule_engine_on = self.rule_engine == RuleEngineStatus::On;
+            rules.eval(RulePhase::RequestBody, self, rule_engine_on);
+        }
+
         Ok(self.interruption.clone())
     }
 
@@ -1038,7 +1086,12 @@ impl Transaction {
         // Update phase
         self.last_phase = Some(RulePhase::ResponseHeaders);
 
-        // TODO: Rule evaluation hook will go here
+        // Evaluate rules for Phase 3 (Response Headers)
+        if let Some(rules) = self.rules.clone() {
+            let rule_engine_on = self.rule_engine == RuleEngineStatus::On;
+            rules.eval(RulePhase::ResponseHeaders, self, rule_engine_on);
+        }
+
         self.interruption.clone()
     }
 
@@ -1072,7 +1125,12 @@ impl Transaction {
         // Update phase
         self.last_phase = Some(RulePhase::ResponseBody);
 
-        // TODO: Rule evaluation hook will go here
+        // Evaluate rules for Phase 4 (Response Body)
+        if let Some(rules) = self.rules.clone() {
+            let rule_engine_on = self.rule_engine == RuleEngineStatus::On;
+            rules.eval(RulePhase::ResponseBody, self, rule_engine_on);
+        }
+
         self.interruption.clone()
     }
 
@@ -1093,8 +1151,14 @@ impl Transaction {
         // Update phase
         self.last_phase = Some(RulePhase::Logging);
 
+        // Evaluate rules for Phase 5 (Logging)
+        // Note: Logging phase rules run even if transaction is disrupted
+        if let Some(rules) = self.rules.clone() {
+            let rule_engine_on = self.rule_engine == RuleEngineStatus::On;
+            rules.eval(RulePhase::Logging, self, rule_engine_on);
+        }
+
         // TODO: Audit logging will go here
-        // TODO: Rule evaluation hook for logging phase
     }
 
     // ===== CTL Action Methods =====
@@ -1243,6 +1307,15 @@ impl TransactionState for Transaction {
         }
 
         self.captures[index] = Some(value.to_string());
+    }
+
+    fn interrupt(&mut self, rule_id: i32, action: &str, status: i32, data: &str) {
+        self.interruption = Some(Interruption {
+            rule_id: rule_id as usize,
+            action: action.to_string(),
+            status: status as u16,
+            data: data.to_string(),
+        });
     }
 
     // ===== CTL Action Methods =====
