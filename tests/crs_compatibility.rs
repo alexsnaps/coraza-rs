@@ -347,7 +347,9 @@ fn test_crs_path_traversal_unix_variants() {
         .add_variable(VariableSpec::new(RuleVariable::ArgsGet))
         .add_variable(VariableSpec::new(RuleVariable::RequestURI))
         .with_operator(RuleOperator::new(
-            rx(r"(?:\.\.\/|\.\.\\|%2e%2e%2f|%2e%2e\/|\.\.%2f|%2e%2e%5c)").unwrap().into(),
+            rx(r"(?:\.\.\/|\.\.\\|%2e%2e%2f|%2e%2e\/|\.\.%2f|%2e%2e%5c)")
+                .unwrap()
+                .into(),
             "@rx",
             "path traversal variants".to_string(),
         ))
@@ -369,7 +371,9 @@ fn test_crs_path_traversal_windows_variants() {
         .with_id(930110)
         .add_variable(VariableSpec::new(RuleVariable::Args))
         .with_operator(RuleOperator::new(
-            rx(r"(?:\\\.\.\\|%5c\.\.%5c|%5c\.\.|\.\.%5c)").unwrap().into(),
+            rx(r"(?:\\\.\.\\|%5c\.\.%5c|%5c\.\.|\.\.%5c)")
+                .unwrap()
+                .into(),
             "@rx",
             "windows path traversal".to_string(),
         ))
@@ -420,7 +424,9 @@ fn test_crs_local_file_inclusion() {
         .with_id(931100)
         .add_variable(VariableSpec::new(RuleVariable::Args))
         .with_operator(RuleOperator::new(
-            rx(r"(?:file://|php://|data://|expect://|zip://)").unwrap().into(),
+            rx(r"(?:file://|php://|data://|expect://|zip://)")
+                .unwrap()
+                .into(),
             "@rx",
             "LFI pattern".to_string(),
         ))
@@ -442,7 +448,9 @@ fn test_crs_remote_file_inclusion() {
         .with_id(931110)
         .add_variable(VariableSpec::new(RuleVariable::Args))
         .with_operator(RuleOperator::new(
-            rx(r"(?:https?://|ftps?://|dict://|gopher://)").unwrap().into(),
+            rx(r"(?:https?://|ftps?://|dict://|gopher://)")
+                .unwrap()
+                .into(),
             "@rx",
             "RFI pattern".to_string(),
         ))
