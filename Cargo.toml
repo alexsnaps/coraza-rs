@@ -27,6 +27,5 @@ path-clean = "1.0"
 # Glob pattern matching for file includes
 glob = "0.3"
 
-# Multipart/form-data parsing
-multipart = "0.18"
+# MIME type parsing (for Content-Type)
 mime = "0.3"
