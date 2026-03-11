@@ -2,49 +2,40 @@
 
 **Note:** Crate renamed from `coraza-rs` to `coraza` on 2026-03-09.
 
-## Current Status (as of 2026-03-10)
+## Current Status (as of 2026-03-11)
 
-**Phase 8: SecLang Parser** - COMPLETE (with deferred features)
+**Phase 9: Transaction Enhancements** - IN PROGRESS (8/12 steps complete)
 
 - ✅ **Phase 1:** Foundation types (RuleSeverity, RulePhase, RuleVariable, etc.) - COMPLETE
 - ✅ **Phase 2:** String utilities - COMPLETE
 - ✅ **Phase 3:** Transformations (30 transformations) - COMPLETE
 - ✅ **Phase 4:** Collections (Map, ConcatMap, Keyed trait) - COMPLETE
-- ✅ **Phase 5:** Operators (10 operators: rx, pm, streq, contains, etc.) - COMPLETE
-- ✅ **Phase 6:** Actions (27/27 implemented including phase) - COMPLETE
-- ✅ **Phase 7:** Rule Engine (8/8 steps complete) - COMPLETE
-- ✅ **Phase 8:** SecLang Parser (9/9 steps complete - partial) - COMPLETE
-  - ✅ Step 1: Parser infrastructure - COMPLETE
-  - ✅ Step 2: Directive system - COMPLETE
-  - ✅ Step 3: Variable parser - COMPLETE
-  - ✅ Step 4: Operator parser - COMPLETE
-  - ✅ Step 5: Action parser - COMPLETE
-  - ✅ Step 6: SecRule compilation - COMPLETE
-  - ✅ Step 7: Include directive (partial) - COMPLETE
-    - ✅ Include with file loading
-    - ✅ Glob pattern support
-    - ✅ Recursion protection
-    - ⏳ SecRuleRemove directives (deferred to Phase 9/10 - require WAF rule storage)
-    - ⏳ SecDefaultAction (deferred to Phase 9/10 - require WAF rule storage)
-  - ✅ Step 8: Remaining directives (partial) - COMPLETE
-    - ✅ 14 configuration directives implemented
-    - ⏳ Rule update directives (deferred to Phase 9/10)
-  - ✅ Step 9: Integration tests - COMPLETE
-- 🚧 **Phase 9:** Transaction Enhancements (12 steps planned) - IN PROGRESS
-  - ✅ Step 1: Body Processor Foundation - COMPLETE (9 tests passing)
-  - See detailed step-by-step plan below (15 days, 176+ tests)
+- ✅ **Phase 5:** Operators (19 operators implemented, 6 deferred) - COMPLETE
+- ✅ **Phase 6:** Actions (27 core actions, 4 deferred) - COMPLETE
+- ✅ **Phase 7:** Rule Engine (8/8 steps complete, 3 features deferred) - COMPLETE
+- ✅ **Phase 8:** SecLang Parser (9/9 steps complete, 7 directives deferred) - COMPLETE
+- 🚧 **Phase 9:** Transaction Enhancements (8/12 steps complete) - IN PROGRESS
+  - ✅ Step 1: Body Processor Foundation - COMPLETE
+  - ✅ Step 2: URL-Encoded Body Processor - COMPLETE
+  - ✅ Step 3: Multipart Body Processor - COMPLETE
+  - ✅ Step 4: JSON Body Processor - COMPLETE
+  - ✅ Step 5: XML Body Processor - COMPLETE
+  - ✅ Step 6: Variable Population System - PARTIAL (core infrastructure complete)
+  - ✅ Step 7: Phase Processing with Rule Evaluation - PARTIAL (infrastructure complete)
+  - ✅ Step 8: CTL Action Execution - PARTIAL (7 transaction-level commands complete, 13 WAF-level deferred)
+  - ⏳ Step 9: Advanced RuleGroup Features - PENDING
+  - ⏳ Step 10-12: Additional deferred items - PENDING
 
 **Quality Metrics:**
-- 917 tests passing total:
-  - 730 unit tests (lib tests - includes 9 body processor tests)
-  - 17 integration tests (tests/rule_engine.rs)
-  - 39 integration tests (tests/seclang.rs)
-  - 131 doc tests (includes 4 body processor doc tests)
+- 963 tests passing total:
+  - 822 unit tests (lib tests)
+  - 56 integration tests (tests/rule_engine.rs + tests/seclang.rs)
+  - 141 doc tests
 - ✅ Clippy clean (0 warnings)
 - ✅ 100% test parity with Go implementation for all implemented features
 
-**Next Milestone:** Phase 9 - Transaction Enhancements (body processors, variable population, phase-based processing)
-**Detailed Plan:** See "Phase 9: Transaction Enhancements - DETAILED STEP-BY-STEP PLAN" below (12 steps, 15 days, 176+ tests)
+**Next Milestone:** Complete Phase 9 remaining steps (9-12), then Phase 10 - WAF Core & Configuration
+**Detailed Plan:** See "Phase 9: Transaction Enhancements - DETAILED STEP-BY-STEP PLAN" below
 
 ## Porting Strategy & Guidelines
 
@@ -2230,18 +2221,19 @@ The following features were deferred from earlier phases and will be implemented
 - [x] URL-encoded body processor (Step 2) ✅
 - [x] Multipart body processor (Step 3) ✅
 - [x] JSON body processor (Step 4) ✅
-- [ ] XML body processor (Step 5)
-- [ ] Variable population from HTTP requests
-- [ ] Phase-based processing integration
-- [ ] Full request/response handling
-- [ ] Persistence layer for collections (IP, SESSION, USER)
+- [x] XML body processor (Step 5) ✅
+- [x] Variable population from HTTP requests (Step 6) ✅ PARTIAL
+- [x] Phase-based processing integration (Step 7) ✅ PARTIAL
+- [x] CTL action execution (Step 8) ✅ PARTIAL (7 transaction-level commands complete, 13 WAF-level deferred)
+- [ ] Advanced RuleGroup features (Step 9)
+- [ ] Persistence layer for collections (Steps 10-12)
 
 **Deferred Items to Implement:**
 - [ ] **4 Actions:** exec, expirevar, setenv, initcol
-- [ ] **CTL Action Execution:** Runtime configuration changes (20 sub-commands)
+- [ ] **13 CTL Commands:** ruleRemove*, body processor selection, audit controls (7 transaction-level commands already implemented ✅)
 - [ ] **3 RuleGroup Features:** skip/skipAfter, phase filtering, interruption handling
 
-**Progress:** 4 of 12 steps complete (Days 1-6 of 15)
+**Progress:** 8 of 12 steps complete (Days 1-12 of 15)
 **Source:** `coraza/internal/corazawaf/transaction.go` (78k lines)
 **Target:** Enhanced `src/transaction.rs` and `src/body_processors/`
 
@@ -2256,10 +2248,11 @@ The following features were deferred from earlier phases and will be implemented
 - [ ] Dataset management
 
 **Deferred Items to Implement:**
+- [ ] **13 CTL Commands:** ruleRemove*, requestBodyProcessor, responseBodyProcessor, auditEngine, auditLogParts, debugLogLevel
 - [ ] **7 SecLang Directives:** SecRuleRemove*, SecDefaultAction, SecRuleUpdate*
 - [ ] **6 Operators:** @ipMatchFromFile, @ipMatchFromDataset, @pmFromFile, @pmFromDataset, @detectSQLi, @detectXSS
 
-**Source:** `coraza/internal/corazawaf/waf.go` (12k lines), `coraza/internal/seclang/directives.go`
+**Source:** `coraza/internal/corazawaf/waf.go` (12k lines), `coraza/internal/seclang/directives.go`, `coraza/internal/actions/ctl.go`
 **Target:** `src/waf.rs`, `src/config.rs`, enhanced `src/operators/`, enhanced `src/seclang/parser.rs`
 
 ### Phase 11: Integration & Testing (~10 days)
@@ -2276,7 +2269,7 @@ The following features were deferred from earlier phases and will be implemented
 
 ---
 
-## Project Status Dashboard (as of 2026-03-10)
+## Project Status Dashboard (as of 2026-03-11)
 
 ### Completed Work
 **8 out of 11 phases complete** (73% of phases)
@@ -2292,19 +2285,20 @@ The following features were deferred from earlier phases and will be implemented
 | 6 | Actions | ✅ | 513/513 | 27 actions (4 deferred) |
 | 7 | Rule Engine | ✅ | 719/719 | Full rule evaluation (3 features deferred) |
 | 8 | SecLang Parser | ✅ | 904/904 | Parser, directives (7 directives deferred) |
-| 9 | Transaction Enhancements | ⏳ | - | Body processors, phase processing |
+| 9 | Transaction Enhancements | 🚧 | 822/822 | Body processors, phase processing (8/12 steps) |
 | 10 | WAF Core | ⏳ | - | WAF instance, rule storage |
 | 11 | Integration & Testing | ⏳ | - | CRS v4, benchmarks, E2E |
 
 ### Test Coverage
-- **961 total tests passing:**
-  - 774 unit tests (lib) - +44 from body processors (RAW + URL-encoded + Multipart + Parser + JSON)
+- **963 total tests passing:**
+  - 822 unit tests (lib) - Includes all body processors (RAW, URL-encoded, Multipart, JSON, XML) + phase processing + CTL execution
   - 56 integration tests (tests/rule_engine.rs + tests/seclang.rs)
-  - 131 doc tests
+  - 141 doc tests
 - **0 clippy warnings**
 - **100% test parity** with Go implementation for all implemented features
   - All 7 Go multipart tests ported with behavioral differences documented
-  - All 5 Go JSON test cases ported + 5 additional tests
+  - All 5 Go JSON test cases ported + 5 additional tests + 3 response processing tests
+  - All 5 Go XML test cases ported + 5 additional tests
 
 ### Features Implemented
 ✅ **30 Transformations** (all from Go codebase)
@@ -2314,14 +2308,17 @@ The following features were deferred from earlier phases and will be implemented
 ✅ **SecLang Parser** (parse rules, directives, includes)
 ✅ **14 Configuration Directives**
 
-### Deferred Items (21 total)
-**To be implemented in Phase 9 (Transaction):**
+### Deferred Items (33 remaining of 40 original)
+**Implemented in Phase 9:**
+- ✅ 7 CTL transaction-level commands (ruleEngine, requestBodyAccess, requestBodyLimit, forceRequestBodyVariable, responseBodyAccess, responseBodyLimit, forceResponseBodyVariable)
+
+**To be implemented in Phase 9 (Transaction) - Remaining (7 items):**
 - 4 actions: exec, expirevar, setenv, initcol
 - 3 RuleGroup features: skip/skipAfter, phase filtering, interruption handling
-- 1 CTL action execution (parsing complete)
 
-**To be implemented in Phase 10 (WAF Core):**
-- 7 SecLang directives: SecRuleRemove*, SecDefaultAction, SecRuleUpdate*
+**To be implemented in Phase 10 (WAF Core) - (26 items):**
+- 13 CTL WAF-level commands: ruleRemoveById, ruleRemoveByTag, ruleRemoveByMsg, ruleRemoveTargetById, ruleRemoveTargetByTag, ruleRemoveTargetByMsg, requestBodyProcessor, responseBodyProcessor, auditEngine, auditLogParts, debugLogLevel
+- 7 SecLang directives: SecRuleRemoveById, SecRuleRemoveByTag, SecRuleRemoveByMsg, SecDefaultAction, SecRuleUpdateTargetById, SecRuleUpdateActionById, SecRuleUpdateTargetByTag
 - 6 operators: @ipMatchFromFile, @ipMatchFromDataset, @pmFromFile, @pmFromDataset, @detectSQLi, @detectXSS
 
 ### Lines of Code
