@@ -38,10 +38,12 @@ pub use operators::{
     gt,
     // IP operators
     ip_match,
+    ip_match_from_file,
     le,
     lt,
-    pm,
     // Pattern operators
+    pm,
+    pm_from_file,
     rx,
     streq,
     strmatch,

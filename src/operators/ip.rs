@@ -144,6 +144,132 @@ pub fn ip_match(ips: &str) -> Result<IpMatch, String> {
     IpMatch::new(ips)
 }
 
+/// IP address matching operator (from file).
+///
+/// Loads IP addresses and CIDR blocks from a file, then performs matching
+/// identical to `@ipMatch`. Each line in the file should contain one IP
+/// address or CIDR block. Empty lines and lines starting with `#` are ignored.
+///
+/// # File Format
+///
+/// ```text
+/// # Internal networks
+/// 10.0.0.0/8
+/// 172.16.0.0/12
+/// 192.168.0.0/16
+///
+/// # Specific IPs
+/// 203.0.113.42
+/// ```
+///
+/// # Arguments
+///
+/// File path to load IP addresses from.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use coraza::operators::ip::ip_match_from_file;
+/// # use coraza::operators::Operator;
+/// let op = ip_match_from_file("/etc/coraza/blocked-ips.txt").unwrap();
+/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "10.0.0.1"));
+/// ```
+#[derive(Debug, Clone)]
+pub struct IpMatchFromFile {
+    /// List of IP networks (CIDR blocks) loaded from file
+    subnets: Vec<IpNet>,
+}
+
+impl IpMatchFromFile {
+    /// Creates a new `IpMatchFromFile` operator by loading IPs from a file.
+    ///
+    /// # Arguments
+    ///
+    /// * `file_path` - Path to file containing IP addresses (one per line)
+    ///
+    /// # Returns
+    ///
+    /// `Ok(IpMatchFromFile)` if file was read and at least one valid IP was parsed,
+    /// `Err` if file couldn't be read or no valid IPs were found.
+    ///
+    /// # File Format
+    ///
+    /// - One IP address or CIDR block per line
+    /// - Empty lines are ignored
+    /// - Lines starting with `#` are treated as comments and ignored
+    /// - Invalid IP addresses are silently skipped
+    pub fn new(file_path: &str) -> Result<Self, String> {
+        let content = std::fs::read_to_string(file_path)
+            .map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
+
+        let mut subnets = Vec::new();
+
+        for line in content.lines() {
+            let line = line.trim();
+
+            // Skip empty lines and comments
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            // Auto-add CIDR suffix if not present
+            let ip_with_cidr = if line.contains(':') && !line.contains('/') {
+                // IPv6 without CIDR - add /128
+                format!("{}/128", line)
+            } else if line.contains('.') && !line.contains('/') {
+                // IPv4 without CIDR - add /32
+                format!("{}/32", line)
+            } else {
+                line.to_string()
+            };
+
+            // Parse CIDR notation
+            match IpNet::from_str(&ip_with_cidr) {
+                Ok(net) => subnets.push(net),
+                Err(_) => {
+                    // Silently skip invalid IPs (matches Go behavior)
+                    continue;
+                }
+            }
+        }
+
+        if subnets.is_empty() {
+            return Err(format!("No valid IP addresses found in {}", file_path));
+        }
+
+        Ok(Self { subnets })
+    }
+}
+
+impl Operator for IpMatchFromFile {
+    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, input: &str) -> bool {
+        // Parse input IP address
+        let ip = match IpAddr::from_str(input) {
+            Ok(ip) => ip,
+            Err(_) => return false,
+        };
+
+        // Check if IP is in any of the subnets
+        self.subnets.iter().any(|subnet| subnet.contains(&ip))
+    }
+}
+
+/// Creates a new `@ipMatchFromFile` operator.
+///
+/// # Arguments
+///
+/// * `file_path` - Path to file containing IP addresses (one per line)
+///
+/// # Examples
+///
+/// ```no_run
+/// # use coraza::operators::ip_match_from_file;
+/// let op = ip_match_from_file("/etc/coraza/blocked-ips.txt").unwrap();
+/// ```
+pub fn ip_match_from_file(file_path: &str) -> Result<IpMatchFromFile, String> {
+    IpMatchFromFile::new(file_path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,5 +412,53 @@ mod tests {
 
         // Public IP should not match
         assert!(!op.evaluate(None::<&mut Transaction>, "8.8.8.8"));
+    }
+
+    #[test]
+    fn test_ip_match_from_file() {
+        use std::io::Write;
+
+        // Create temporary file with IP addresses
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(temp_file, "# Comment line").unwrap();
+        writeln!(temp_file).unwrap(); // Empty line
+        writeln!(temp_file, "192.168.1.0/24").unwrap();
+        writeln!(temp_file, "10.0.0.1").unwrap();
+        writeln!(temp_file, "# Another comment").unwrap();
+        writeln!(temp_file, "172.16.0.0/16").unwrap();
+        temp_file.flush().unwrap();
+
+        let op = ip_match_from_file(temp_file.path().to_str().unwrap()).unwrap();
+
+        // Should match IPs from file
+        assert!(op.evaluate(None::<&mut Transaction>, "192.168.1.100"));
+        assert!(op.evaluate(None::<&mut Transaction>, "10.0.0.1"));
+        assert!(op.evaluate(None::<&mut Transaction>, "172.16.50.25"));
+
+        // Should not match other IPs
+        assert!(!op.evaluate(None::<&mut Transaction>, "192.168.2.1"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "8.8.8.8"));
+    }
+
+    #[test]
+    fn test_ip_match_from_file_empty() {
+        use std::io::Write;
+
+        // Create file with only comments and empty lines
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(temp_file, "# Just comments").unwrap();
+        writeln!(temp_file).unwrap();
+        temp_file.flush().unwrap();
+
+        let result = ip_match_from_file(temp_file.path().to_str().unwrap());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("No valid IP addresses"));
+    }
+
+    #[test]
+    fn test_ip_match_from_file_not_found() {
+        let result = ip_match_from_file("/nonexistent/file.txt");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to read file"));
     }
 }

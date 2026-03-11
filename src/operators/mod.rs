@@ -12,9 +12,9 @@ mod pattern;
 mod simple;
 pub mod validation;
 
-pub use ip::{IpMatch, ip_match};
+pub use ip::{IpMatch, IpMatchFromFile, ip_match, ip_match_from_file};
 pub use macros::{Macro, MacroError, TransactionState};
-pub use pattern::{Pm, Rx, StrMatch, Within, pm, rx, strmatch, within};
+pub use pattern::{Pm, PmFromFile, Rx, StrMatch, Within, pm, pm_from_file, rx, strmatch, within};
 pub use simple::{
     BeginsWith, Contains, EndsWith, Eq, Ge, Gt, Le, Lt, StrEq, begins_with, contains, ends_with,
     eq, ge, gt, le, lt, streq,

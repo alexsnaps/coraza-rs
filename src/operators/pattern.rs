@@ -214,6 +214,128 @@ pub fn pm(patterns: &str) -> Result<Pm, MacroError> {
     })
 }
 
+/// Phrase matching operator (from file).
+///
+/// Loads patterns from a file, then performs case-insensitive multi-pattern
+/// matching identical to `@pm`. Each line in the file should contain one
+/// pattern. Empty lines and lines starting with `#` are ignored.
+///
+/// # File Format
+///
+/// ```text
+/// # Malicious user agents
+/// WebZIP
+/// WebCopier
+/// Webster
+/// WebStripper
+/// ```
+///
+/// # Examples
+///
+/// ```no_run
+/// # use coraza::operators::pm_from_file;
+/// # use coraza::operators::Operator;
+/// # use coraza::transaction::Transaction;
+/// let op = pm_from_file("/etc/coraza/bad-user-agents.txt").unwrap();
+/// assert!(op.evaluate(None::<&mut Transaction>, "User-Agent: WebZIP/1.0"));
+/// ```
+#[derive(Debug, Clone)]
+pub struct PmFromFile {
+    /// Aho-Corasick matcher built from file patterns
+    matcher: AhoCorasick,
+}
+
+impl PmFromFile {
+    /// Creates a new `PmFromFile` operator by loading patterns from a file.
+    ///
+    /// # Arguments
+    ///
+    /// * `file_path` - Path to file containing patterns (one per line)
+    ///
+    /// # Returns
+    ///
+    /// `Ok(PmFromFile)` if file was read and at least one pattern was loaded,
+    /// `Err` if file couldn't be read or no valid patterns were found.
+    ///
+    /// # File Format
+    ///
+    /// - One pattern per line
+    /// - Empty lines are ignored
+    /// - Lines starting with `#` are treated as comments and ignored
+    /// - All patterns are matched case-insensitively
+    pub fn new(file_path: &str) -> Result<Self, String> {
+        let content = std::fs::read_to_string(file_path)
+            .map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
+
+        let mut patterns = Vec::new();
+
+        for line in content.lines() {
+            let line = line.trim();
+
+            // Skip empty lines and comments
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            patterns.push(line.to_string());
+        }
+
+        if patterns.is_empty() {
+            return Err(format!("No valid patterns found in {}", file_path));
+        }
+
+        // Build Aho-Corasick matcher
+        let matcher = AhoCorasick::builder()
+            .ascii_case_insensitive(true)
+            .build(&patterns)
+            .map_err(|e| format!("Failed to build matcher: {}", e))?;
+
+        Ok(Self { matcher })
+    }
+}
+
+impl Operator for PmFromFile {
+    fn evaluate<TX: TransactionState>(&self, mut tx: Option<&mut TX>, input: &str) -> bool {
+        // Determine if we're capturing based on transaction state
+        let capturing = tx.as_ref().is_some_and(|t| t.capturing());
+
+        if capturing {
+            // Capture mode: collect all matches
+            let matches: Vec<_> = self.matcher.find_iter(input).take(10).collect();
+
+            if !matches.is_empty() {
+                if let Some(ref mut tx) = tx {
+                    // Capture matched patterns (preserve case from input)
+                    for (idx, mat) in matches.iter().enumerate() {
+                        tx.capture_field(idx, &input[mat.start()..mat.end()]);
+                    }
+                }
+                return true;
+            }
+            false
+        } else {
+            // Fast path: just check if any pattern matches
+            self.matcher.is_match(input)
+        }
+    }
+}
+
+/// Creates a new `@pmFromFile` operator.
+///
+/// # Arguments
+///
+/// * `file_path` - Path to file containing patterns (one per line)
+///
+/// # Examples
+///
+/// ```no_run
+/// # use coraza::operators::pm_from_file;
+/// let op = pm_from_file("/etc/coraza/bad-user-agents.txt").unwrap();
+/// ```
+pub fn pm_from_file(file_path: &str) -> Result<PmFromFile, String> {
+    PmFromFile::new(file_path)
+}
+
 /// Within operator.
 ///
 /// Returns true if the input value (needle) is found anywhere within the
@@ -728,5 +850,93 @@ mod tests {
 
         // Should still match, but won't capture
         assert!(op.evaluate(Some(&mut tx), "admin panel"));
+    }
+
+    #[test]
+    fn test_pm_from_file() {
+        use std::io::Write;
+
+        // Create temporary file with patterns
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(temp_file, "# Bad user agents").unwrap();
+        writeln!(temp_file, "WebZIP").unwrap();
+        writeln!(temp_file).unwrap(); // Empty line
+        writeln!(temp_file, "WebCopier").unwrap();
+        writeln!(temp_file, "# Another comment").unwrap();
+        writeln!(temp_file, "Webster").unwrap();
+        temp_file.flush().unwrap();
+
+        let op = pm_from_file(temp_file.path().to_str().unwrap()).unwrap();
+
+        // Should match patterns from file (case-insensitive)
+        assert!(op.evaluate(None::<&mut Transaction>, "User-Agent: WebZIP/1.0"));
+        assert!(op.evaluate(None::<&mut Transaction>, "using WEBZIP client"));
+        assert!(op.evaluate(None::<&mut Transaction>, "webcopier tool"));
+        assert!(op.evaluate(None::<&mut Transaction>, "Webster"));
+
+        // Should not match other patterns
+        assert!(!op.evaluate(None::<&mut Transaction>, "Mozilla/5.0"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "Chrome"));
+    }
+
+    #[test]
+    fn test_pm_from_file_capturing() {
+        use std::io::Write;
+
+        struct CapturingTx {
+            captures: Vec<String>,
+        }
+
+        impl TransactionState for CapturingTx {
+            fn get_variable(&self, _variable: RuleVariable, _key: Option<&str>) -> Option<String> {
+                None
+            }
+
+            fn capturing(&self) -> bool {
+                true
+            }
+
+            fn capture_field(&mut self, _index: usize, value: &str) {
+                self.captures.push(value.to_string());
+            }
+        }
+
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(temp_file, "admin").unwrap();
+        writeln!(temp_file, "user").unwrap();
+        temp_file.flush().unwrap();
+
+        let op = pm_from_file(temp_file.path().to_str().unwrap()).unwrap();
+        let mut tx = CapturingTx {
+            captures: Vec::new(),
+        };
+
+        // Should capture matches
+        assert!(op.evaluate(Some(&mut tx), "admin and user panel"));
+        assert_eq!(tx.captures.len(), 2);
+        assert_eq!(tx.captures[0], "admin");
+        assert_eq!(tx.captures[1], "user");
+    }
+
+    #[test]
+    fn test_pm_from_file_empty() {
+        use std::io::Write;
+
+        // Create file with only comments
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(temp_file, "# Just comments").unwrap();
+        writeln!(temp_file).unwrap();
+        temp_file.flush().unwrap();
+
+        let result = pm_from_file(temp_file.path().to_str().unwrap());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("No valid patterns"));
+    }
+
+    #[test]
+    fn test_pm_from_file_not_found() {
+        let result = pm_from_file("/nonexistent/file.txt");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to read file"));
     }
 }
