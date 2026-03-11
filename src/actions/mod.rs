@@ -57,6 +57,7 @@
 //! ```
 
 mod ctl;
+mod deferred;
 mod disruptive;
 mod flow;
 mod logging;
@@ -393,6 +394,24 @@ fn create_ctl() -> Box<dyn Action> {
     Box::new(CtlAction::new())
 }
 
+// Deferred action factories (from Phase 6, Step 10)
+
+fn create_exec() -> Box<dyn Action> {
+    Box::new(deferred::ExecAction::new())
+}
+
+fn create_expirevar() -> Box<dyn Action> {
+    Box::new(deferred::ExpirevarAction::new())
+}
+
+fn create_setenv() -> Box<dyn Action> {
+    Box::new(deferred::SetenvAction::new())
+}
+
+fn create_initcol() -> Box<dyn Action> {
+    Box::new(deferred::InitcolAction::new())
+}
+
 /// Initialize the action registry with built-in actions.
 fn init_registry() -> HashMap<String, ActionFactory> {
     let mut registry = HashMap::new();
@@ -436,6 +455,12 @@ fn init_registry() -> HashMap<String, ActionFactory> {
     registry.insert("status".to_string(), create_status as ActionFactory);
     registry.insert("t".to_string(), create_t as ActionFactory);
     registry.insert("ctl".to_string(), create_ctl as ActionFactory);
+
+    // Deferred actions (from Phase 6)
+    registry.insert("exec".to_string(), create_exec as ActionFactory);
+    registry.insert("expirevar".to_string(), create_expirevar as ActionFactory);
+    registry.insert("setenv".to_string(), create_setenv as ActionFactory);
+    registry.insert("initcol".to_string(), create_initcol as ActionFactory);
 
     registry
 }
@@ -754,6 +779,48 @@ mod tests {
             action.action_type(),
             ActionType::Nondisruptive,
             "Action 'setvar' should be Nondisruptive"
+        );
+    }
+
+    // ===== Deferred Actions Registration Tests (Step 10) =====
+
+    #[test]
+    fn test_deferred_actions_registered() {
+        // Verify all 4 deferred actions are registered in the global registry
+        assert!(get("exec").is_ok(), "exec action should be registered");
+        assert!(
+            get("expirevar").is_ok(),
+            "expirevar action should be registered"
+        );
+        assert!(get("setenv").is_ok(), "setenv action should be registered");
+        assert!(
+            get("initcol").is_ok(),
+            "initcol action should be registered"
+        );
+    }
+
+    #[test]
+    fn test_deferred_actions_types() {
+        // Verify all deferred actions are Nondisruptive
+        assert_eq!(
+            get("exec").unwrap().action_type(),
+            ActionType::Nondisruptive,
+            "exec should be Nondisruptive"
+        );
+        assert_eq!(
+            get("expirevar").unwrap().action_type(),
+            ActionType::Nondisruptive,
+            "expirevar should be Nondisruptive"
+        );
+        assert_eq!(
+            get("setenv").unwrap().action_type(),
+            ActionType::Nondisruptive,
+            "setenv should be Nondisruptive"
+        );
+        assert_eq!(
+            get("initcol").unwrap().action_type(),
+            ActionType::Nondisruptive,
+            "initcol should be Nondisruptive"
         );
     }
 }
