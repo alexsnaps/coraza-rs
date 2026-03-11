@@ -6,7 +6,7 @@
 pub mod variables;
 
 use crate::RuleVariable;
-use crate::collection::{Keyed, Map, Single, SingleCollection};
+use crate::collection::{Keyed, Map, MapCollection, Single, SingleCollection};
 use crate::operators::TransactionState;
 
 /// A transaction represents a single HTTP request/response being processed.
@@ -61,6 +61,36 @@ pub struct Transaction {
     /// REMOTE_ADDR
     remote_addr: Single,
 
+    /// REMOTE_PORT
+    remote_port: Single,
+
+    /// SERVER_ADDR
+    server_addr: Single,
+
+    /// SERVER_PORT
+    server_port: Single,
+
+    /// SERVER_NAME
+    server_name: Single,
+
+    /// REQUEST_PROTOCOL (HTTP/1.1, HTTP/2, etc.)
+    request_protocol: Single,
+
+    /// REQUEST_URI_RAW (original URI before parsing)
+    request_uri_raw: Single,
+
+    /// REQUEST_BASENAME (filename from path)
+    request_basename: Single,
+
+    /// REQUEST_FILENAME (path component)
+    request_filename: Single,
+
+    /// REQUEST_LINE (full request line: METHOD URI PROTOCOL)
+    request_line: Single,
+
+    /// QUERY_STRING
+    query_string: Single,
+
     /// REQUEST_BODY (raw body content)
     pub(crate) request_body: Single,
 
@@ -91,6 +121,21 @@ pub struct Transaction {
     /// REQUEST_XML - Parsed XML data (attributes and content)
     pub(crate) request_xml: Map,
 
+    /// RESPONSE_STATUS (HTTP status code)
+    response_status: Single,
+
+    /// RESPONSE_PROTOCOL (HTTP/1.1, etc.)
+    response_protocol: Single,
+
+    /// RESPONSE_CONTENT_TYPE (content type without parameters)
+    response_content_type: Single,
+
+    /// RESPONSE_CONTENT_LENGTH
+    response_content_length: Single,
+
+    /// RESPONSE_BODY
+    response_body: Single,
+
     /// Captured values from operators (rx, pm)
     captures: Vec<Option<String>>,
 
@@ -118,6 +163,16 @@ impl Transaction {
             request_uri: Single::new(RuleVariable::RequestURI),
             request_method: Single::new(RuleVariable::RequestMethod),
             remote_addr: Single::new(RuleVariable::RemoteAddr),
+            remote_port: Single::new(RuleVariable::RemotePort),
+            server_addr: Single::new(RuleVariable::ServerAddr),
+            server_port: Single::new(RuleVariable::ServerPort),
+            server_name: Single::new(RuleVariable::ServerName),
+            request_protocol: Single::new(RuleVariable::RequestProtocol),
+            request_uri_raw: Single::new(RuleVariable::RequestURIRaw),
+            request_basename: Single::new(RuleVariable::RequestBasename),
+            request_filename: Single::new(RuleVariable::RequestFilename),
+            request_line: Single::new(RuleVariable::RequestLine),
+            query_string: Single::new(RuleVariable::QueryString),
             request_body: Single::new(RuleVariable::RequestBody),
             request_body_length: Single::new(RuleVariable::RequestBodyLength),
             files: Map::new_case_sensitive(RuleVariable::Files),
@@ -128,6 +183,11 @@ impl Transaction {
             multipart_part_headers: Map::new_case_sensitive(RuleVariable::MultipartPartHeaders),
             multipart_strict_error: Single::new(RuleVariable::MultipartStrictError),
             request_xml: Map::new_case_sensitive(RuleVariable::RequestXML),
+            response_status: Single::new(RuleVariable::ResponseStatus),
+            response_protocol: Single::new(RuleVariable::ResponseProtocol),
+            response_content_type: Single::new(RuleVariable::ResponseContentType),
+            response_content_length: Single::new(RuleVariable::ResponseContentLength),
+            response_body: Single::new(RuleVariable::ResponseBody),
             captures: Vec::new(),
             capturing: false,
         }
@@ -253,6 +313,255 @@ impl Transaction {
             self.captures.clear();
         }
     }
+
+    // ===== HTTP Processing Methods =====
+
+    /// Process connection information (Phase 1).
+    ///
+    /// Populates connection-level variables:
+    /// - REMOTE_ADDR, REMOTE_PORT
+    /// - SERVER_ADDR, SERVER_PORT
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    ///
+    /// let mut tx = Transaction::new("tx-1");
+    /// tx.process_connection("192.168.1.100", 54321, "10.0.0.1", 8080);
+    /// ```
+    pub fn process_connection(
+        &mut self,
+        client_addr: &str,
+        client_port: u16,
+        server_addr: &str,
+        server_port: u16,
+    ) {
+        self.remote_addr.set(client_addr);
+        self.remote_port.set(client_port.to_string());
+        self.server_addr.set(server_addr);
+        self.server_port.set(server_port.to_string());
+    }
+
+    /// Set the server name.
+    ///
+    /// Should be called before process_request_headers().
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    ///
+    /// let mut tx = Transaction::new("tx-1");
+    /// tx.set_server_name("example.com");
+    /// ```
+    pub fn set_server_name(&mut self, name: impl Into<String>) {
+        self.server_name.set(name);
+    }
+
+    /// Process URI and populate request variables.
+    ///
+    /// Populates:
+    /// - REQUEST_METHOD, REQUEST_PROTOCOL, REQUEST_URI_RAW, REQUEST_LINE
+    /// - REQUEST_URI, REQUEST_FILENAME, REQUEST_BASENAME, QUERY_STRING
+    /// - ARGS_GET (by parsing query string)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    /// use coraza::collection::Keyed;
+    ///
+    /// let mut tx = Transaction::new("tx-1");
+    /// tx.process_uri("/api/users?id=123&name=admin", "GET", "HTTP/1.1");
+    ///
+    /// // Check populated variables
+    /// assert_eq!(tx.args_get().get("id"), vec!["123"]);
+    /// assert_eq!(tx.args_get().get("name"), vec!["admin"]);
+    /// ```
+    pub fn process_uri(&mut self, uri: &str, method: &str, http_version: &str) {
+        self.request_method.set(method);
+        self.request_protocol.set(http_version);
+        self.request_uri_raw.set(uri);
+        self.request_line
+            .set(format!("{} {} {}", method, uri, http_version));
+
+        // Remove anchor if present
+        let uri_without_anchor = if let Some(anchor_pos) = uri.find('#') {
+            &uri[..anchor_pos]
+        } else {
+            uri
+        };
+
+        // Split into path and query string
+        let (path, query) = if let Some(query_pos) = uri_without_anchor.find('?') {
+            let path = &uri_without_anchor[..query_pos];
+            let query = &uri_without_anchor[query_pos + 1..];
+            (path, query)
+        } else {
+            (uri_without_anchor, "")
+        };
+
+        // Set cleaned request URI
+        self.request_uri.set(uri_without_anchor);
+
+        // Extract basename (last component of path)
+        if let Some(last_slash) = path.rfind(['/', '\\']) {
+            let basename = &path[last_slash + 1..];
+            self.request_basename.set(basename);
+        } else {
+            self.request_basename.set(path);
+        }
+
+        self.request_filename.set(path);
+        self.query_string.set(query);
+
+        // Parse query string into ARGS_GET
+        if !query.is_empty() {
+            self.extract_get_arguments(query);
+        }
+    }
+
+    /// Extract GET arguments from a query string.
+    ///
+    /// Parses URL-encoded query string like "key1=value1&key2=value2"
+    /// and adds to ARGS_GET collection.
+    fn extract_get_arguments(&mut self, query: &str) {
+        for pair in query.split('&') {
+            if pair.is_empty() {
+                continue;
+            }
+
+            if let Some(eq_pos) = pair.find('=') {
+                let key = &pair[..eq_pos];
+                let value = &pair[eq_pos + 1..];
+
+                // URL decode key and value
+                let key = Self::url_decode(key);
+                let value = Self::url_decode(value);
+
+                self.args_get_mut().add(&key, &value);
+                self.args_mut().add(&key, &value);
+            } else {
+                // Key without value (e.g., "?flag")
+                let key = Self::url_decode(pair);
+                self.args_get_mut().add(&key, "");
+                self.args_mut().add(&key, "");
+            }
+        }
+    }
+
+    /// Simple URL decoder (decodes %XX sequences).
+    fn url_decode(s: &str) -> String {
+        let mut result = String::with_capacity(s.len());
+        let mut chars = s.chars();
+
+        while let Some(ch) = chars.next() {
+            if ch == '%' {
+                // Try to decode %XX sequence
+                let hex: String = chars.by_ref().take(2).collect();
+                if hex.len() == 2
+                    && let Ok(byte) = u8::from_str_radix(&hex, 16)
+                {
+                    result.push(byte as char);
+                    continue;
+                }
+                // If decoding failed, just keep the %
+                result.push('%');
+                result.push_str(&hex);
+            } else if ch == '+' {
+                // '+' decodes to space in query strings
+                result.push(' ');
+            } else {
+                result.push(ch);
+            }
+        }
+
+        result
+    }
+
+    /// Add a request header.
+    ///
+    /// Handles special headers:
+    /// - Content-Type: Sets appropriate body processor
+    /// - Cookie: Parses and populates REQUEST_COOKIES
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    /// use coraza::collection::Keyed;
+    ///
+    /// let mut tx = Transaction::new("tx-1");
+    /// tx.add_request_header("User-Agent", "Mozilla/5.0");
+    /// tx.add_request_header("Cookie", "session=abc123; user=admin");
+    ///
+    /// assert_eq!(tx.request_headers().get("user-agent"), vec!["Mozilla/5.0"]);
+    /// assert_eq!(tx.request_cookies().get("session"), vec!["abc123"]);
+    /// assert_eq!(tx.request_cookies().get("user"), vec!["admin"]);
+    /// ```
+    pub fn add_request_header(&mut self, key: &str, value: &str) {
+        if key.is_empty() {
+            return;
+        }
+
+        self.request_headers_mut().add(key, value);
+
+        // Handle special headers
+        let key_lower = key.to_lowercase();
+        if key_lower.as_str() == "cookie" {
+            // Parse cookies: "key1=value1; key2=value2"
+            self.parse_cookies(value);
+        }
+    }
+
+    /// Parse cookie header value and populate REQUEST_COOKIES.
+    fn parse_cookies(&mut self, cookie_header: &str) {
+        for pair in cookie_header.split(';') {
+            let pair = pair.trim();
+            if pair.is_empty() {
+                continue;
+            }
+
+            if let Some(eq_pos) = pair.find('=') {
+                let key = pair[..eq_pos].trim();
+                let value = pair[eq_pos + 1..].trim();
+                self.request_cookies_mut().add(key, value);
+            }
+        }
+    }
+
+    /// Add a response header.
+    ///
+    /// Handles special headers:
+    /// - Content-Type: Sets RESPONSE_CONTENT_TYPE
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    /// use coraza::collection::SingleCollection;
+    ///
+    /// let mut tx = Transaction::new("tx-1");
+    /// tx.add_response_header("Content-Type", "application/json; charset=utf-8");
+    ///
+    /// // Note: RESPONSE_CONTENT_TYPE is not yet accessible, will be added later
+    /// ```
+    pub fn add_response_header(&mut self, key: &str, value: &str) {
+        if key.is_empty() {
+            return;
+        }
+
+        self.response_headers_mut().add(key, value);
+
+        // Handle special headers
+        let key_lower = key.to_lowercase();
+        if key_lower.as_str() == "content-type" {
+            // Extract just the MIME type (before the semicolon)
+            let mime_type = value.split(';').next().unwrap_or(value).trim();
+            self.response_content_type.set(mime_type);
+        }
+    }
 }
 
 impl TransactionState for Transaction {
@@ -299,7 +608,7 @@ impl TransactionState for Transaction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collection::MapCollection;
+    use crate::collection::{Collection, MapCollection};
 
     #[test]
     fn test_transaction_new() {
@@ -383,5 +692,147 @@ mod tests {
         // Disabling capturing clears captures
         tx.set_capturing(false);
         assert!(tx.captures.is_empty());
+    }
+
+    #[test]
+    fn test_process_connection() {
+        let mut tx = Transaction::new("tx-007");
+        tx.process_connection("192.168.1.100", 54321, "10.0.0.1", 8080);
+
+        assert_eq!(tx.remote_addr.get(), "192.168.1.100");
+        assert_eq!(tx.remote_port.get(), "54321");
+        assert_eq!(tx.server_addr.get(), "10.0.0.1");
+        assert_eq!(tx.server_port.get(), "8080");
+    }
+
+    #[test]
+    fn test_set_server_name() {
+        let mut tx = Transaction::new("tx-008");
+        tx.set_server_name("example.com");
+
+        assert_eq!(tx.server_name.get(), "example.com");
+    }
+
+    #[test]
+    fn test_process_uri_simple() {
+        let mut tx = Transaction::new("tx-009");
+        tx.process_uri("/api/users", "GET", "HTTP/1.1");
+
+        assert_eq!(tx.request_method.get(), "GET");
+        assert_eq!(tx.request_protocol.get(), "HTTP/1.1");
+        assert_eq!(tx.request_uri_raw.get(), "/api/users");
+        assert_eq!(tx.request_line.get(), "GET /api/users HTTP/1.1");
+        assert_eq!(tx.request_uri.get(), "/api/users");
+        assert_eq!(tx.request_filename.get(), "/api/users");
+        assert_eq!(tx.request_basename.get(), "users");
+        assert_eq!(tx.query_string.get(), "");
+    }
+
+    #[test]
+    fn test_process_uri_with_query() {
+        let mut tx = Transaction::new("tx-010");
+        tx.process_uri("/search?q=test&page=2", "POST", "HTTP/2.0");
+
+        assert_eq!(tx.request_uri.get(), "/search?q=test&page=2");
+        assert_eq!(tx.request_filename.get(), "/search");
+        assert_eq!(tx.request_basename.get(), "search");
+        assert_eq!(tx.query_string.get(), "q=test&page=2");
+
+        // Check ARGS_GET populated
+        assert_eq!(tx.args_get().get("q"), vec!["test"]);
+        assert_eq!(tx.args_get().get("page"), vec!["2"]);
+    }
+
+    #[test]
+    fn test_process_uri_with_anchor() {
+        let mut tx = Transaction::new("tx-011");
+        tx.process_uri("/page#section", "GET", "HTTP/1.1");
+
+        assert_eq!(tx.request_uri_raw.get(), "/page#section");
+        assert_eq!(tx.request_uri.get(), "/page"); // Anchor removed
+    }
+
+    #[test]
+    fn test_process_uri_url_decoding() {
+        let mut tx = Transaction::new("tx-012");
+        tx.process_uri("/search?q=hello+world&tag=%23rust", "GET", "HTTP/1.1");
+
+        // Check URL decoding
+        assert_eq!(tx.args_get().get("q"), vec!["hello world"]); // + -> space
+        assert_eq!(tx.args_get().get("tag"), vec!["#rust"]); // %23 -> #
+    }
+
+    #[test]
+    fn test_process_uri_key_without_value() {
+        let mut tx = Transaction::new("tx-013");
+        tx.process_uri("/api?flag", "GET", "HTTP/1.1");
+
+        assert_eq!(tx.args_get().get("flag"), vec![""]);
+    }
+
+    #[test]
+    fn test_add_request_header() {
+        let mut tx = Transaction::new("tx-014");
+        tx.add_request_header("User-Agent", "Mozilla/5.0");
+        tx.add_request_header("Content-Type", "application/json");
+
+        assert_eq!(tx.request_headers().get("user-agent"), vec!["Mozilla/5.0"]);
+        assert_eq!(
+            tx.request_headers().get("content-type"),
+            vec!["application/json"]
+        );
+    }
+
+    #[test]
+    fn test_add_request_header_cookie() {
+        let mut tx = Transaction::new("tx-015");
+        tx.add_request_header("Cookie", "session=abc123; user=admin; theme=dark");
+
+        assert_eq!(tx.request_cookies().get("session"), vec!["abc123"]);
+        assert_eq!(tx.request_cookies().get("user"), vec!["admin"]);
+        assert_eq!(tx.request_cookies().get("theme"), vec!["dark"]);
+    }
+
+    #[test]
+    fn test_add_request_header_empty_key() {
+        let mut tx = Transaction::new("tx-016");
+        tx.add_request_header("", "value");
+
+        // Should not add header with empty key
+        assert!(tx.request_headers().find_all().is_empty());
+    }
+
+    #[test]
+    fn test_parse_cookies_with_spaces() {
+        let mut tx = Transaction::new("tx-017");
+        tx.add_request_header("Cookie", " session = abc123 ; user = admin ");
+
+        assert_eq!(tx.request_cookies().get("session"), vec!["abc123"]);
+        assert_eq!(tx.request_cookies().get("user"), vec!["admin"]);
+    }
+
+    #[test]
+    fn test_add_response_header() {
+        let mut tx = Transaction::new("tx-018");
+        tx.add_response_header("Content-Type", "application/json; charset=utf-8");
+        tx.add_response_header("Server", "nginx/1.18");
+
+        assert_eq!(
+            tx.response_headers().get("content-type"),
+            vec!["application/json; charset=utf-8"]
+        );
+        assert_eq!(tx.response_headers().get("server"), vec!["nginx/1.18"]);
+
+        // RESPONSE_CONTENT_TYPE should have just the MIME type
+        assert_eq!(tx.response_content_type.get(), "application/json");
+    }
+
+    #[test]
+    fn test_add_response_header_empty_key() {
+        let mut tx = Transaction::new("tx-019");
+        tx.add_response_header("", "value");
+
+        // Should not add header with empty key
+        assert!(tx.response_headers().find_all().is_empty());
     }
 }
