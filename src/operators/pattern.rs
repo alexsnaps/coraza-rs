@@ -246,6 +246,44 @@ pub struct PmFromFile {
 }
 
 impl PmFromFile {
+    /// Try to read a file with fallback path strategies.
+    ///
+    /// Attempts to read the file from:
+    /// 1. The path as-is (for absolute paths or CWD-relative)
+    /// 2. Common CRS data directories (for CRS compatibility)
+    fn read_file_with_fallback(file_path: &str) -> Result<String, String> {
+        use std::path::{Path, PathBuf};
+
+        // Strategy 1: Try the path as-is
+        if let Ok(content) = std::fs::read_to_string(file_path) {
+            return Ok(content);
+        }
+
+        // Strategy 2: If it's a relative path, try common CRS directories
+        if !Path::new(file_path).is_absolute() {
+            // Common CRS data file locations
+            let search_dirs = vec![
+                // CRS v4 structure
+                PathBuf::from("../coraza-coreruleset/rules/@owasp_crs"),
+                PathBuf::from("../../coraza-coreruleset/rules/@owasp_crs"),
+                PathBuf::from("/etc/coraza/rules"),
+                PathBuf::from("./rules"),
+            ];
+
+            for dir in search_dirs {
+                let full_path = dir.join(file_path);
+                if let Ok(content) = std::fs::read_to_string(&full_path) {
+                    return Ok(content);
+                }
+            }
+        }
+
+        Err(format!(
+            "Failed to read file: {} (tried as-is and common CRS directories)",
+            file_path
+        ))
+    }
+
     /// Creates a new `PmFromFile` operator by loading patterns from a file.
     ///
     /// # Arguments
@@ -264,8 +302,8 @@ impl PmFromFile {
     /// - Lines starting with `#` are treated as comments and ignored
     /// - All patterns are matched case-insensitively
     pub fn new(file_path: &str) -> Result<Self, String> {
-        let content = std::fs::read_to_string(file_path)
-            .map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
+        // Try to read the file, attempting multiple path strategies
+        let content = Self::read_file_with_fallback(file_path)?;
 
         let mut patterns = Vec::new();
 

@@ -192,6 +192,12 @@ fn create_operator(name: &str, arguments: &str) -> ParseResult<OperatorEnum> {
             })?;
             Ok(op.into())
         }
+        "pmfromfile" | "pmf" => {
+            let op = pm_from_file(arguments).map_err(|e| {
+                OperatorParseError::new(format!("failed to create @pmFromFile operator: {}", e))
+            })?;
+            Ok(op.into())
+        }
         "streq" => {
             let op = streq(arguments).map_err(|e| {
                 OperatorParseError::new(format!("failed to create @streq operator: {}", e))
@@ -270,7 +276,10 @@ fn create_operator(name: &str, arguments: &str) -> ParseResult<OperatorEnum> {
         }
         "validatebyterange" => {
             let op = validate_byte_range(arguments).map_err(|e| {
-                OperatorParseError::new(format!("failed to create @validateByteRange operator: {}", e))
+                OperatorParseError::new(format!(
+                    "failed to create @validateByteRange operator: {}",
+                    e
+                ))
             })?;
             Ok(op.into())
         }

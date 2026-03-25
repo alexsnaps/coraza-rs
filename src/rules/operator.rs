@@ -8,9 +8,9 @@
 //! abstraction without dynamic dispatch.
 
 use crate::operators::{
-    BeginsWith, Contains, EndsWith, Eq, Ge, Gt, IpMatch, Le, Lt, NoMatch, Operator, Pm, Rx, StrEq,
-    StrMatch, TransactionState, UnconditionalMatch, ValidateByteRange, ValidateUrlEncoding,
-    ValidateUtf8Encoding, Within,
+    BeginsWith, Contains, EndsWith, Eq, Ge, Gt, IpMatch, Le, Lt, NoMatch, Operator, Pm, PmFromFile,
+    Rx, StrEq, StrMatch, TransactionState, UnconditionalMatch, ValidateByteRange,
+    ValidateUrlEncoding, ValidateUtf8Encoding, Within,
 };
 
 /// Enum containing all available operators.
@@ -22,6 +22,7 @@ pub enum OperatorEnum {
     // Pattern matching operators
     Rx(Rx),
     Pm(Pm),
+    PmFromFile(PmFromFile),
     StrMatch(StrMatch),
     Within(Within),
 
@@ -61,6 +62,7 @@ impl OperatorEnum {
             // Pattern matching
             Self::Rx(op) => op.evaluate(tx, input),
             Self::Pm(op) => op.evaluate(tx, input),
+            Self::PmFromFile(op) => op.evaluate(tx, input),
             Self::StrMatch(op) => op.evaluate(tx, input),
             Self::Within(op) => op.evaluate(tx, input),
 
@@ -235,6 +237,12 @@ impl From<Rx> for OperatorEnum {
 impl From<Pm> for OperatorEnum {
     fn from(op: Pm) -> Self {
         Self::Pm(op)
+    }
+}
+
+impl From<PmFromFile> for OperatorEnum {
+    fn from(op: PmFromFile) -> Self {
+        Self::PmFromFile(op)
     }
 }
 
