@@ -264,6 +264,24 @@ fn create_operator(name: &str, arguments: &str) -> ParseResult<OperatorEnum> {
             })?;
             Ok(op.into())
         }
+        "unconditionalmatch" => {
+            let op = unconditional_match();
+            Ok(op.into())
+        }
+        "validatebyterange" => {
+            let op = validate_byte_range(arguments).map_err(|e| {
+                OperatorParseError::new(format!("failed to create @validateByteRange operator: {}", e))
+            })?;
+            Ok(op.into())
+        }
+        "validateurlencoding" => {
+            let op = validate_url_encoding();
+            Ok(op.into())
+        }
+        "validateutf8encoding" => {
+            let op = validate_utf8_encoding();
+            Ok(op.into())
+        }
         _ => Err(OperatorParseError::new(format!(
             "unknown operator: {}",
             name

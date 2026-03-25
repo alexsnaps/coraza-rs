@@ -24,7 +24,7 @@ const (
 	serverPort       = 8080
 	serverLogfile    = "/tmp/coraza-ftw-audit.log"
 	corazaRsPath     = ".."
-	serverBinaryPath = "../target/debug/examples/ftw_server_async"
+	serverBinaryPath = "../target/release/examples/ftw_server_async"
 )
 
 func main() {
