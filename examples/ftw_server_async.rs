@@ -1,39 +1,43 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! FTW Test Server
+//! FTW Test Server - Async Version
 //!
-//! HTTP server for running go-ftw (Framework for Testing WAFs) tests against coraza-rs.
+//! Async HTTP server using hyper/tokio for running go-ftw tests against coraza-rs.
 //!
 //! This server:
 //! - Loads CRS rules via SecLang parser
-//! - Processes HTTP requests through the WAF
+//! - Processes HTTP requests through the WAF (async)
 //! - Writes ModSecurity-compatible audit logs
-//! - Supports FTW test requirements
+//! - Supports concurrent requests via tokio
 //!
 //! Usage:
-//!   cargo run --example ftw_server -- \
+//!   cargo run --example ftw_server_async --features async-server -- \
 //!     --port 8080 \
 //!     --logfile /tmp/coraza-audit.log \
 //!     --rules crs-setup.conf
-//!
-//! Run with: cargo run --example ftw_server
 
+use std::convert::Infallible;
 use std::fs::OpenOptions;
 use std::io::Write as IoWrite;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+
+use http_body_util::{BodyExt, Full};
+use hyper::body::{Bytes, Incoming};
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Method, Request, Response, StatusCode};
+use hyper_util::rt::TokioIo;
+use tokio::net::TcpListener;
 
 use coraza::config::WafConfig;
 use coraza::seclang::{compile_sec_action, compile_sec_marker, compile_sec_rule};
 use coraza::types::RuleEngineStatus;
 use coraza::waf::Waf;
 
-// Note: We'll use a simple HTTP server for now
-// In production, we'd use hyper/axum/tokio
-// For this example, we'll use std::net for simplicity
-
-fn main() {
-    println!("🛡️  Coraza FTW Test Server\n");
+#[tokio::main]
+async fn main() {
+    println!("🛡️  Coraza FTW Test Server (Async)\n");
 
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
@@ -83,152 +87,126 @@ fn main() {
             .expect("Failed to open logfile"),
     ));
 
-    // Start HTTP server
+    // Bind to address
     let addr: SocketAddr = format!("127.0.0.1:{}", port)
         .parse()
         .expect("Invalid address");
 
+    let listener = TcpListener::bind(addr).await.expect("Failed to bind");
+
     println!("🚀 Server listening on http://{}", addr);
     println!("💡 Ready to accept FTW test requests\n");
-    println!("Press Ctrl+C to stop\n");
+    println!("✅ Using async HTTP server (hyper/tokio)\n");
 
-    // Note: This is a placeholder
-    // In a real implementation, we'd use hyper/axum/actix-web
-    // For now, we'll create a simple proof-of-concept structure
+    // Accept connections
+    loop {
+        let (stream, _) = listener.accept().await.expect("Failed to accept");
+        let io = TokioIo::new(stream);
 
-    simple_http_server(addr, waf, logfile);
-}
+        let waf = Arc::clone(&waf);
+        let logfile = Arc::clone(&logfile);
 
-/// Simple HTTP server (placeholder - needs async runtime in real implementation)
-fn simple_http_server(addr: SocketAddr, waf: Arc<Waf>, logfile: Arc<Mutex<std::fs::File>>) {
-    use std::net::TcpListener;
+        // Spawn a task to handle the connection
+        tokio::task::spawn(async move {
+            let service = service_fn(move |req| {
+                handle_request(req, Arc::clone(&waf), Arc::clone(&logfile))
+            });
 
-    let listener = TcpListener::bind(addr).expect("Failed to bind");
-
-    println!("⚠️  Warning: Using simple sync HTTP server for demo");
-    println!("   In production, this should use hyper/tokio\n");
-
-    for stream in listener.incoming() {
-        match stream {
-            Ok(mut stream) => {
-                let waf = Arc::clone(&waf);
-                let logfile = Arc::clone(&logfile);
-
-                if let Err(e) = handle_request(&mut stream, waf, logfile) {
-                    eprintln!("Request handling error: {}", e);
-                }
+            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                eprintln!("Error serving connection: {:?}", err);
             }
-            Err(e) => {
-                eprintln!("Connection error: {}", e);
-            }
-        }
+        });
     }
 }
 
 /// Handle a single HTTP request through the WAF
-fn handle_request(
-    stream: &mut std::net::TcpStream,
+async fn handle_request(
+    req: Request<Incoming>,
     waf: Arc<Waf>,
     logfile: Arc<Mutex<std::fs::File>>,
-) -> std::io::Result<()> {
-    use std::io::{BufRead, BufReader, Read};
-
-    let reader = BufReader::new(stream.try_clone()?);
-    let mut lines = reader.lines();
-
-    // Parse request line
-    let request_line = match lines.next() {
-        Some(Ok(line)) => line,
-        _ => return Ok(()),
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    // Extract request details
+    let method = req.method().as_str();
+    let uri = req.uri().path();
+    let query = req.uri().query().unwrap_or("");
+    let full_uri = if query.is_empty() {
+        uri.to_string()
+    } else {
+        format!("{}?{}", uri, query)
     };
+    let protocol = format!("{:?}", req.version());
 
-    println!("📨 {}", request_line);
+    println!("📨 {} {} {}", method, full_uri, protocol);
 
-    let parts: Vec<&str> = request_line.split_whitespace().collect();
-    if parts.len() < 3 {
-        return send_response(stream, 400, "Bad Request");
-    }
-
-    let method = parts[0];
-    let uri = parts[1];
-    let protocol = parts[2];
+    // Extract marker header
+    let marker_header = req
+        .headers()
+        .get("X-CRS-Test")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
 
     // Create transaction
     let mut tx = waf.new_transaction();
 
     // Process request URI
-    tx.process_uri(uri, method, protocol);
+    tx.process_uri(&full_uri, method, &protocol);
 
-    // Parse and add headers
-    let mut content_length = 0;
-    let mut marker_header = None;
-
-    while let Some(Ok(line)) = lines.next() {
-        if line.is_empty() {
-            break; // End of headers
-        }
-
-        if let Some(colon_pos) = line.find(':') {
-            let name = &line[..colon_pos].trim();
-            let value = &line[colon_pos + 1..].trim();
-
-            // Track Content-Length
-            if name.eq_ignore_ascii_case("content-length") {
-                content_length = value.parse().unwrap_or(0);
-            }
-
-            // Track FTW marker header
-            if name.eq_ignore_ascii_case("X-CRS-Test") {
-                marker_header = Some(value.to_string());
-            }
-
-            tx.add_request_header(name, value);
+    // Add headers
+    for (name, value) in req.headers() {
+        if let Ok(value_str) = value.to_str() {
+            tx.add_request_header(name.as_str(), value_str);
         }
     }
 
     // Phase 1: Request Headers
     if let Some(interruption) = tx.process_request_headers() {
-        write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref())?;
-        return send_blocking_response(stream, &interruption);
+        write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref());
+        return Ok(create_blocking_response(&interruption));
     }
 
-    // Read request body if present
-    let mut body = Vec::new();
-    if content_length > 0 {
-        let mut limited_reader = BufReader::new(stream.try_clone()?).take(content_length as u64);
-        limited_reader.read_to_end(&mut body)?;
-    }
+    // Read request body
+    let body_bytes = if req.method() == Method::POST || req.method() == Method::PUT {
+        match req.collect().await {
+            Ok(collected) => collected.to_bytes().to_vec(),
+            Err(e) => {
+                eprintln!("Error reading body: {}", e);
+                return Ok(create_error_response(500, "Internal Server Error"));
+            }
+        }
+    } else {
+        Vec::new()
+    };
 
     // Phase 2: Request Body
-    if !body.is_empty() {
-        match tx.process_request_body(&body) {
+    if !body_bytes.is_empty() {
+        match tx.process_request_body(&body_bytes) {
             Ok(Some(interruption)) => {
-                write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref())?;
-                return send_blocking_response(stream, &interruption);
+                write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref());
+                return Ok(create_blocking_response(&interruption));
             }
             Err(e) => {
                 eprintln!("Error processing request body: {}", e);
-                return send_response(stream, 500, "Internal Server Error");
+                return Ok(create_error_response(500, "Internal Server Error"));
             }
             Ok(None) => {}
         }
     }
 
-    // Simulate response
+    // Simulate response headers
     tx.add_response_header("Content-Type", "text/plain");
 
     // Phase 3: Response Headers
     if let Some(interruption) = tx.process_response_headers(200, "HTTP/1.1") {
-        write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref())?;
-        return send_blocking_response(stream, &interruption);
+        write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref());
+        return Ok(create_blocking_response(&interruption));
     }
 
     let response_body = b"OK";
 
     // Phase 4: Response Body
     if let Some(interruption) = tx.process_response_body(response_body) {
-        write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref())?;
-        return send_blocking_response(stream, &interruption);
+        write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref());
+        return Ok(create_blocking_response(&interruption));
     }
 
     // Phase 5: Logging
@@ -236,45 +214,42 @@ fn handle_request(
 
     // Write audit log for successful requests (FTW needs this for correlation)
     if let Some(marker_value) = marker_header.as_deref() {
-        write_request_log(&logfile, &tx, marker_value)?;
+        write_request_log(&logfile, &tx, marker_value);
     }
 
     // Send successful response
-    send_response(stream, 200, "OK")
+    Ok(create_success_response("OK"))
 }
 
-/// Send HTTP response
-fn send_response(stream: &mut std::net::TcpStream, status: u16, body: &str) -> std::io::Result<()> {
-    use std::io::Write;
-
-    let status_text = match status {
-        200 => "OK",
-        400 => "Bad Request",
-        403 => "Forbidden",
-        _ => "Error",
-    };
-
-    let response = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
-        status,
-        status_text,
-        body.len(),
-        body
-    );
-
-    stream.write_all(response.as_bytes())
+/// Create a successful HTTP response
+fn create_success_response(body: &str) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/plain")
+        .body(Full::new(Bytes::from(body.to_string())))
+        .unwrap()
 }
 
-/// Send blocking response when WAF interrupts
-fn send_blocking_response(
-    stream: &mut std::net::TcpStream,
-    interruption: &coraza::transaction::Interruption,
-) -> std::io::Result<()> {
+/// Create an error HTTP response
+fn create_error_response(status: u16, body: &str) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR))
+        .header("Content-Type", "text/plain")
+        .body(Full::new(Bytes::from(body.to_string())))
+        .unwrap()
+}
+
+/// Create a blocking response when WAF interrupts
+fn create_blocking_response(interruption: &coraza::transaction::Interruption) -> Response<Full<Bytes>> {
     println!(
         "🚫 Blocked by rule {}: {}",
         interruption.rule_id, interruption.action
     );
-    send_response(stream, interruption.status, "Blocked by WAF")
+    Response::builder()
+        .status(StatusCode::from_u16(interruption.status).unwrap_or(StatusCode::FORBIDDEN))
+        .header("Content-Type", "text/plain")
+        .body(Full::new(Bytes::from("Blocked by WAF")))
+        .unwrap()
 }
 
 /// Load rules from a SecLang file
@@ -434,10 +409,9 @@ fn write_audit_log(
     tx: &coraza::transaction::Transaction,
     interruption: &coraza::transaction::Interruption,
     marker: Option<&str>,
-) -> std::io::Result<()> {
+) {
     let mut file = logfile.lock().unwrap();
 
-    // Format: [timestamp] [rule_id] [msg "message"]
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -445,19 +419,17 @@ fn write_audit_log(
 
     // Write FTW marker header if present (for test correlation)
     if let Some(marker_value) = marker {
-        writeln!(file, "[{}] [X-CRS-Test \"{}\"]", timestamp, marker_value)?;
+        let _ = writeln!(file, "[{}] [X-CRS-Test \"{}\"]", timestamp, marker_value);
     }
 
-    writeln!(
+    let _ = writeln!(
         file,
         "[{}] [id \"{}\"] [msg \"Rule triggered\"] [data \"{}\"] [severity \"CRITICAL\"]",
         timestamp, interruption.rule_id, interruption.data
-    )?;
+    );
 
-    // Also write request details for debugging
-    writeln!(file, "[{}] [tx_id \"{}\"]", timestamp, tx.id(),)?;
-
-    file.flush()
+    let _ = writeln!(file, "[{}] [tx_id \"{}\"]", timestamp, tx.id());
+    let _ = file.flush();
 }
 
 /// Write audit log for successful requests (no rule triggers)
@@ -466,7 +438,7 @@ fn write_request_log(
     logfile: &Arc<Mutex<std::fs::File>>,
     tx: &coraza::transaction::Transaction,
     marker: &str,
-) -> std::io::Result<()> {
+) {
     let mut file = logfile.lock().unwrap();
 
     let timestamp = std::time::SystemTime::now()
@@ -475,8 +447,7 @@ fn write_request_log(
         .as_secs();
 
     // Write marker so FTW can correlate this request
-    writeln!(file, "[{}] [X-CRS-Test \"{}\"]", timestamp, marker)?;
-    writeln!(file, "[{}] [tx_id \"{}\"]", timestamp, tx.id())?;
-
-    file.flush()
+    let _ = writeln!(file, "[{}] [X-CRS-Test \"{}\"]", timestamp, marker);
+    let _ = writeln!(file, "[{}] [tx_id \"{}\"]", timestamp, tx.id());
+    let _ = file.flush();
 }

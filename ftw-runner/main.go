@@ -5,10 +5,12 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/coreruleset/go-ftw/v2/config"
@@ -22,10 +24,15 @@ const (
 	serverPort       = 8080
 	serverLogfile    = "/tmp/coraza-ftw-audit.log"
 	corazaRsPath     = ".."
-	serverBinaryPath = "../target/debug/examples/ftw_server"
+	serverBinaryPath = "../target/debug/examples/ftw_server_async"
 )
 
 func main() {
+	// Parse command-line flags
+	rulesFile := flag.String("rules", "", "Path to CRS rules file (e.g., crs-test.conf)")
+	maxTests := flag.Int("max-tests", 0, "Maximum number of tests to run (0 = all tests)")
+	flag.Parse()
+
 	fmt.Println("🧪 Coraza-RS FTW Test Runner\n")
 
 	// Verify server binary exists
@@ -42,7 +49,7 @@ func main() {
 	server := &Server{
 		port:      serverPort,
 		logfile:   serverLogfile,
-		rulesFile: "", // No rules for basic test
+		rulesFile: *rulesFile,
 	}
 
 	if err := server.Start(); err != nil {
@@ -62,7 +69,7 @@ func main() {
 	// Run FTW tests
 	fmt.Println("🧪 Running FTW tests...")
 	fmt.Println("=" + repeat("=", 60))
-	if err := runFTW(); err != nil {
+	if err := runFTW(*maxTests); err != nil {
 		fmt.Fprintf(os.Stderr, "\n❌ Tests failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -126,15 +133,15 @@ func createFTWConfig() string {
 logfile: %s
 logmarkerheadername: X-CRS-Test
 testoverride:
-  overrides:
-    dest_addr: "localhost"
+  input:
+    dest_addr: "127.0.0.1"
     port: %d
 mode: "default"
 `, serverLogfile, serverPort)
 }
 
 // runFTW executes go-ftw tests using the library directly
-func runFTW() error {
+func runFTW(maxTests int) error {
 	// Set up logging
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 
@@ -145,35 +152,49 @@ func runFTW() error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// For now, run basic health test
-	// TODO: Load actual CRS tests when available
-	testDir := filepath.Join("..", "go-ftw", "test")
+	// Check for CRS test directory
+	testDir := filepath.Join("..", "..", "coraza-coreruleset", "tests")
 	if _, err := os.Stat(testDir); os.IsNotExist(err) {
-		fmt.Println("⚠️  No test directory found, running server health checks only")
+		fmt.Println("⚠️  No CRS test directory found, running server health checks only")
+		fmt.Println("   Expected: ../../coraza-coreruleset/tests")
 		return testServerHealth()
 	}
 
-	// Get test files
+	// Get test files recursively from all subdirectories
 	var tests []*test.FTWTest
-	files, err := filepath.Glob(filepath.Join(testDir, "*.yaml"))
-	if err != nil {
-		return fmt.Errorf("failed to find test files: %w", err)
-	}
-
-	for _, file := range files {
-		data, err := os.ReadFile(file)
+	err = filepath.Walk(testDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			fmt.Printf("⚠️  Skipping %s: %v\n", file, err)
-			continue
+			return err
 		}
 
-		ftwTest, err := test.GetTestFromYaml(data, file)
+		// Skip directories and non-YAML files
+		if info.IsDir() || (!strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml")) {
+			return nil
+		}
+
+		// Skip non-test files (tests.go, etc.)
+		if strings.HasSuffix(path, ".go") {
+			return nil
+		}
+
+		data, err := os.ReadFile(path)
 		if err != nil {
-			fmt.Printf("⚠️  Skipping %s: %v\n", file, err)
-			continue
+			fmt.Printf("⚠️  Skipping %s: %v\n", path, err)
+			return nil
+		}
+
+		ftwTest, err := test.GetTestFromYaml(data, path)
+		if err != nil {
+			fmt.Printf("⚠️  Skipping %s: %v\n", path, err)
+			return nil
 		}
 
 		tests = append(tests, ftwTest)
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to walk test directory: %w", err)
 	}
 
 	if len(tests) == 0 {
@@ -181,11 +202,26 @@ func runFTW() error {
 		return testServerHealth()
 	}
 
-	fmt.Printf("📋 Loaded %d test file(s)\n", len(tests))
+	// Limit number of tests if requested
+	totalTests := len(tests)
+	if maxTests > 0 && maxTests < len(tests) {
+		tests = tests[:maxTests]
+		fmt.Printf("📋 Loaded %d test file(s) from CRS test suite (limited to first %d)\n\n", totalTests, maxTests)
+	} else {
+		fmt.Printf("📋 Loaded %d test file(s) from CRS test suite\n\n", len(tests))
+	}
 
-	// Run tests
+	// Run tests with increased timeouts for sync server
 	runnerConfig := config.NewRunnerConfiguration(cfg)
 	runnerConfig.ShowTime = true
+	runnerConfig.ConnectTimeout = 30 * time.Second  // Increase connection timeout
+	runnerConfig.ReadTimeout = 30 * time.Second     // Increase read timeout for slow requests
+	runnerConfig.RateLimit = 100 * time.Millisecond // Sequential execution (100ms between requests)
+
+	fmt.Println("⚙️  Test Configuration:")
+	fmt.Printf("   Connect Timeout: %v\n", runnerConfig.ConnectTimeout)
+	fmt.Printf("   Read Timeout: %v\n", runnerConfig.ReadTimeout)
+	fmt.Printf("   Rate Limit: %v (sequential execution)\n\n", runnerConfig.RateLimit)
 
 	out := output.NewOutput("normal", os.Stdout)
 	res, err := runner.Run(runnerConfig, tests, out)
