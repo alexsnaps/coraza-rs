@@ -22,7 +22,6 @@ const (
 	serverPort       = 8080
 	serverLogfile    = "/tmp/coraza-ftw-audit.log"
 	corazaRsPath     = ".."
-	ftwConfigFile    = ".ftw-rust.yaml"
 	serverBinaryPath = "../target/debug/examples/ftw_server"
 )
 
@@ -58,14 +57,7 @@ func main() {
 	if !server.IsHealthy() {
 		fatal("Server failed to start properly")
 	}
-	fmt.Printf("✅ Server ready on http://localhost:%d\n", serverPort)
-
-	// Generate FTW config
-	fmt.Println("📝 Generating FTW configuration...")
-	if err := generateFTWConfig(); err != nil {
-		fatal("Failed to generate config: %v", err)
-	}
-	fmt.Printf("✅ Config written to %s\n", ftwConfigFile)
+	fmt.Printf("✅ Server ready on http://localhost:%d\n\n", serverPort)
 
 	// Run FTW tests
 	fmt.Println("🧪 Running FTW tests...")
@@ -128,9 +120,9 @@ func (s *Server) IsHealthy() bool {
 	return string(output) == "200"
 }
 
-// generateFTWConfig creates the FTW configuration file
-func generateFTWConfig() error {
-	config := fmt.Sprintf(`# Auto-generated FTW configuration for coraza-rs
+// createFTWConfig creates the FTW configuration in memory (no file I/O)
+func createFTWConfig() string {
+	return fmt.Sprintf(`# Auto-generated FTW configuration for coraza-rs
 logfile: %s
 logmarkerheadername: X-CRS-Test
 testoverride:
@@ -139,8 +131,6 @@ testoverride:
     port: %d
 mode: "default"
 `, serverLogfile, serverPort)
-
-	return os.WriteFile(ftwConfigFile, []byte(config), 0644)
 }
 
 // runFTW executes go-ftw tests using the library directly
@@ -148,8 +138,9 @@ func runFTW() error {
 	// Set up logging
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 
-	// Load configuration
-	cfg, err := config.NewConfigFromFile(ftwConfigFile)
+	// Create configuration in memory (no file I/O)
+	configYaml := createFTWConfig()
+	cfg, err := config.NewConfigFromString(configYaml)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}

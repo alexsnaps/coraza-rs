@@ -20,9 +20,9 @@ We've successfully created a **complete FTW integration** with full WAF processi
 2. **Go Test Harness** (`ftw-runner/main.go`)
    - ✅ Uses pre-built Rust binary (no build step required)
    - ✅ **Embeds go-ftw as library dependency** (no external binary)
+   - ✅ **Creates FTW config in memory** (no file I/O - uses `NewConfigFromString`)
    - ✅ Starts server as subprocess
    - ✅ Health checks (verifies server is responding)
-   - ✅ Generates FTW configuration automatically
    - ✅ **Programmatically runs FTW tests** via go-ftw library API
    - ✅ **Reports detailed test results** (run, passed, failed, ignored)
    - ✅ Gracefully shuts down server
@@ -75,15 +75,19 @@ Press Ctrl+C to stop
 
 ### Immediate Next Steps (Ready Now!)
 
-1. **Implement SecLang Rule Loading**
-   - Parse SecLang directives from files
-   - Load rules into WAF instance
-   - Currently shows "0 rules loaded" but file exists
+1. **✅ COMPLETE: SecLang Rule Loading**
+   - ✅ Parses SecRule, SecAction, SecMarker directives
+   - ✅ Handles line continuations (\)
+   - ✅ Loads rules into WAF instance
+   - ✅ Reports configuration directives
+   - ✅ Graceful error handling
 
-2. **Test with Simple Rules**
-   - Test blocking with test-rules.conf (already created)
-   - Verify audit logs contain correct information
-   - Validate phase-based blocking works
+2. **✅ COMPLETE: Test with Simple Rules**
+   - ✅ Tested with test-rules.conf
+   - ✅ Benign requests pass (200 OK)
+   - ✅ Malicious requests blocked (403 Forbidden)
+   - ✅ Audit logs contain rule IDs and transaction details
+   - ✅ Phase 1 (request headers) blocking validated
 
 ### Short-term Enhancements (1-2 days)
 
@@ -142,7 +146,7 @@ Based on our current implementation:
 │  • Executes pre-built Rust binary               │
 │  • Embeds go-ftw/v2 as library dependency       │
 │  • Manages server lifecycle                     │
-│  • Generates FTW config (.ftw-rust.yaml)        │
+│  • Creates FTW config in memory (no file I/O)   │
 │  • Runs tests programmatically                  │
 │  • Reports results (run/passed/failed/ignored)  │
 └────────────────┬─────────────────────────────────┘
@@ -258,7 +262,9 @@ tail -f /tmp/coraza-ftw-audit.log
 - ✅ Health checks validate server
 - ✅ Clean shutdown implemented
 - ✅ **Programmatic test execution and reporting**
-- ⏳ SecLang rule loading (stub exists, parser integration needed)
+- ✅ **SecLang rule loading (SecRule, SecAction, SecMarker)**
+- ✅ **Line continuation handling**
+- ✅ **Validated with test rules**
 - ⏳ Full CRS test suite execution
 
 ## 📖 Usage Examples
@@ -309,12 +315,18 @@ We have a **complete, working FTW integration** with full WAF processing that:
 
 ### Remaining Work
 
-The **only** missing piece is connecting our SecLang parser to the `load_rules()` function in ftw_server.rs. We already have:
-- ✅ SecLang parser (src/seclang/)
-- ✅ Waf::add_rule() method
-- ✅ Rule storage and evaluation
-- ⏳ Need to wire parser → Waf in ftw_server.rs
+**Rule loading is COMPLETE!** The integration now includes:
+- ✅ SecLang rule compiler (compile_sec_rule, compile_sec_action, compile_sec_marker)
+- ✅ Line continuation handling (\ at end of line)
+- ✅ Comment filtering (# lines)
+- ✅ Directive parsing (SecRule, SecAction, SecMarker, config directives)
+- ✅ WAF rule addition via Waf::add_rule()
+- ✅ Validated with test-rules.conf (benign pass, malicious block)
 
-Once rule loading is connected, we can immediately run the full CRS v4 test suite and measure pass rates!
+**Next Step: Run full CRS v4 test suite**
+- Need to clone/download CRS v4 test YAML files
+- Point ftw-runner to CRS test directory
+- Measure pass rates across all categories
+- Document which operators are needed (@detectSQLi, @detectXSS, etc.)
 
-**We're ready to validate coraza-rs against 300+ CRS test cases!** 🚀
+**We're ready to validate coraza-rs against 300+ CRS test cases NOW!** 🚀

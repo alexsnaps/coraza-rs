@@ -24,6 +24,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use coraza::config::WafConfig;
+use coraza::seclang::{compile_sec_action, compile_sec_marker, compile_sec_rule};
 use coraza::types::RuleEngineStatus;
 use coraza::waf::Waf;
 
@@ -272,17 +273,146 @@ fn send_blocking_response(
 }
 
 /// Load rules from a SecLang file
-fn load_rules(_waf: &mut Waf, path: &str) -> Result<usize, String> {
-    let _content =
+fn load_rules(waf: &mut Waf, path: &str) -> Result<usize, String> {
+    let content =
         std::fs::read_to_string(path).map_err(|e| format!("Failed to read rules file: {}", e))?;
 
-    // TODO: Implement rule loading
-    // We need to parse the SecLang file and extract rules
-    // For now, just validate the file exists
-    println!("⚠️  Rule loading not yet implemented");
-    println!("   File {} found but parsing deferred", path);
+    let mut rules_loaded = 0;
+    let lines = process_lines(&content);
 
-    Ok(0)
+    for (line_num, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+
+        // Skip empty lines and comments
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Parse directive
+        if let Some(directive_result) = parse_directive(trimmed) {
+            match directive_result {
+                Ok((directive_name, directive_args)) => {
+                    match directive_name.to_lowercase().as_str() {
+                        "secrule" => {
+                            match compile_sec_rule(&directive_args) {
+                                Ok(rule) => {
+                                    waf.add_rule(rule)
+                                        .map_err(|e| format!("Failed to add rule at line {}: {}", line_num + 1, e))?;
+                                    rules_loaded += 1;
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "⚠️  Warning: Failed to compile SecRule at line {}: {}",
+                                        line_num + 1,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        "secaction" => {
+                            match compile_sec_action(&directive_args) {
+                                Ok(rule) => {
+                                    waf.add_rule(rule)
+                                        .map_err(|e| format!("Failed to add action at line {}: {}", line_num + 1, e))?;
+                                    rules_loaded += 1;
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "⚠️  Warning: Failed to compile SecAction at line {}: {}",
+                                        line_num + 1,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        "secmarker" => {
+                            match compile_sec_marker(&directive_args) {
+                                Ok(rule) => {
+                                    waf.add_rule(rule)
+                                        .map_err(|e| format!("Failed to add marker at line {}: {}", line_num + 1, e))?;
+                                    rules_loaded += 1;
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "⚠️  Warning: Failed to compile SecMarker at line {}: {}",
+                                        line_num + 1,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        "secruleengine" => {
+                            // Handle engine configuration
+                            match directive_args.to_lowercase().as_str() {
+                                "on" => println!("   SecRuleEngine: On"),
+                                "off" => println!("   SecRuleEngine: Off"),
+                                "detectiononly" => println!("   SecRuleEngine: DetectionOnly"),
+                                _ => eprintln!("⚠️  Warning: Unknown SecRuleEngine value: {}", directive_args),
+                            }
+                        }
+                        "secrequestbodyaccess" => {
+                            println!("   SecRequestBodyAccess: {}", directive_args);
+                        }
+                        _ => {
+                            // Silently ignore other directives for now
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("⚠️  Warning: Failed to parse line {}: {}", line_num + 1, e);
+                }
+            }
+        }
+    }
+
+    Ok(rules_loaded)
+}
+
+/// Process file content into logical lines (handling line continuations)
+fn process_lines(content: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut current_line = String::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim_end();
+
+        // Check for line continuation
+        if let Some(without_backslash) = trimmed.strip_suffix('\\') {
+            // Remove the backslash and append to current line
+            current_line.push_str(without_backslash);
+            current_line.push(' '); // Add space between continued lines
+        } else {
+            // Complete the current line
+            current_line.push_str(trimmed);
+            result.push(current_line.clone());
+            current_line.clear();
+        }
+    }
+
+    // Add any remaining partial line
+    if !current_line.is_empty() {
+        result.push(current_line);
+    }
+
+    result
+}
+
+/// Parse a directive line into (directive_name, arguments)
+fn parse_directive(line: &str) -> Option<Result<(String, String), String>> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Find the first whitespace to split directive from args
+    if let Some(space_pos) = trimmed.find(|c: char| c.is_whitespace()) {
+        let directive = trimmed[..space_pos].to_string();
+        let args = trimmed[space_pos..].trim().to_string();
+        Some(Ok((directive, args)))
+    } else {
+        // Directive with no arguments (e.g., "SecRuleEngine")
+        Some(Ok((trimmed.to_string(), String::new())))
+    }
 }
 
 /// Get command line argument value
