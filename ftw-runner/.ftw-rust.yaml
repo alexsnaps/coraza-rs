@@ -1,0 +1,8 @@
+# Auto-generated FTW configuration for coraza-rs
+logfile: /tmp/coraza-ftw-audit.log
+logmarkerheadername: X-CRS-Test
+testoverride:
+  overrides:
+    dest_addr: "localhost"
+    port: 8080
+mode: "default"
