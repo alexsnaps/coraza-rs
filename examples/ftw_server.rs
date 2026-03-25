@@ -298,61 +298,61 @@ fn load_rules(waf: &mut Waf, path: &str) -> Result<usize, String> {
             match directive_result {
                 Ok((directive_name, directive_args)) => {
                     match directive_name.to_lowercase().as_str() {
-                        "secrule" => {
-                            match compile_sec_rule(&directive_args) {
-                                Ok(rule) => {
-                                    waf.add_rule(rule)
-                                        .map_err(|e| format!("Failed to add rule at line {}: {}", line_num + 1, e))?;
-                                    rules_loaded += 1;
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "⚠️  Warning: Failed to compile SecRule at line {}: {}",
-                                        line_num + 1,
-                                        e
-                                    );
-                                }
+                        "secrule" => match compile_sec_rule(&directive_args) {
+                            Ok(rule) => {
+                                waf.add_rule(rule).map_err(|e| {
+                                    format!("Failed to add rule at line {}: {}", line_num + 1, e)
+                                })?;
+                                rules_loaded += 1;
                             }
-                        }
-                        "secaction" => {
-                            match compile_sec_action(&directive_args) {
-                                Ok(rule) => {
-                                    waf.add_rule(rule)
-                                        .map_err(|e| format!("Failed to add action at line {}: {}", line_num + 1, e))?;
-                                    rules_loaded += 1;
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "⚠️  Warning: Failed to compile SecAction at line {}: {}",
-                                        line_num + 1,
-                                        e
-                                    );
-                                }
+                            Err(e) => {
+                                eprintln!(
+                                    "⚠️  Warning: Failed to compile SecRule at line {}: {}",
+                                    line_num + 1,
+                                    e
+                                );
                             }
-                        }
-                        "secmarker" => {
-                            match compile_sec_marker(&directive_args) {
-                                Ok(rule) => {
-                                    waf.add_rule(rule)
-                                        .map_err(|e| format!("Failed to add marker at line {}: {}", line_num + 1, e))?;
-                                    rules_loaded += 1;
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "⚠️  Warning: Failed to compile SecMarker at line {}: {}",
-                                        line_num + 1,
-                                        e
-                                    );
-                                }
+                        },
+                        "secaction" => match compile_sec_action(&directive_args) {
+                            Ok(rule) => {
+                                waf.add_rule(rule).map_err(|e| {
+                                    format!("Failed to add action at line {}: {}", line_num + 1, e)
+                                })?;
+                                rules_loaded += 1;
                             }
-                        }
+                            Err(e) => {
+                                eprintln!(
+                                    "⚠️  Warning: Failed to compile SecAction at line {}: {}",
+                                    line_num + 1,
+                                    e
+                                );
+                            }
+                        },
+                        "secmarker" => match compile_sec_marker(&directive_args) {
+                            Ok(rule) => {
+                                waf.add_rule(rule).map_err(|e| {
+                                    format!("Failed to add marker at line {}: {}", line_num + 1, e)
+                                })?;
+                                rules_loaded += 1;
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "⚠️  Warning: Failed to compile SecMarker at line {}: {}",
+                                    line_num + 1,
+                                    e
+                                );
+                            }
+                        },
                         "secruleengine" => {
                             // Handle engine configuration
                             match directive_args.to_lowercase().as_str() {
                                 "on" => println!("   SecRuleEngine: On"),
                                 "off" => println!("   SecRuleEngine: Off"),
                                 "detectiononly" => println!("   SecRuleEngine: DetectionOnly"),
-                                _ => eprintln!("⚠️  Warning: Unknown SecRuleEngine value: {}", directive_args),
+                                _ => eprintln!(
+                                    "⚠️  Warning: Unknown SecRuleEngine value: {}",
+                                    directive_args
+                                ),
                             }
                         }
                         "secrequestbodyaccess" => {

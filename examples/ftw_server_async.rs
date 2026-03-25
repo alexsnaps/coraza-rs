@@ -108,9 +108,8 @@ async fn main() {
 
         // Spawn a task to handle the connection
         tokio::task::spawn(async move {
-            let service = service_fn(move |req| {
-                handle_request(req, Arc::clone(&waf), Arc::clone(&logfile))
-            });
+            let service =
+                service_fn(move |req| handle_request(req, Arc::clone(&waf), Arc::clone(&logfile)));
 
             if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
                 eprintln!("Error serving connection: {:?}", err);
@@ -127,12 +126,23 @@ async fn handle_request(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     // Extract request details
     let method = req.method().as_str();
-    let uri = req.uri().path();
-    let query = req.uri().query().unwrap_or("");
-    let full_uri = if query.is_empty() {
-        uri.to_string()
+
+    // CONNECT requests use authority (host:port) instead of path
+    let full_uri = if method == "CONNECT" {
+        // For CONNECT, use the authority if present, otherwise path
+        req.uri()
+            .authority()
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| req.uri().path().to_string())
     } else {
-        format!("{}?{}", uri, query)
+        // For other methods, use path + query
+        let uri = req.uri().path();
+        let query = req.uri().query().unwrap_or("");
+        if query.is_empty() {
+            uri.to_string()
+        } else {
+            format!("{}?{}", uri, query)
+        }
     };
     let protocol = format!("{:?}", req.version());
 
@@ -240,7 +250,9 @@ fn create_error_response(status: u16, body: &str) -> Response<Full<Bytes>> {
 }
 
 /// Create a blocking response when WAF interrupts
-fn create_blocking_response(interruption: &coraza::transaction::Interruption) -> Response<Full<Bytes>> {
+fn create_blocking_response(
+    interruption: &coraza::transaction::Interruption,
+) -> Response<Full<Bytes>> {
     println!(
         "🚫 Blocked by rule {}: {}",
         interruption.rule_id, interruption.action
@@ -273,61 +285,61 @@ fn load_rules(waf: &mut Waf, path: &str) -> Result<usize, String> {
             match directive_result {
                 Ok((directive_name, directive_args)) => {
                     match directive_name.to_lowercase().as_str() {
-                        "secrule" => {
-                            match compile_sec_rule(&directive_args) {
-                                Ok(rule) => {
-                                    waf.add_rule(rule)
-                                        .map_err(|e| format!("Failed to add rule at line {}: {}", line_num + 1, e))?;
-                                    rules_loaded += 1;
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "⚠️  Warning: Failed to compile SecRule at line {}: {}",
-                                        line_num + 1,
-                                        e
-                                    );
-                                }
+                        "secrule" => match compile_sec_rule(&directive_args) {
+                            Ok(rule) => {
+                                waf.add_rule(rule).map_err(|e| {
+                                    format!("Failed to add rule at line {}: {}", line_num + 1, e)
+                                })?;
+                                rules_loaded += 1;
                             }
-                        }
-                        "secaction" => {
-                            match compile_sec_action(&directive_args) {
-                                Ok(rule) => {
-                                    waf.add_rule(rule)
-                                        .map_err(|e| format!("Failed to add action at line {}: {}", line_num + 1, e))?;
-                                    rules_loaded += 1;
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "⚠️  Warning: Failed to compile SecAction at line {}: {}",
-                                        line_num + 1,
-                                        e
-                                    );
-                                }
+                            Err(e) => {
+                                eprintln!(
+                                    "⚠️  Warning: Failed to compile SecRule at line {}: {}",
+                                    line_num + 1,
+                                    e
+                                );
                             }
-                        }
-                        "secmarker" => {
-                            match compile_sec_marker(&directive_args) {
-                                Ok(rule) => {
-                                    waf.add_rule(rule)
-                                        .map_err(|e| format!("Failed to add marker at line {}: {}", line_num + 1, e))?;
-                                    rules_loaded += 1;
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "⚠️  Warning: Failed to compile SecMarker at line {}: {}",
-                                        line_num + 1,
-                                        e
-                                    );
-                                }
+                        },
+                        "secaction" => match compile_sec_action(&directive_args) {
+                            Ok(rule) => {
+                                waf.add_rule(rule).map_err(|e| {
+                                    format!("Failed to add action at line {}: {}", line_num + 1, e)
+                                })?;
+                                rules_loaded += 1;
                             }
-                        }
+                            Err(e) => {
+                                eprintln!(
+                                    "⚠️  Warning: Failed to compile SecAction at line {}: {}",
+                                    line_num + 1,
+                                    e
+                                );
+                            }
+                        },
+                        "secmarker" => match compile_sec_marker(&directive_args) {
+                            Ok(rule) => {
+                                waf.add_rule(rule).map_err(|e| {
+                                    format!("Failed to add marker at line {}: {}", line_num + 1, e)
+                                })?;
+                                rules_loaded += 1;
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "⚠️  Warning: Failed to compile SecMarker at line {}: {}",
+                                    line_num + 1,
+                                    e
+                                );
+                            }
+                        },
                         "secruleengine" => {
                             // Handle engine configuration
                             match directive_args.to_lowercase().as_str() {
                                 "on" => println!("   SecRuleEngine: On"),
                                 "off" => println!("   SecRuleEngine: Off"),
                                 "detectiononly" => println!("   SecRuleEngine: DetectionOnly"),
-                                _ => eprintln!("⚠️  Warning: Unknown SecRuleEngine value: {}", directive_args),
+                                _ => eprintln!(
+                                    "⚠️  Warning: Unknown SecRuleEngine value: {}",
+                                    directive_args
+                                ),
                             }
                         }
                         "secrequestbodyaccess" => {
@@ -337,11 +349,19 @@ fn load_rules(waf: &mut Waf, path: &str) -> Result<usize, String> {
                             // Recursively load included file
                             match load_rules(waf, directive_args.trim()) {
                                 Ok(count) => {
-                                    println!("   Included {} rules from {}", count, directive_args.trim());
+                                    println!(
+                                        "   Included {} rules from {}",
+                                        count,
+                                        directive_args.trim()
+                                    );
                                     rules_loaded += count;
                                 }
                                 Err(e) => {
-                                    eprintln!("⚠️  Warning: Failed to include {}: {}", directive_args.trim(), e);
+                                    eprintln!(
+                                        "⚠️  Warning: Failed to include {}: {}",
+                                        directive_args.trim(),
+                                        e
+                                    );
                                 }
                             }
                         }
