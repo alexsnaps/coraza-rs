@@ -333,6 +333,18 @@ fn load_rules(waf: &mut Waf, path: &str) -> Result<usize, String> {
                         "secrequestbodyaccess" => {
                             println!("   SecRequestBodyAccess: {}", directive_args);
                         }
+                        "include" => {
+                            // Recursively load included file
+                            match load_rules(waf, directive_args.trim()) {
+                                Ok(count) => {
+                                    println!("   Included {} rules from {}", count, directive_args.trim());
+                                    rules_loaded += count;
+                                }
+                                Err(e) => {
+                                    eprintln!("⚠️  Warning: Failed to include {}: {}", directive_args.trim(), e);
+                                }
+                            }
+                        }
                         _ => {
                             // Silently ignore other directives for now
                         }

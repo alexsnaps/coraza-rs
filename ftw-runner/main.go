@@ -216,7 +216,7 @@ func runFTW(maxTests int) error {
 	runnerConfig.ShowTime = true
 	runnerConfig.ConnectTimeout = 30 * time.Second  // Increase connection timeout
 	runnerConfig.ReadTimeout = 30 * time.Second     // Increase read timeout for slow requests
-	runnerConfig.RateLimit = 100 * time.Millisecond // Sequential execution (100ms between requests)
+	runnerConfig.RateLimit = 1 * time.Millisecond // Sequential execution (100ms between requests)
 
 	fmt.Println("⚙️  Test Configuration:")
 	fmt.Printf("   Connect Timeout: %v\n", runnerConfig.ConnectTimeout)
