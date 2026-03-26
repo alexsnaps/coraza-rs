@@ -8,9 +8,9 @@
 //! abstraction without dynamic dispatch.
 
 use crate::operators::{
-    BeginsWith, Contains, EndsWith, Eq, Ge, Gt, IpMatch, Le, Lt, NoMatch, Operator, Pm, PmFromFile,
-    Rx, StrEq, StrMatch, TransactionState, UnconditionalMatch, ValidateByteRange,
-    ValidateUrlEncoding, ValidateUtf8Encoding, Within,
+    BeginsWith, Contains, DetectSQLi, DetectXSS, EndsWith, Eq, Ge, Gt, IpMatch, Le, Lt, NoMatch,
+    Operator, Pm, PmFromFile, Rx, StrEq, StrMatch, TransactionState, UnconditionalMatch,
+    ValidateByteRange, ValidateUrlEncoding, ValidateUtf8Encoding, Within,
 };
 
 /// Enum containing all available operators.
@@ -46,6 +46,10 @@ pub enum OperatorEnum {
     ValidateByteRange(ValidateByteRange),
     ValidateUrlEncoding(ValidateUrlEncoding),
     ValidateUtf8Encoding(ValidateUtf8Encoding),
+
+    // Detection operators
+    DetectSQLi(DetectSQLi),
+    DetectXSS(DetectXSS),
 
     // Control operators
     UnconditionalMatch(UnconditionalMatch),
@@ -86,6 +90,10 @@ impl OperatorEnum {
             Self::ValidateByteRange(op) => op.evaluate(tx, input),
             Self::ValidateUrlEncoding(op) => op.evaluate(tx, input),
             Self::ValidateUtf8Encoding(op) => op.evaluate(tx, input),
+
+            // Detection
+            Self::DetectSQLi(op) => op.evaluate(tx, input),
+            Self::DetectXSS(op) => op.evaluate(tx, input),
 
             // Control
             Self::UnconditionalMatch(op) => op.evaluate(tx, input),
@@ -333,6 +341,18 @@ impl From<ValidateUrlEncoding> for OperatorEnum {
 impl From<ValidateUtf8Encoding> for OperatorEnum {
     fn from(op: ValidateUtf8Encoding) -> Self {
         Self::ValidateUtf8Encoding(op)
+    }
+}
+
+impl From<DetectSQLi> for OperatorEnum {
+    fn from(op: DetectSQLi) -> Self {
+        Self::DetectSQLi(op)
+    }
+}
+
+impl From<DetectXSS> for OperatorEnum {
+    fn from(op: DetectXSS) -> Self {
+        Self::DetectXSS(op)
     }
 }
 

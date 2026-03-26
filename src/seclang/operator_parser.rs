@@ -11,6 +11,7 @@
 //! - `!pattern` - Negated @rx (implicit)
 
 use crate::operators::*;
+use crate::operators::detection::{detect_sqli, detect_xss};
 use crate::rules::OperatorEnum;
 
 /// Parse error for operator syntax
@@ -289,6 +290,14 @@ fn create_operator(name: &str, arguments: &str) -> ParseResult<OperatorEnum> {
         }
         "validateutf8encoding" => {
             let op = validate_utf8_encoding();
+            Ok(op.into())
+        }
+        "detectsqli" => {
+            let op = detect_sqli();
+            Ok(op.into())
+        }
+        "detectxss" => {
+            let op = detect_xss();
             Ok(op.into())
         }
         _ => Err(OperatorParseError::new(format!(
