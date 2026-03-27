@@ -1343,6 +1343,7 @@ impl TransactionState for Transaction {
             (RuleVariable::ResponseHeaders, Some(k)) => {
                 self.response_headers.get(k).first().cloned()
             }
+            (RuleVariable::TX, Some(k)) => self.tx.get(k).first().cloned(),
 
             // Unsupported combinations
             _ => None,
