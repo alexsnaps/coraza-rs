@@ -116,6 +116,7 @@ func (s *Server) Stop() {
 // IsHealthy checks if server is responding
 func (s *Server) IsHealthy() bool {
 	// Try to connect to server
+	// For a WAF, 403 (blocked) is also a healthy response - it means the server is running
 	cmd := exec.Command("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
 		fmt.Sprintf("http://localhost:%d/", s.port))
 
@@ -124,7 +125,9 @@ func (s *Server) IsHealthy() bool {
 		return false
 	}
 
-	return string(output) == "200"
+	status := string(output)
+	// Accept 200 (OK) or 403 (Forbidden/blocked) as healthy
+	return status == "200" || status == "403"
 }
 
 // createFTWConfig creates the FTW configuration in memory (no file I/O)

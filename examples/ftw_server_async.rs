@@ -67,7 +67,12 @@ async fn main() {
     if let Some(rules_path) = rules_file {
         println!("📋 Loading rules from {}...", rules_path);
         match load_rules(&mut waf, &rules_path) {
-            Ok(count) => println!("✅ Loaded {} rules\n", count),
+            Ok(count) => {
+                println!("✅ Loaded {} rules", count);
+                println!("🔗 Linking chained rules...");
+                waf.link_chains();
+                println!();
+            }
             Err(e) => {
                 eprintln!("❌ Failed to load rules: {}", e);
                 std::process::exit(1);
