@@ -219,9 +219,23 @@ impl Action for BlockAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
-        // This should never run
-        // The block action is replaced by SecDefaultAction during rule compilation
+    fn evaluate(&self, rule: &Rule, tx: &mut dyn TransactionState) {
+        // TODO: Implement proper SecDefaultAction replacement during rule compilation (Phase 10)
+        // For now, default to deny action behavior
+
+        let rule_id = if rule.id == 0 {
+            rule.parent_id
+        } else {
+            rule.id
+        };
+
+        let status = if rule.status == 0 {
+            403 // block action defaults to status 403 (same as deny)
+        } else {
+            rule.status
+        };
+
+        tx.interrupt(rule_id, "block", status, "");
     }
 
     fn action_type(&self) -> ActionType {

@@ -11,6 +11,7 @@
 //! - `!pattern` - Negated @rx (implicit)
 
 use crate::operators::*;
+use crate::operators::detection::{detect_sqli, detect_xss};
 use crate::rules::OperatorEnum;
 
 /// Parse error for operator syntax
@@ -192,6 +193,12 @@ fn create_operator(name: &str, arguments: &str) -> ParseResult<OperatorEnum> {
             })?;
             Ok(op.into())
         }
+        "pmfromfile" | "pmf" => {
+            let op = pm_from_file(arguments).map_err(|e| {
+                OperatorParseError::new(format!("failed to create @pmFromFile operator: {}", e))
+            })?;
+            Ok(op.into())
+        }
         "streq" => {
             let op = streq(arguments).map_err(|e| {
                 OperatorParseError::new(format!("failed to create @streq operator: {}", e))
@@ -262,6 +269,35 @@ fn create_operator(name: &str, arguments: &str) -> ParseResult<OperatorEnum> {
             let op = ip_match(arguments).map_err(|e| {
                 OperatorParseError::new(format!("failed to create @ipMatch operator: {}", e))
             })?;
+            Ok(op.into())
+        }
+        "unconditionalmatch" => {
+            let op = unconditional_match();
+            Ok(op.into())
+        }
+        "validatebyterange" => {
+            let op = validate_byte_range(arguments).map_err(|e| {
+                OperatorParseError::new(format!(
+                    "failed to create @validateByteRange operator: {}",
+                    e
+                ))
+            })?;
+            Ok(op.into())
+        }
+        "validateurlencoding" => {
+            let op = validate_url_encoding();
+            Ok(op.into())
+        }
+        "validateutf8encoding" => {
+            let op = validate_utf8_encoding();
+            Ok(op.into())
+        }
+        "detectsqli" => {
+            let op = detect_sqli();
+            Ok(op.into())
+        }
+        "detectxss" => {
+            let op = detect_xss();
             Ok(op.into())
         }
         _ => Err(OperatorParseError::new(format!(

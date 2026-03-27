@@ -13,6 +13,28 @@ use crate::operators::TransactionState;
 use crate::rules::RuleGroup;
 use crate::types::{RuleEngineStatus, RulePhase};
 
+/// Information about a rule that matched during transaction processing.
+///
+/// This is used for audit logging - all rules that match (not just blocking ones)
+/// need to be logged for proper CRS test compatibility.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchedRule {
+    /// Rule ID
+    pub rule_id: i32,
+
+    /// Rule message (expanded with captured variables)
+    pub msg: String,
+
+    /// Rule severity
+    pub severity: String,
+
+    /// Matched data (captured values)
+    pub data: String,
+
+    /// Rule tags
+    pub tags: Vec<String>,
+}
+
 /// Interruption returned when a disruptive action is triggered.
 ///
 /// An interruption indicates that a rule matched and triggered a disruptive
@@ -181,6 +203,9 @@ pub struct Transaction {
     /// RESPONSE_XML - Parsed XML response data
     response_xml: Map,
 
+    /// TX - Transaction variables (created with setvar, etc.)
+    tx: Map,
+
     // ===== CTL-Modifiable Settings =====
     /// Rule engine status (controlled by ctl:ruleEngine)
     pub(crate) rule_engine: RuleEngineStatus,
@@ -230,6 +255,9 @@ pub struct Transaction {
     /// (set by ctl:ruleRemoveTargetById, ctl:ruleRemoveTargetByTag, ctl:ruleRemoveTargetByMsg)
     /// Map: rule_id -> Vec<(variable, key)>
     rule_remove_target_by_id: std::collections::BTreeMap<i32, Vec<(RuleVariable, String)>>,
+
+    /// All rules that matched during this transaction (for audit logging)
+    matched_rules: Vec<MatchedRule>,
 
     /// Reference to WAF's rule group for CTL tag/msg-based exclusions
     /// Optional because transactions created via Transaction::new() don't have a WAF reference
@@ -283,6 +311,7 @@ impl Transaction {
             response_body: Single::new(RuleVariable::ResponseBody),
             response_args: Map::new_case_sensitive(RuleVariable::ResponseArgs),
             response_xml: Map::new_case_sensitive(RuleVariable::ResponseXML),
+            tx: Map::new(RuleVariable::TX),
             rule_engine: RuleEngineStatus::On,
             request_body_access: true,
             request_body_limit: 131072, // 128KB default
@@ -298,6 +327,7 @@ impl Transaction {
             capturing: false,
             rule_remove_by_id: std::collections::BTreeSet::new(),
             rule_remove_target_by_id: std::collections::BTreeMap::new(),
+            matched_rules: Vec::new(),
             rules: None, // No WAF reference for standalone transactions
         }
     }
@@ -313,6 +343,32 @@ impl Transaction {
     /// like `ctl:ruleRemoveByTag` and `ctl:ruleRemoveByMsg`.
     pub(crate) fn set_rules(&mut self, rules: Arc<RuleGroup>) {
         self.rules = Some(rules);
+    }
+
+    /// Get all rules that matched during this transaction.
+    ///
+    /// This is used for audit logging - all matched rules (not just blocking ones)
+    /// are logged for proper CRS test compatibility.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    ///
+    /// let tx = Transaction::new("tx-001");
+    /// let matches = tx.matched_rules();
+    /// assert_eq!(matches.len(), 0); // No rules matched yet
+    /// ```
+    pub fn matched_rules(&self) -> &[MatchedRule] {
+        &self.matched_rules
+    }
+
+    /// Record a rule match for audit logging.
+    ///
+    /// This is called by the rule engine when a rule matches, regardless of
+    /// whether it triggers a disruptive action.
+    pub(crate) fn record_match(&mut self, matched: MatchedRule) {
+        self.matched_rules.push(matched);
     }
 
     /// Get a collection by variable type.
@@ -344,6 +400,14 @@ impl Transaction {
             RuleVariable::RequestURI => Some(&self.request_uri as &dyn Collection),
             RuleVariable::RequestMethod => Some(&self.request_method as &dyn Collection),
             RuleVariable::RemoteAddr => Some(&self.remote_addr as &dyn Collection),
+            RuleVariable::RemotePort => Some(&self.remote_port as &dyn Collection),
+            RuleVariable::RequestLine => Some(&self.request_line as &dyn Collection),
+            RuleVariable::RequestProtocol => Some(&self.request_protocol as &dyn Collection),
+            RuleVariable::RequestURIRaw => Some(&self.request_uri_raw as &dyn Collection),
+            RuleVariable::RequestBasename => Some(&self.request_basename as &dyn Collection),
+            RuleVariable::RequestFilename => Some(&self.request_filename as &dyn Collection),
+            RuleVariable::QueryString => Some(&self.query_string as &dyn Collection),
+            RuleVariable::TX => Some(&self.tx as &dyn Collection),
             _ => None, // Not yet implemented or not available
         }
     }
@@ -1276,6 +1340,13 @@ impl TransactionState for Transaction {
             (RuleVariable::RequestURI, None) => Some(self.request_uri.get().to_string()),
             (RuleVariable::RequestMethod, None) => Some(self.request_method.get().to_string()),
             (RuleVariable::RemoteAddr, None) => Some(self.remote_addr.get().to_string()),
+            (RuleVariable::RemotePort, None) => Some(self.remote_port.get().to_string()),
+            (RuleVariable::RequestLine, None) => Some(self.request_line.get().to_string()),
+            (RuleVariable::RequestProtocol, None) => Some(self.request_protocol.get().to_string()),
+            (RuleVariable::RequestURIRaw, None) => Some(self.request_uri_raw.get().to_string()),
+            (RuleVariable::RequestBasename, None) => Some(self.request_basename.get().to_string()),
+            (RuleVariable::RequestFilename, None) => Some(self.request_filename.get().to_string()),
+            (RuleVariable::QueryString, None) => Some(self.query_string.get().to_string()),
 
             // Keyed variables - return first value if key specified
             (RuleVariable::Args, Some(k)) => self.args.get(k).first().cloned(),
@@ -1286,6 +1357,7 @@ impl TransactionState for Transaction {
             (RuleVariable::ResponseHeaders, Some(k)) => {
                 self.response_headers.get(k).first().cloned()
             }
+            (RuleVariable::TX, Some(k)) => self.tx.get(k).first().cloned(),
 
             // Unsupported combinations
             _ => None,
@@ -1372,6 +1444,22 @@ impl TransactionState for Transaction {
 
     fn set_skip_after(&mut self, marker: &str) {
         self.skip_after = marker.to_string();
+    }
+
+    fn collection_mut(
+        &mut self,
+        variable: RuleVariable,
+    ) -> Option<&mut dyn crate::collection::MapCollection> {
+        match variable {
+            RuleVariable::TX => Some(&mut self.tx),
+            RuleVariable::Args => Some(&mut self.args),
+            RuleVariable::ArgsGet => Some(&mut self.args_get),
+            RuleVariable::ArgsPost => Some(&mut self.args_post),
+            RuleVariable::RequestHeaders => Some(&mut self.request_headers),
+            RuleVariable::RequestCookies => Some(&mut self.request_cookies),
+            RuleVariable::ResponseHeaders => Some(&mut self.response_headers),
+            _ => None,
+        }
     }
 }
 

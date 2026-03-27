@@ -8,9 +8,9 @@
 //! abstraction without dynamic dispatch.
 
 use crate::operators::{
-    BeginsWith, Contains, EndsWith, Eq, Ge, Gt, IpMatch, Le, Lt, NoMatch, Operator, Pm, Rx, StrEq,
-    StrMatch, TransactionState, UnconditionalMatch, ValidateByteRange, ValidateUrlEncoding,
-    ValidateUtf8Encoding, Within,
+    BeginsWith, Contains, DetectSQLi, DetectXSS, EndsWith, Eq, Ge, Gt, IpMatch, Le, Lt, NoMatch,
+    Operator, Pm, PmFromFile, Rx, StrEq, StrMatch, TransactionState, UnconditionalMatch,
+    ValidateByteRange, ValidateUrlEncoding, ValidateUtf8Encoding, Within,
 };
 
 /// Enum containing all available operators.
@@ -22,6 +22,7 @@ pub enum OperatorEnum {
     // Pattern matching operators
     Rx(Rx),
     Pm(Pm),
+    PmFromFile(PmFromFile),
     StrMatch(StrMatch),
     Within(Within),
 
@@ -46,6 +47,10 @@ pub enum OperatorEnum {
     ValidateUrlEncoding(ValidateUrlEncoding),
     ValidateUtf8Encoding(ValidateUtf8Encoding),
 
+    // Detection operators
+    DetectSQLi(DetectSQLi),
+    DetectXSS(DetectXSS),
+
     // Control operators
     UnconditionalMatch(UnconditionalMatch),
     NoMatch(NoMatch),
@@ -61,6 +66,7 @@ impl OperatorEnum {
             // Pattern matching
             Self::Rx(op) => op.evaluate(tx, input),
             Self::Pm(op) => op.evaluate(tx, input),
+            Self::PmFromFile(op) => op.evaluate(tx, input),
             Self::StrMatch(op) => op.evaluate(tx, input),
             Self::Within(op) => op.evaluate(tx, input),
 
@@ -84,6 +90,10 @@ impl OperatorEnum {
             Self::ValidateByteRange(op) => op.evaluate(tx, input),
             Self::ValidateUrlEncoding(op) => op.evaluate(tx, input),
             Self::ValidateUtf8Encoding(op) => op.evaluate(tx, input),
+
+            // Detection
+            Self::DetectSQLi(op) => op.evaluate(tx, input),
+            Self::DetectXSS(op) => op.evaluate(tx, input),
 
             // Control
             Self::UnconditionalMatch(op) => op.evaluate(tx, input),
@@ -238,6 +248,12 @@ impl From<Pm> for OperatorEnum {
     }
 }
 
+impl From<PmFromFile> for OperatorEnum {
+    fn from(op: PmFromFile) -> Self {
+        Self::PmFromFile(op)
+    }
+}
+
 impl From<StrMatch> for OperatorEnum {
     fn from(op: StrMatch) -> Self {
         Self::StrMatch(op)
@@ -325,6 +341,18 @@ impl From<ValidateUrlEncoding> for OperatorEnum {
 impl From<ValidateUtf8Encoding> for OperatorEnum {
     fn from(op: ValidateUtf8Encoding) -> Self {
         Self::ValidateUtf8Encoding(op)
+    }
+}
+
+impl From<DetectSQLi> for OperatorEnum {
+    fn from(op: DetectSQLi) -> Self {
+        Self::DetectSQLi(op)
+    }
+}
+
+impl From<DetectXSS> for OperatorEnum {
+    fn from(op: DetectXSS) -> Self {
+        Self::DetectXSS(op)
     }
 }
 

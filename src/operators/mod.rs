@@ -6,12 +6,14 @@
 //! Operators are used to evaluate input values against configured parameters.
 //! They return boolean results indicating whether the match succeeded.
 
+pub mod detection;
 pub mod ip;
 pub mod macros;
 mod pattern;
 mod simple;
 pub mod validation;
 
+pub use detection::{DetectSQLi, DetectXSS, detect_sqli, detect_xss};
 pub use ip::{IpMatch, IpMatchFromFile, ip_match, ip_match_from_file};
 pub use macros::{Macro, MacroError, TransactionState};
 pub use pattern::{Pm, PmFromFile, Rx, StrMatch, Within, pm, pm_from_file, rx, strmatch, within};

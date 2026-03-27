@@ -184,17 +184,25 @@ pub fn compile_sec_action(input: &str) -> CompileResult<Rule> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn compile_sec_marker(input: &str) -> CompileResult<Rule> {
-    let label = input.trim();
+    let mut label = input.trim();
+
+    // Strip surrounding quotes if present
+    if (label.starts_with('"') && label.ends_with('"'))
+        || (label.starts_with('\'') && label.ends_with('\''))
+    {
+        label = &label[1..label.len() - 1];
+    }
 
     if label.is_empty() {
         return Err(CompileError::new("SecMarker requires a label".to_string()));
     }
 
-    // Create marker rule with ID 0
+    // Create marker rule with ID 0 and phase Unknown (matches all phases)
     let mut rule = Rule::new().with_id(0);
 
     // Set marker label in metadata
     rule.metadata_mut().sec_mark = Some(label.to_string());
+    rule.metadata_mut().phase = crate::RulePhase::Unknown;
 
     Ok(rule)
 }
