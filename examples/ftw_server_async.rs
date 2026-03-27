@@ -444,7 +444,7 @@ fn get_arg(args: &[String], name: &str) -> Option<String> {
 fn write_audit_log(
     logfile: &Arc<Mutex<std::fs::File>>,
     tx: &coraza::transaction::Transaction,
-    interruption: &coraza::transaction::Interruption,
+    _interruption: &coraza::transaction::Interruption,
     marker: Option<&str>,
 ) {
     let mut file = logfile.lock().unwrap();
