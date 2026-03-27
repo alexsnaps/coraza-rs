@@ -332,12 +332,11 @@ impl RuleGroup {
             // Handle skipAfter: skip until we find the marker
             if !tx.skip_after.is_empty() {
                 // Check if this rule is the marker we're looking for BEFORE skipping
-                if let Some(ref _mark) = rule.metadata().sec_mark {
-                    if rule.is_sec_marker(&tx.skip_after) {
-                        // Found the marker, clear skipAfter and continue to next rule
-                        tx.skip_after.clear();
-                        continue; // Skip the marker itself
-                    }
+              if let Some(ref _mark) = rule.metadata().sec_mark
+                && rule.is_sec_marker(&tx.skip_after) {
+                  // Found the marker, clear skipAfter and continue to next rule
+                  tx.skip_after.clear();
+                  continue; // Skip the marker itself
                 }
                 continue; // Skip this rule
             }
