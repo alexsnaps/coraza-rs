@@ -181,6 +181,9 @@ pub struct Transaction {
     /// RESPONSE_XML - Parsed XML response data
     response_xml: Map,
 
+    /// TX - Transaction variables (created with setvar, etc.)
+    tx: Map,
+
     // ===== CTL-Modifiable Settings =====
     /// Rule engine status (controlled by ctl:ruleEngine)
     pub(crate) rule_engine: RuleEngineStatus,
@@ -283,6 +286,7 @@ impl Transaction {
             response_body: Single::new(RuleVariable::ResponseBody),
             response_args: Map::new_case_sensitive(RuleVariable::ResponseArgs),
             response_xml: Map::new_case_sensitive(RuleVariable::ResponseXML),
+            tx: Map::new(RuleVariable::TX),
             rule_engine: RuleEngineStatus::On,
             request_body_access: true,
             request_body_limit: 131072, // 128KB default
@@ -344,6 +348,7 @@ impl Transaction {
             RuleVariable::RequestURI => Some(&self.request_uri as &dyn Collection),
             RuleVariable::RequestMethod => Some(&self.request_method as &dyn Collection),
             RuleVariable::RemoteAddr => Some(&self.remote_addr as &dyn Collection),
+            RuleVariable::TX => Some(&self.tx as &dyn Collection),
             _ => None, // Not yet implemented or not available
         }
     }
@@ -1372,6 +1377,22 @@ impl TransactionState for Transaction {
 
     fn set_skip_after(&mut self, marker: &str) {
         self.skip_after = marker.to_string();
+    }
+
+    fn collection_mut(
+        &mut self,
+        variable: RuleVariable,
+    ) -> Option<&mut dyn crate::collection::MapCollection> {
+        match variable {
+            RuleVariable::TX => Some(&mut self.tx),
+            RuleVariable::Args => Some(&mut self.args),
+            RuleVariable::ArgsGet => Some(&mut self.args_get),
+            RuleVariable::ArgsPost => Some(&mut self.args_post),
+            RuleVariable::RequestHeaders => Some(&mut self.request_headers),
+            RuleVariable::RequestCookies => Some(&mut self.request_cookies),
+            RuleVariable::ResponseHeaders => Some(&mut self.response_headers),
+            _ => None,
+        }
     }
 }
 
