@@ -77,6 +77,62 @@ impl RuleGroup {
         Ok(())
     }
 
+    /// Link chained rules together.
+    ///
+    /// After loading all rules, this function links rules with the `chain` action
+    /// to their subsequent rules, implementing AND logic for rule chains.
+    ///
+    /// Rules are linked in the order they were added. A rule with `has_chain = true`
+    /// will have its `chain` field set to the next rule.
+    pub fn link_chains(&mut self) {
+        // Link chained rules together
+        // Rules with has_chain=true should have their chain field set to the next rule
+
+        let mut i = 0;
+
+        while i < self.rules.len() {
+            if !self.rules[i].metadata().has_chain {
+                // No chain - move to next rule
+                i += 1;
+                continue;
+            }
+
+            // This rule should chain to the next one
+            // We need to recursively build the chain
+            if i + 1 >= self.rules.len() {
+                eprintln!("WARNING: Rule {} has chain=true but no next rule!", self.rules[i].metadata().id);
+                i += 1;
+                continue;
+            }
+
+            // Remove all chained rules and build the chain structure
+            let mut chain_rules = Vec::new();
+            let j = i + 1;
+
+            // Collect all rules in this chain
+            chain_rules.push(self.rules.remove(j)); // Remove first chained rule
+
+            // Keep collecting while the previous rule has chain=true
+            while !chain_rules.is_empty() && chain_rules.last().unwrap().metadata().has_chain && j < self.rules.len() {
+                chain_rules.push(self.rules.remove(j));
+            }
+
+            // Now link them together in reverse order
+            let mut chain: Option<Box<Rule>> = None;
+            for rule in chain_rules.into_iter().rev() {
+                let mut rule = rule;
+                rule.chain = chain;
+                chain = Some(Box::new(rule));
+            }
+
+            // Attach the chain to the parent rule
+            self.rules[i].chain = chain;
+
+            // Move to next rule (the one after all the chained rules we just removed)
+            i += 1;
+        }
+    }
+
     /// Find a rule by its ID.
     ///
     /// Returns a reference to the rule if found, None otherwise.
@@ -275,10 +331,13 @@ impl RuleGroup {
 
             // Handle skipAfter: skip until we find the marker
             if !tx.skip_after.is_empty() {
-                // Check if this rule is the marker we're looking for
-                if rule.is_sec_marker(&tx.skip_after) {
-                    // Found the marker, clear skipAfter and continue to next rule
-                    tx.skip_after.clear();
+                // Check if this rule is the marker we're looking for BEFORE skipping
+                if let Some(ref _mark) = rule.metadata().sec_mark {
+                    if rule.is_sec_marker(&tx.skip_after) {
+                        // Found the marker, clear skipAfter and continue to next rule
+                        tx.skip_after.clear();
+                        continue; // Skip the marker itself
+                    }
                 }
                 continue; // Skip this rule
             }

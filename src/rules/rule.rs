@@ -66,7 +66,7 @@ pub struct Rule {
     actions: Vec<RuleAction>,
 
     /// Chained rule for AND logic (None if not chained)
-    chain: Option<Box<Rule>>,
+    pub(crate) chain: Option<Box<Rule>>,
 }
 
 impl Rule {

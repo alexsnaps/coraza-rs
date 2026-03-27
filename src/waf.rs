@@ -246,6 +246,27 @@ impl Waf {
             .map_err(WafError::RuleError)
     }
 
+    /// Link chained rules together after loading all rules.
+    ///
+    /// This MUST be called after loading all rules from SecLang files and before
+    /// creating any transactions. Rules with the `chain` action need to be linked
+    /// to the next rule in the same phase to properly implement AND logic.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use coraza::waf::Waf;
+    /// # use coraza::config::WafConfig;
+    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
+    /// // Load rules from files...
+    /// waf.link_chains();  // Link chained rules
+    /// ```
+    pub fn link_chains(&mut self) {
+        Arc::get_mut(&mut self.rules)
+            .expect("Cannot modify rules after sharing with transactions")
+            .link_chains();
+    }
+
     // Note: SecLang rule parsing (SecRule directives) will be added in future steps.
     // For now, rules must be constructed programmatically using the Rule builder.
 
