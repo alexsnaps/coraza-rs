@@ -13,6 +13,28 @@ use crate::operators::TransactionState;
 use crate::rules::RuleGroup;
 use crate::types::{RuleEngineStatus, RulePhase};
 
+/// Information about a rule that matched during transaction processing.
+///
+/// This is used for audit logging - all rules that match (not just blocking ones)
+/// need to be logged for proper CRS test compatibility.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchedRule {
+    /// Rule ID
+    pub rule_id: i32,
+
+    /// Rule message (expanded with captured variables)
+    pub msg: String,
+
+    /// Rule severity
+    pub severity: String,
+
+    /// Matched data (captured values)
+    pub data: String,
+
+    /// Rule tags
+    pub tags: Vec<String>,
+}
+
 /// Interruption returned when a disruptive action is triggered.
 ///
 /// An interruption indicates that a rule matched and triggered a disruptive
@@ -234,6 +256,9 @@ pub struct Transaction {
     /// Map: rule_id -> Vec<(variable, key)>
     rule_remove_target_by_id: std::collections::BTreeMap<i32, Vec<(RuleVariable, String)>>,
 
+    /// All rules that matched during this transaction (for audit logging)
+    matched_rules: Vec<MatchedRule>,
+
     /// Reference to WAF's rule group for CTL tag/msg-based exclusions
     /// Optional because transactions created via Transaction::new() don't have a WAF reference
     rules: Option<Arc<RuleGroup>>,
@@ -302,6 +327,7 @@ impl Transaction {
             capturing: false,
             rule_remove_by_id: std::collections::BTreeSet::new(),
             rule_remove_target_by_id: std::collections::BTreeMap::new(),
+            matched_rules: Vec::new(),
             rules: None, // No WAF reference for standalone transactions
         }
     }
@@ -317,6 +343,32 @@ impl Transaction {
     /// like `ctl:ruleRemoveByTag` and `ctl:ruleRemoveByMsg`.
     pub(crate) fn set_rules(&mut self, rules: Arc<RuleGroup>) {
         self.rules = Some(rules);
+    }
+
+    /// Get all rules that matched during this transaction.
+    ///
+    /// This is used for audit logging - all matched rules (not just blocking ones)
+    /// are logged for proper CRS test compatibility.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    ///
+    /// let tx = Transaction::new("tx-001");
+    /// let matches = tx.matched_rules();
+    /// assert_eq!(matches.len(), 0); // No rules matched yet
+    /// ```
+    pub fn matched_rules(&self) -> &[MatchedRule] {
+        &self.matched_rules
+    }
+
+    /// Record a rule match for audit logging.
+    ///
+    /// This is called by the rule engine when a rule matches, regardless of
+    /// whether it triggers a disruptive action.
+    pub(crate) fn record_match(&mut self, matched: MatchedRule) {
+        self.matched_rules.push(matched);
     }
 
     /// Get a collection by variable type.

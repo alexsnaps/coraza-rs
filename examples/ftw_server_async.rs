@@ -459,11 +459,15 @@ fn write_audit_log(
         let _ = writeln!(file, "[{}] [X-CRS-Test \"{}\"]", timestamp, marker_value);
     }
 
-    let _ = writeln!(
-        file,
-        "[{}] [id \"{}\"] [msg \"Rule triggered\"] [data \"{}\"] [severity \"CRITICAL\"]",
-        timestamp, interruption.rule_id, interruption.data
-    );
+    // Write ALL matched rules (not just the final blocking one)
+    // This is critical for CRS test compatibility
+    for matched in tx.matched_rules() {
+        let _ = writeln!(
+            file,
+            "[{}] [id \"{}\"] [msg \"{}\"] [data \"{}\"] [severity \"{}\"]",
+            timestamp, matched.rule_id, matched.msg, matched.data, matched.severity
+        );
+    }
 
     let _ = writeln!(file, "[{}] [tx_id \"{}\"]", timestamp, tx.id());
     let _ = file.flush();

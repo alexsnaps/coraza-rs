@@ -342,7 +342,42 @@ impl Rule {
             current_chain = chained_rule.chain.as_deref();
         }
 
-        // All rules matched - execute flow and disruptive actions
+        // All rules matched - record the match for audit logging
+        // Skip rules with ID 0 (SecMarker, SecAction) as they're not detection rules
+        if self.metadata.id != 0 {
+            use crate::transaction::MatchedRule;
+
+            let msg = self
+                .metadata
+                .msg
+                .as_ref()
+                .map(|m| m.expand(Some(tx)))
+                .unwrap_or_default();
+
+            let severity = self
+                .metadata
+                .severity
+                .as_ref()
+                .map(|s| format!("{:?}", s).to_uppercase())
+                .unwrap_or_else(|| "NOTICE".to_string());
+
+            let data = self
+                .metadata
+                .log_data
+                .as_ref()
+                .map(|ld| ld.expand(Some(tx)))
+                .unwrap_or_default();
+
+            tx.record_match(MatchedRule {
+                rule_id: self.metadata.id,
+                msg,
+                severity,
+                data,
+                tags: self.metadata.tags.clone(),
+            });
+        }
+
+        // Execute flow and disruptive actions
         execute_flow_and_disruptive_actions(&self.actions, &self.metadata, tx, rule_engine_on);
 
         matched_values
