@@ -31,6 +31,7 @@ func main() {
 	// Parse command-line flags
 	rulesFile := flag.String("rules", "", "Path to CRS rules file (e.g., crs-test.conf)")
 	maxTests := flag.Int("max-tests", 0, "Maximum number of tests to run (0 = all tests)")
+	testDir := flag.String("test-dir", "", "Path to test directory (default: ../../coraza-coreruleset/tests)")
 	flag.Parse()
 
 	fmt.Println("🧪 Coraza-RS FTW Test Runner\n")
@@ -69,7 +70,7 @@ func main() {
 	// Run FTW tests
 	fmt.Println("🧪 Running FTW tests...")
 	fmt.Println("=" + repeat("=", 60))
-	if err := runFTW(*maxTests); err != nil {
+	if err := runFTW(*maxTests, *testDir); err != nil {
 		fmt.Fprintf(os.Stderr, "\n❌ Tests failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -144,7 +145,7 @@ mode: "default"
 }
 
 // runFTW executes go-ftw tests using the library directly
-func runFTW(maxTests int) error {
+func runFTW(maxTests int, customTestDir string) error {
 	// Set up logging
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 
@@ -155,11 +156,15 @@ func runFTW(maxTests int) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Check for CRS test directory
-	testDir := filepath.Join("..", "..", "coraza-coreruleset", "tests")
+	// Determine test directory
+	testDir := customTestDir
+	if testDir == "" {
+		testDir = filepath.Join("..", "..", "coraza-coreruleset", "tests")
+	}
+
 	if _, err := os.Stat(testDir); os.IsNotExist(err) {
-		fmt.Println("⚠️  No CRS test directory found, running server health checks only")
-		fmt.Println("   Expected: ../../coraza-coreruleset/tests")
+		fmt.Printf("⚠️  Test directory not found: %s\n", testDir)
+		fmt.Println("   Running server health checks only")
 		return testServerHealth()
 	}
 
