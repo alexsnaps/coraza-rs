@@ -400,6 +400,13 @@ impl Transaction {
             RuleVariable::RequestURI => Some(&self.request_uri as &dyn Collection),
             RuleVariable::RequestMethod => Some(&self.request_method as &dyn Collection),
             RuleVariable::RemoteAddr => Some(&self.remote_addr as &dyn Collection),
+            RuleVariable::RemotePort => Some(&self.remote_port as &dyn Collection),
+            RuleVariable::RequestLine => Some(&self.request_line as &dyn Collection),
+            RuleVariable::RequestProtocol => Some(&self.request_protocol as &dyn Collection),
+            RuleVariable::RequestURIRaw => Some(&self.request_uri_raw as &dyn Collection),
+            RuleVariable::RequestBasename => Some(&self.request_basename as &dyn Collection),
+            RuleVariable::RequestFilename => Some(&self.request_filename as &dyn Collection),
+            RuleVariable::QueryString => Some(&self.query_string as &dyn Collection),
             RuleVariable::TX => Some(&self.tx as &dyn Collection),
             _ => None, // Not yet implemented or not available
         }
@@ -1333,6 +1340,13 @@ impl TransactionState for Transaction {
             (RuleVariable::RequestURI, None) => Some(self.request_uri.get().to_string()),
             (RuleVariable::RequestMethod, None) => Some(self.request_method.get().to_string()),
             (RuleVariable::RemoteAddr, None) => Some(self.remote_addr.get().to_string()),
+            (RuleVariable::RemotePort, None) => Some(self.remote_port.get().to_string()),
+            (RuleVariable::RequestLine, None) => Some(self.request_line.get().to_string()),
+            (RuleVariable::RequestProtocol, None) => Some(self.request_protocol.get().to_string()),
+            (RuleVariable::RequestURIRaw, None) => Some(self.request_uri_raw.get().to_string()),
+            (RuleVariable::RequestBasename, None) => Some(self.request_basename.get().to_string()),
+            (RuleVariable::RequestFilename, None) => Some(self.request_filename.get().to_string()),
+            (RuleVariable::QueryString, None) => Some(self.query_string.get().to_string()),
 
             // Keyed variables - return first value if key specified
             (RuleVariable::Args, Some(k)) => self.args.get(k).first().cloned(),
