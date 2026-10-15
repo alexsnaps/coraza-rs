@@ -45,16 +45,10 @@ impl RuleGroup {
 
     /// Add a rule to the group.
     ///
-    /// Returns an error if a rule with the same ID already exists.
+    /// If the last rule added has the `chain` action, the new rule is appended to
+    /// that rule's chain instead of starting a new top-level rule.
     ///
-    /// # Arguments
-    ///
-    /// * `rule` - Rule to add to the group
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(())` if the rule was added successfully
-    /// * `Err(String)` if a duplicate ID was found
+    /// Returns an error if a rule with the same non-zero ID already exists.
     ///
     /// # Examples
     ///
@@ -73,63 +67,33 @@ impl RuleGroup {
             return Err(format!("duplicated rule id {}", rule_id));
         }
 
-        self.rules.push(rule);
+        match self.open_chain() {
+            Some(parent) => parent.chain.push(rule),
+            None => self.rules.push(rule),
+        }
         Ok(())
     }
 
-    /// Link chained rules together.
+    /// Drops the last top-level rule if its chain still expects another rule.
     ///
-    /// After loading all rules, this function links rules with the `chain` action
-    /// to their subsequent rules, implementing AND logic for rule chains.
-    ///
-    /// Rules are linked in the order they were added. A rule with `has_chain = true`
-    /// will have its `chain` field set to the next rule.
-    pub fn link_chains(&mut self) {
-        // Link chained rules together
-        // Rules with has_chain=true should have their chain field set to the next rule
+    /// Used when the rule meant to continue that chain could not be added, so the
+    /// incomplete chain doesn't swallow an unrelated rule. Returns whether a rule was dropped.
+    pub(crate) fn discard_open_chain(&mut self) -> bool {
+        let open = self.open_chain().is_some();
+        if open {
+            self.rules.pop();
+        }
+        open
+    }
 
-        let mut i = 0;
-
-        while i < self.rules.len() {
-            if !self.rules[i].metadata().has_chain {
-                // No chain - move to next rule
-                i += 1;
-                continue;
-            }
-
-            // This rule should chain to the next one
-            // We need to recursively build the chain
-            if i + 1 >= self.rules.len() {
-                eprintln!("WARNING: Rule {} has chain=true but no next rule!", self.rules[i].metadata().id);
-                i += 1;
-                continue;
-            }
-
-            // Remove all chained rules and build the chain structure
-            let mut chain_rules = Vec::new();
-            let j = i + 1;
-
-            // Collect all rules in this chain
-            chain_rules.push(self.rules.remove(j)); // Remove first chained rule
-
-            // Keep collecting while the previous rule has chain=true
-            while !chain_rules.is_empty() && chain_rules.last().unwrap().metadata().has_chain && j < self.rules.len() {
-                chain_rules.push(self.rules.remove(j));
-            }
-
-            // Now link them together in reverse order
-            let mut chain: Option<Box<Rule>> = None;
-            for rule in chain_rules.into_iter().rev() {
-                let mut rule = rule;
-                rule.chain = chain;
-                chain = Some(Box::new(rule));
-            }
-
-            // Attach the chain to the parent rule
-            self.rules[i].chain = chain;
-
-            // Move to next rule (the one after all the chained rules we just removed)
-            i += 1;
+    /// The last top-level rule, if its last link has the `chain` action.
+    fn open_chain(&mut self) -> Option<&mut Rule> {
+        let parent = self.rules.last_mut()?;
+        let tail = parent.chain.last().unwrap_or(parent);
+        if tail.metadata().has_chain {
+            Some(parent)
+        } else {
+            None
         }
     }
 

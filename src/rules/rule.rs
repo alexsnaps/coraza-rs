@@ -13,7 +13,6 @@
 use crate::RulePhase;
 use crate::actions::RuleMetadata;
 use crate::collection::MatchData;
-use crate::operators::TransactionState;
 use crate::rules::{
     RuleAction, RuleOperator, VariableSpec, execute_flow_and_disruptive_actions,
     execute_nondisruptive_actions,
@@ -62,8 +61,8 @@ pub struct Rule {
     /// Actions to execute when rule matches
     actions: Vec<RuleAction>,
 
-    /// Chained rule for AND logic (None if not chained)
-    pub(crate) chain: Option<Box<Rule>>,
+    /// Rules chained to this one (AND logic), in order; empty unless this rule starts a chain
+    pub(crate) chain: Vec<Rule>,
 }
 
 impl Rule {
@@ -74,7 +73,7 @@ impl Rule {
             variables: Vec::new(),
             operator: None,
             actions: Vec::new(),
-            chain: None,
+            chain: Vec::new(),
         }
     }
 
@@ -102,10 +101,9 @@ impl Rule {
         self
     }
 
-    /// Set the chained rule.
-    pub fn with_chain(mut self, chain: Rule) -> Self {
-        self.metadata.has_chain = true;
-        self.chain = Some(Box::new(chain));
+    /// Appends a rule to this rule's chain; it must also match for this rule to match.
+    pub fn with_chain(mut self, link: Rule) -> Self {
+        self.chain.push(link);
         self
     }
 
@@ -143,9 +141,9 @@ impl Rule {
         self.actions = actions;
     }
 
-    /// Get the chained rule (if any).
-    pub fn chain(&self) -> Option<&Rule> {
-        self.chain.as_deref()
+    /// Rules chained to this one, in evaluation order; empty if this rule starts no chain.
+    pub fn chain(&self) -> &[Rule] {
+        &self.chain
     }
 
     /// Get the rule's processing phase.
@@ -168,19 +166,14 @@ impl Rule {
         self.metadata.sec_mark.as_deref() == Some(marker)
     }
 
-    /// Evaluate the rule against a transaction.
+    /// Evaluate the rule, and its chain, against a transaction.
     ///
-    /// Returns a vector of match data for all matches found. If the rule doesn't
-    /// match, or if a chained rule fails to match, returns an empty vector.
+    /// Non-disruptive actions of each rule in the chain run for every value it
+    /// matches, even if a later link fails. Only when every link matches are the
+    /// match recorded and this rule's flow and disruptive actions run (disruptive
+    /// ones only if `rule_engine_on`).
     ///
-    /// # Arguments
-    ///
-    /// * `tx` - Transaction to evaluate against
-    /// * `rule_engine_on` - Whether the rule engine is in enforcement mode
-    ///
-    /// # Returns
-    ///
-    /// Vector of MatchData for all matched values. Empty if no match.
+    /// Returns the match data of this rule and its chain; empty if any link didn't match.
     ///
     /// # Examples
     ///
@@ -196,146 +189,20 @@ impl Rule {
     /// assert_eq!(matches.len(), 1);
     /// ```
     pub fn evaluate(&self, tx: &mut Transaction, rule_engine_on: bool) -> Vec<MatchData> {
-        self.do_evaluate(tx, rule_engine_on, 0)
-    }
-
-    /// Internal recursive evaluation function.
-    ///
-    /// # Arguments
-    ///
-    /// * `tx` - Transaction to evaluate against
-    /// * `rule_engine_on` - Whether the rule engine is in enforcement mode
-    /// * `chain_level` - Current chain depth (0 for parent rule)
-    fn do_evaluate(
-        &self,
-        tx: &mut Transaction,
-        rule_engine_on: bool,
-        chain_level: i32,
-    ) -> Vec<MatchData> {
-        // Operator-less rules always match (SecAction, SecMarker)
-        if self.operator.is_none() {
-            let match_data = MatchData::new_empty();
-            let matches = vec![match_data];
-
-            // Execute nondisruptive actions immediately
-            execute_nondisruptive_actions(
-                &self.actions,
-                &self.metadata,
-                tx as &mut dyn TransactionState,
-            );
-
-            // If this is a parent rule (not chained), evaluate chain and execute
-            // flow/disruptive actions
-            if self.metadata.parent_id == 0 {
-                return self.evaluate_chain_and_actions(matches, tx, rule_engine_on, chain_level);
-            }
-
-            return matches;
-        }
-
-        // Operators store regex groups in TX.0-TX.9 only for rules with `capture`
-        tx.set_capturing(self.metadata.capture);
-
-        // Extract matches from all variables
-        let mut matched_values = Vec::new();
-
-        for var_spec in &self.variables {
-            let variable_matches = var_spec.get_matches(tx);
-
-            for var_match in variable_matches {
-                // Apply transformations to the variable value
-                let (transformed_value, _errors) = if self.metadata.multi_match {
-                    // Multi-match: test original + all intermediate transformed values
-                    let (values, errors) = self
-                        .metadata
-                        .transformations
-                        .apply_multimatch(&var_match.value);
-                    // For simplicity, concatenate all values (we'd actually test each separately)
-                    // In a full implementation, we'd loop through values
-                    (values.join("|"), errors)
-                } else {
-                    // Simple mode: just get final transformed value
-                    self.metadata.transformations.apply(&var_match.value)
-                };
-
-                // TODO: Log transformation errors
-
-                // Evaluate operator against transformed value
-                let operator = self.operator.as_ref().unwrap();
-                let matches = operator.evaluate(Some(tx), &transformed_value);
-
-                if matches {
-                    // Create match data
-                    let match_data = MatchData::new(
-                        var_match.variable,
-                        var_match.key.clone(),
-                        transformed_value.clone(),
-                    );
-
-                    matched_values.push(match_data);
-
-                    // Execute nondisruptive actions immediately (unless parent of chain)
-                    if self.metadata.parent_id != 0 || !self.metadata.has_chain {
-                        execute_nondisruptive_actions(
-                            &self.actions,
-                            &self.metadata,
-                            tx as &mut dyn TransactionState,
-                        );
-                    }
-                }
-            }
-        }
-
-        // If no matches, return empty
+        let mut matched_values = self.match_values(tx);
         if matched_values.is_empty() {
-            return Vec::new();
+            return matched_values;
         }
 
-        // If this is a parent rule (not chained), evaluate chain and execute
-        // flow/disruptive actions
-        if self.metadata.parent_id == 0 {
-            return self.evaluate_chain_and_actions(
-                matched_values,
-                tx,
-                rule_engine_on,
-                chain_level,
-            );
-        }
-
-        matched_values
-    }
-
-    /// Evaluate chained rules and execute flow/disruptive actions.
-    ///
-    /// This is only called for parent rules (parent_id == 0).
-    fn evaluate_chain_and_actions(
-        &self,
-        mut matched_values: Vec<MatchData>,
-        tx: &mut Transaction,
-        rule_engine_on: bool,
-        mut chain_level: i32,
-    ) -> Vec<MatchData> {
-        // Evaluate chained rules (AND logic)
-        let mut current_chain = self.chain.as_deref();
-        while let Some(chained_rule) = current_chain {
-            chain_level += 1;
-
-            let chain_matches = chained_rule.do_evaluate(tx, rule_engine_on, chain_level);
-
-            // If any chained rule doesn't match, the whole chain fails
-            if chain_matches.is_empty() {
+        for link in &self.chain {
+            let link_matches = link.match_values(tx);
+            if link_matches.is_empty() {
                 return Vec::new();
             }
-
-            // Aggregate matches from chain
-            matched_values.extend(chain_matches);
-
-            // Move to next chained rule
-            current_chain = chained_rule.chain.as_deref();
+            matched_values.extend(link_matches);
         }
 
-        // All rules matched - record the match for audit logging
-        // Skip rules with ID 0 (SecMarker, SecAction) as they're not detection rules
+        // Record the match for audit logging; SecMarker and SecAction rules have ID 0
         if self.metadata.id != 0 {
             use crate::transaction::MatchedRule;
 
@@ -369,9 +236,52 @@ impl Rule {
             });
         }
 
-        // Execute flow and disruptive actions
         execute_flow_and_disruptive_actions(&self.actions, &self.metadata, tx, rule_engine_on);
 
+        matched_values
+    }
+
+    /// Matches this rule's own variables and operator, ignoring its chain, and runs its
+    /// non-disruptive actions once per matched value.
+    ///
+    /// A rule without an operator (SecAction, SecMarker) always matches once.
+    fn match_values(&self, tx: &mut Transaction) -> Vec<MatchData> {
+        let Some(operator) = &self.operator else {
+            execute_nondisruptive_actions(&self.actions, &self.metadata, tx);
+            return vec![MatchData::new_empty()];
+        };
+
+        // Operators store regex groups in TX.0-TX.9 only for rules with `capture`
+        tx.set_capturing(self.metadata.capture);
+
+        let mut matched_values = Vec::new();
+        for var_spec in &self.variables {
+            for var_match in var_spec.get_matches(tx) {
+                let (transformed_value, _errors) = if self.metadata.multi_match {
+                    // Multi-match: test original + all intermediate transformed values
+                    let (values, errors) = self
+                        .metadata
+                        .transformations
+                        .apply_multimatch(&var_match.value);
+                    // For simplicity, concatenate all values (we'd actually test each separately)
+                    // In a full implementation, we'd loop through values
+                    (values.join("|"), errors)
+                } else {
+                    self.metadata.transformations.apply(&var_match.value)
+                };
+
+                // TODO: Log transformation errors
+
+                if operator.evaluate(Some(tx), &transformed_value) {
+                    matched_values.push(MatchData::new(
+                        var_match.variable,
+                        var_match.key,
+                        transformed_value,
+                    ));
+                    execute_nondisruptive_actions(&self.actions, &self.metadata, tx);
+                }
+            }
+        }
         matched_values
     }
 }
@@ -485,7 +395,7 @@ mod tests {
     // Ported from: coraza/internal/corazawaf/rule_test.go - Chain tests
     #[test]
     fn test_chained_rule_both_match() {
-        let mut chained_rule = Rule::new()
+        let chained_rule = Rule::new()
             .with_id(2)
             .add_variable(VariableSpec::new_string(
                 RuleVariable::Args,
@@ -496,8 +406,6 @@ mod tests {
                 "@streq",
                 "value2",
             ));
-
-        chained_rule.metadata.parent_id = 1;
 
         let rule = Rule::new()
             .with_id(1)
@@ -524,7 +432,7 @@ mod tests {
 
     #[test]
     fn test_chained_rule_first_fails() {
-        let mut chained_rule = Rule::new()
+        let chained_rule = Rule::new()
             .with_id(2)
             .add_variable(VariableSpec::new_string(
                 RuleVariable::Args,
@@ -535,8 +443,6 @@ mod tests {
                 "@streq",
                 "value2",
             ));
-
-        chained_rule.metadata.parent_id = 1;
 
         let rule = Rule::new()
             .with_id(1)
@@ -563,7 +469,7 @@ mod tests {
 
     #[test]
     fn test_chained_rule_second_fails() {
-        let mut chained_rule = Rule::new()
+        let chained_rule = Rule::new()
             .with_id(2)
             .add_variable(VariableSpec::new_string(
                 RuleVariable::Args,
@@ -574,8 +480,6 @@ mod tests {
                 "@streq",
                 "value2",
             ));
-
-        chained_rule.metadata.parent_id = 1;
 
         let rule = Rule::new()
             .with_id(1)

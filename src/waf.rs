@@ -222,8 +222,8 @@ impl Default for Waf {
 
 /// Assembles the configuration and rules of a [`Waf`].
 ///
-/// Rules are kept in the order they are added; [`WafBuilder::build`] links chained
-/// rules (those with the `chain` action) to the rules that follow them.
+/// Rules are kept in the order they are added; a rule added after one with the
+/// `chain` action joins that rule's chain (see [`RuleGroup::add`]).
 ///
 /// # Examples
 ///
@@ -270,19 +270,17 @@ impl WafBuilder {
         &mut self.config
     }
 
-    /// Validates the configuration, links chained rules, and creates the WAF.
+    /// Validates the configuration and creates the WAF.
     ///
     /// # Errors
     ///
     /// Returns `ConfigError` if the configuration is invalid (see [`Waf::new`]).
     pub fn build(self) -> Result<Waf, ConfigError> {
         validate_config(&self.config)?;
-        let mut rules = self.rules;
-        rules.link_chains();
 
         Ok(Waf {
             config: self.config,
-            rules: Arc::new(rules),
+            rules: Arc::new(self.rules),
             default_actions: self.default_actions,
         })
     }
@@ -971,7 +969,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_links_chained_rules() {
+    fn test_rule_after_chain_action_joins_the_chain() {
         let mut builder = WafBuilder::default();
         let mut parent = Rule::new().with_id(1);
         parent.metadata_mut().has_chain = true;
@@ -980,6 +978,6 @@ mod tests {
 
         let waf = builder.build().unwrap();
         assert_eq!(waf.rule_count(), 1);
-        assert!(waf.find_rule_by_id(1).unwrap().chain().is_some());
+        assert_eq!(waf.find_rule_by_id(1).unwrap().chain().len(), 1);
     }
 }

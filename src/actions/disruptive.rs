@@ -50,11 +50,7 @@ impl Action for DenyAction {
     }
 
     fn evaluate(&self, rule: &RuleMetadata, tx: &mut dyn TransactionState) {
-        let rule_id = if rule.id == 0 {
-            rule.parent_id
-        } else {
-            rule.id
-        };
+        let rule_id = rule.id;
 
         let status = if rule.status == 0 {
             403 // deny action defaults to status 403
@@ -101,11 +97,7 @@ impl Action for DropAction {
     }
 
     fn evaluate(&self, rule: &RuleMetadata, tx: &mut dyn TransactionState) {
-        let rule_id = if rule.id == 0 {
-            rule.parent_id
-        } else {
-            rule.id
-        };
+        let rule_id = rule.id;
 
         tx.interrupt(rule_id, "drop", rule.status, "");
     }
@@ -223,11 +215,7 @@ impl Action for BlockAction {
         // TODO: Implement proper SecDefaultAction replacement during rule compilation (Phase 10)
         // For now, default to deny action behavior
 
-        let rule_id = if rule.id == 0 {
-            rule.parent_id
-        } else {
-            rule.id
-        };
+        let rule_id = rule.id;
 
         let status = if rule.status == 0 {
             403 // block action defaults to status 403 (same as deny)
@@ -289,11 +277,7 @@ impl Action for RedirectAction {
     }
 
     fn evaluate(&self, rule: &RuleMetadata, tx: &mut dyn TransactionState) {
-        let rule_id = if rule.id == 0 {
-            rule.parent_id
-        } else {
-            rule.id
-        };
+        let rule_id = rule.id;
 
         let status = match rule.status {
             301 | 302 | 303 | 307 => rule.status,

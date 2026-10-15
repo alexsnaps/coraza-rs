@@ -164,8 +164,6 @@ pub enum ActionType {
 pub struct RuleMetadata {
     /// Rule ID (mandatory, set by id action)
     pub id: i32,
-    /// Parent rule ID (for chained rules)
-    pub parent_id: i32,
     /// Rule message with macro expansion support
     pub msg: Option<Macro>,
     /// Severity level (0-7)
@@ -186,7 +184,8 @@ pub struct RuleMetadata {
     pub log: bool,
     /// Whether to audit log matches
     pub audit_log: bool,
-    /// Whether this rule chains to the next
+    /// Whether the rule has the `chain` action: the next rule added to a
+    /// [`crate::rules::RuleGroup`] joins this rule's chain
     pub has_chain: bool,
     /// Whether to capture regex groups into TX variables
     pub capture: bool,
@@ -205,7 +204,6 @@ impl RuleMetadata {
     pub fn new() -> Self {
         Self {
             id: 0,
-            parent_id: 0,
             msg: None,
             severity: None,
             tags: Vec::new(),

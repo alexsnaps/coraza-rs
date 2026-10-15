@@ -170,7 +170,7 @@ impl Parser {
     ///
     /// Use this to load a rule set the engine only partly supports. Each skipped
     /// directive's error is kept, in order, and returned by [`Parser::skipped`].
-    /// A skipped `SecRule` that is part of a chain leaves the rest of its chain loaded.
+    /// A chain with a skipped link is dropped whole.
     pub fn skip_failed_directives(&mut self) {
         self.skip_failed = true;
     }
@@ -455,7 +455,10 @@ impl Parser {
                 let result = self.evaluate_line(&line_buffer);
                 line_buffer.clear();
                 match result {
-                    Err(e) if self.skip_failed => self.skipped.push(e),
+                    Err(e) if self.skip_failed => {
+                        self.rules.discard_open_chain();
+                        self.skipped.push(e);
+                    }
                     result => result?,
                 }
             }
@@ -1890,7 +1893,7 @@ SecWebAppId production
     }
 
     #[test]
-    fn test_into_waf_links_chained_rules() {
+    fn test_chained_rules_join_their_parent() {
         let mut parser = Parser::new();
         parser
             .from_string(
@@ -1903,7 +1906,7 @@ SecWebAppId production
 
         let waf = parser.into_waf().unwrap();
         assert_eq!(waf.rule_count(), 1);
-        assert!(waf.find_rule_by_id(1).unwrap().chain().is_some());
+        assert_eq!(waf.find_rule_by_id(1).unwrap().chain().len(), 1);
     }
 
     #[test]
@@ -1933,5 +1936,24 @@ SecWebAppId production
         assert!(result.is_err());
         assert!(parser.skipped().is_empty());
         assert_eq!(parser.into_waf().unwrap().rule_count(), 0);
+    }
+
+    #[test]
+    fn test_skip_failed_directives_drops_a_chain_with_a_failed_link() {
+        let mut parser = Parser::new();
+        parser.skip_failed_directives();
+        parser
+            .from_string(
+                r#"
+                SecRule ARGS "@contains a" "id:1,phase:1,deny,chain"
+                    SecRule ARGS "@nosuchop b" ""
+                SecRule ARGS "@contains c" "id:2,phase:1,deny"
+                "#,
+            )
+            .unwrap();
+
+        let waf = parser.into_waf().unwrap();
+        assert!(waf.find_rule_by_id(1).is_none());
+        assert!(waf.find_rule_by_id(2).unwrap().chain().is_empty());
     }
 }

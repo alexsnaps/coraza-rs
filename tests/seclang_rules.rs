@@ -74,3 +74,46 @@ fn without_capture_regex_groups_are_not_stored() {
 
     assert_eq!(tx_var(&tx, "1"), None);
 }
+
+#[test]
+fn chain_parent_runs_its_nondisruptive_actions() {
+    let waf = waf(r#"
+        SecRule ARGS "@contains a" "id:1,phase:1,setvar:tx.parent=1,chain"
+            SecRule ARGS "@contains a" "setvar:tx.child=1"
+    "#);
+
+    let mut tx = request_with_arg(&waf, "x", "a");
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "parent").as_deref(), Some("1"));
+    assert_eq!(tx_var(&tx, "child").as_deref(), Some("1"));
+}
+
+#[test]
+fn every_chain_link_is_evaluated_once() {
+    let waf = waf(r#"
+        SecRule ARGS "@contains a" "id:1,phase:1,pass,chain"
+            SecRule ARGS "@contains a" "setvar:tx.middle=+1,chain"
+            SecRule ARGS "@contains a" "setvar:tx.last=+1"
+    "#);
+
+    let mut tx = request_with_arg(&waf, "x", "a");
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "middle").as_deref(), Some("1"));
+    assert_eq!(tx_var(&tx, "last").as_deref(), Some("1"));
+}
+
+#[test]
+fn chain_disrupts_only_when_every_link_matches() {
+    let waf = waf(r#"
+        SecRule ARGS "@contains a" "id:7,phase:1,deny,status:403,chain"
+            SecRule ARGS "@contains b" ""
+    "#);
+
+    let mut tx = request_with_arg(&waf, "x", "a");
+    assert!(tx.process_request_headers().is_none());
+
+    let mut tx = request_with_arg(&waf, "x", "ab");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(7));
+}
