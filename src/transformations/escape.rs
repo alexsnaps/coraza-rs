@@ -3,7 +3,7 @@
 //! This module provides transformations for decoding various escape sequence formats
 //! including C-style, JavaScript, CSS, and URL Unicode escapes.
 
-use super::TransformationResult;
+use super::{TransformationResult, chars_lossy};
 use crate::utils::strings::{hex_value, x2c};
 
 /// C-style escape sequence decoding transformation.
@@ -27,29 +27,29 @@ use crate::utils::strings::{hex_value, x2c};
 ///
 /// ```
 /// # use coraza::transformations::escape::escape_seq_decode;
-/// let (result, changed, _) = escape_seq_decode("\\n\\t\\r");
-/// assert_eq!(result, "\n\t\r");
+/// let (result, changed, _) = escape_seq_decode(b"\\n\\t\\r");
+/// assert_eq!(result, b"\n\t\r");
 /// assert!(changed);
 ///
-/// let (result, changed, _) = escape_seq_decode("\\x41\\x42\\x43");
-/// assert_eq!(result, "ABC");
+/// let (result, changed, _) = escape_seq_decode(b"\\x41\\x42\\x43");
+/// assert_eq!(result, b"ABC");
 /// assert!(changed);
 ///
-/// let (result, changed, _) = escape_seq_decode("\\101\\102\\103");
-/// assert_eq!(result, "ABC");
+/// let (result, changed, _) = escape_seq_decode(b"\\101\\102\\103");
+/// assert_eq!(result, b"ABC");
 /// assert!(changed);
 /// ```
-pub fn escape_seq_decode(input: &str) -> TransformationResult {
-    if let Some(pos) = input.bytes().position(|b| b == b'\\') {
+pub fn escape_seq_decode(input: &[u8]) -> TransformationResult {
+    if let Some(pos) = input.iter().position(|&b| b == b'\\') {
         let (output, changed) = do_escape_seq_decode(input, pos);
         (output, changed, None)
     } else {
-        (input.to_string(), false, None)
+        (input.to_vec(), false, None)
     }
 }
 
-fn do_escape_seq_decode(input: &str, pos: usize) -> (String, bool) {
-    let input_bytes = input.as_bytes();
+fn do_escape_seq_decode(input: &[u8], pos: usize) -> (Vec<u8>, bool) {
+    let input_bytes = input;
     let input_len = input_bytes.len();
     let mut result = Vec::with_capacity(input_len);
     let mut changed = false;
@@ -114,13 +114,10 @@ fn do_escape_seq_decode(input: &str, pos: usize) -> (String, bool) {
                 }
 
                 // Parse octal value (truncate to u8 if needed)
-                let octal_str = &input[i + 1..i + j];
-                if let Ok(val) = u16::from_str_radix(octal_str, 8) {
-                    result.push((val & 0xFF) as u8);
-                    i += j;
-                    changed = true;
-                    continue;
-                }
+                result.push((octal_value(&input[i + 1..i + j]) & 0xFF) as u8);
+                i += j;
+                changed = true;
+                continue;
             }
 
             // Not a recognized escape, copy the character after backslash
@@ -133,11 +130,18 @@ fn do_escape_seq_decode(input: &str, pos: usize) -> (String, bool) {
         }
     }
 
-    (String::from_utf8_lossy(&result).into_owned(), changed)
+    (result, changed)
 }
 
 fn is_octal_digit(c: u8) -> bool {
     matches!(c, b'0'..=b'7')
+}
+
+/// The number octal `digits` (at most five, all checked with [`is_octal_digit`]) write.
+fn octal_value(digits: &[u8]) -> u16 {
+    digits
+        .iter()
+        .fold(0, |value, digit| value * 8 + u16::from(digit - b'0'))
 }
 
 /// JavaScript escape sequence decoding transformation.
@@ -165,30 +169,30 @@ fn is_octal_digit(c: u8) -> bool {
 ///
 /// ```
 /// # use coraza::transformations::escape::js_decode;
-/// let (result, changed, _) = js_decode("\\u0048\\u0065\\u006c\\u006c\\u006f");
-/// assert_eq!(result, "Hello");
+/// let (result, changed, _) = js_decode(b"\\u0048\\u0065\\u006c\\u006c\\u006f");
+/// assert_eq!(result, b"Hello");
 /// assert!(changed);
 ///
-/// let (result, changed, _) = js_decode("\\x48\\x65\\x6c\\x6c\\x6f");
-/// assert_eq!(result, "Hello");
+/// let (result, changed, _) = js_decode(b"\\x48\\x65\\x6c\\x6c\\x6f");
+/// assert_eq!(result, b"Hello");
 /// assert!(changed);
 ///
 /// // Full-width ASCII conversion (U+FF41 'ａ' -> 'a')
-/// let (result, changed, _) = js_decode("\\uff41");
-/// assert_eq!(result, "a");
+/// let (result, changed, _) = js_decode(b"\\uff41");
+/// assert_eq!(result, b"a");
 /// assert!(changed);
 /// ```
-pub fn js_decode(input: &str) -> TransformationResult {
-    if let Some(pos) = input.bytes().position(|b| b == b'\\') {
+pub fn js_decode(input: &[u8]) -> TransformationResult {
+    if let Some(pos) = input.iter().position(|&b| b == b'\\') {
         let (output, changed) = do_js_decode(input, pos);
         (output, changed, None)
     } else {
-        (input.to_string(), false, None)
+        (input.to_vec(), false, None)
     }
 }
 
-fn do_js_decode(input: &str, pos: usize) -> (String, bool) {
-    let input_bytes = input.as_bytes();
+fn do_js_decode(input: &[u8], pos: usize) -> (Vec<u8>, bool) {
+    let input_bytes = input;
     let input_len = input_bytes.len();
     let mut result = Vec::with_capacity(input_len);
     let mut changed = false;
@@ -256,13 +260,11 @@ fn do_js_decode(input: &str, pos: usize) -> (String, bool) {
                     j
                 };
 
-                let octal_str = &input[i + 1..i + octal_len];
-                if let Ok(val) = u8::from_str_radix(octal_str, 8) {
-                    result.push(val);
-                    i += octal_len;
-                    changed = true;
-                    matched = true;
-                }
+                // At most 0o377
+                result.push(octal_value(&input[i + 1..i + octal_len]) as u8);
+                i += octal_len;
+                changed = true;
+                matched = true;
             }
 
             // Simple C-style escapes
@@ -290,7 +292,7 @@ fn do_js_decode(input: &str, pos: usize) -> (String, bool) {
         }
     }
 
-    (String::from_utf8_lossy(&result).into_owned(), changed)
+    (result, changed)
 }
 
 /// CSS escape sequence decoding transformation.
@@ -317,29 +319,29 @@ fn do_js_decode(input: &str, pos: usize) -> (String, bool) {
 ///
 /// ```
 /// # use coraza::transformations::escape::css_decode;
-/// let (result, changed, _) = css_decode("\\48\\65\\6c\\6c\\6f");
-/// assert_eq!(result, "Hello");
+/// let (result, changed, _) = css_decode(b"\\48\\65\\6c\\6c\\6f");
+/// assert_eq!(result, b"Hello");
 /// assert!(changed);
 ///
-/// let (result, changed, _) = css_decode("\\000048");  // 6 hex digits
-/// assert_eq!(result, "H");
+/// let (result, changed, _) = css_decode(b"\\000048");  // 6 hex digits
+/// assert_eq!(result, b"H");
 /// assert!(changed);
 ///
 /// // Whitespace after hex escape is ignored
-/// let (result, changed, _) = css_decode("\\48 ello");
-/// assert_eq!(result, "Hello");
+/// let (result, changed, _) = css_decode(b"\\48 ello");
+/// assert_eq!(result, b"Hello");
 /// assert!(changed);
 /// ```
-pub fn css_decode(input: &str) -> TransformationResult {
-    if let Some(pos) = input.bytes().position(|b| b == b'\\') {
+pub fn css_decode(input: &[u8]) -> TransformationResult {
+    if let Some(pos) = input.iter().position(|&b| b == b'\\') {
         (do_css_decode(input, pos), true, None)
     } else {
-        (input.to_string(), false, None)
+        (input.to_vec(), false, None)
     }
 }
 
-fn do_css_decode(input: &str, pos: usize) -> String {
-    let input_bytes = input.as_bytes();
+fn do_css_decode(input: &[u8], pos: usize) -> Vec<u8> {
+    let input_bytes = input;
     let input_len = input_bytes.len();
     let mut result = Vec::with_capacity(input_len);
 
@@ -442,7 +444,7 @@ fn do_css_decode(input: &str, pos: usize) -> String {
         }
     }
 
-    String::from_utf8_lossy(&result).into_owned()
+    result
 }
 
 /// Checks if a byte is CSS whitespace
@@ -472,29 +474,29 @@ fn is_css_whitespace(c: u8) -> bool {
 ///
 /// ```
 /// # use coraza::transformations::escape::url_decode_uni;
-/// let (result, changed, _) = url_decode_uni("Hello%20World");
-/// assert_eq!(result, "Hello World");
+/// let (result, changed, _) = url_decode_uni(b"Hello%20World");
+/// assert_eq!(result, b"Hello World");
 /// assert!(changed);
 ///
-/// let (result, changed, _) = url_decode_uni("Hello+World");
-/// assert_eq!(result, "Hello World");
+/// let (result, changed, _) = url_decode_uni(b"Hello+World");
+/// assert_eq!(result, b"Hello World");
 /// assert!(changed);
 ///
 /// // IIS Unicode encoding
-/// let (result, changed, _) = url_decode_uni("%u0048%u0065%u006c%u006c%u006f");
-/// assert_eq!(result, "Hello");
+/// let (result, changed, _) = url_decode_uni(b"%u0048%u0065%u006c%u006c%u006f");
+/// assert_eq!(result, b"Hello");
 /// assert!(changed);
 /// ```
-pub fn url_decode_uni(input: &str) -> TransformationResult {
-    if let Some(pos) = input.bytes().position(|b| b == b'%' || b == b'+') {
+pub fn url_decode_uni(input: &[u8]) -> TransformationResult {
+    if let Some(pos) = input.iter().position(|&b| b == b'%' || b == b'+') {
         (do_url_decode_uni(input, pos), true, None)
     } else {
-        (input.to_string(), false, None)
+        (input.to_vec(), false, None)
     }
 }
 
-fn do_url_decode_uni(input: &str, pos: usize) -> String {
-    let input_bytes = input.as_bytes();
+fn do_url_decode_uni(input: &[u8], pos: usize) -> Vec<u8> {
+    let input_bytes = input;
     let input_len = input_bytes.len();
     let mut result = Vec::with_capacity(input_len);
 
@@ -558,7 +560,7 @@ fn do_url_decode_uni(input: &str, pos: usize) -> String {
         }
     }
 
-    String::from_utf8_lossy(&result).into_owned()
+    result
 }
 
 /// UTF-8 to Unicode encoding transformation.
@@ -580,81 +582,58 @@ fn do_url_decode_uni(input: &str, pos: usize) -> String {
 ///
 /// ```
 /// # use coraza::transformations::escape::utf8_to_unicode;
-/// let (result, changed, _) = utf8_to_unicode("café");
-/// assert_eq!(result, "caf%u00e9");
+/// let (result, changed, _) = utf8_to_unicode("café".as_bytes());
+/// assert_eq!(result, b"caf%u00e9");
 /// assert!(changed);
 ///
-/// let (result, changed, _) = utf8_to_unicode("Hello");
-/// assert_eq!(result, "Hello");
+/// let (result, changed, _) = utf8_to_unicode(b"Hello");
+/// assert_eq!(result, b"Hello");
 /// assert!(!changed);
 ///
-/// let (result, changed, _) = utf8_to_unicode("中文");
-/// assert!(result.starts_with("%u"));
+/// let (result, changed, _) = utf8_to_unicode("中文".as_bytes());
+/// assert!(result.starts_with(b"%u"));
 /// assert!(changed);
 /// ```
-pub fn utf8_to_unicode(input: &str) -> TransformationResult {
-    // Quick check: if all ASCII, no conversion needed
+pub fn utf8_to_unicode(input: &[u8]) -> TransformationResult {
     if input.is_ascii() {
-        return (input.to_string(), false, None);
+        return (input.to_vec(), false, None);
     }
 
-    // Find first non-ASCII character
-    if let Some(pos) = input.bytes().position(|b| b >= 0x80) {
-        // Find the character boundary at or before this position
-        let char_pos = input
-            .char_indices()
-            .find(|(i, c)| *i >= pos || *c as u32 >= 0x80)
-            .map(|(i, _)| i)
-            .unwrap_or(pos);
-        (do_utf8_to_unicode(input, char_pos), true, None)
-    } else {
-        (input.to_string(), false, None)
-    }
-}
-
-fn do_utf8_to_unicode(input: &str, pos: usize) -> String {
-    let mut result = String::with_capacity(input.len() * 2);
-
-    // Copy ASCII prefix
-    result.push_str(&input[..pos]);
-
-    // Process characters from first non-ASCII onward
-    for c in input[pos..].chars() {
-        if (c as u32) < 0x80 {
-            // ASCII character: keep as-is
-            result.push(c);
+    let mut result = Vec::with_capacity(input.len() * 2);
+    for c in chars_lossy(input).chars() {
+        if c.is_ascii() {
+            result.push(c as u8);
         } else {
-            // Non-ASCII: encode as %uHHHH
-            result.push_str(&format!("%u{:04x}", c as u32));
+            result.extend_from_slice(format!("%u{:04x}", u32::from(c)).as_bytes());
         }
     }
-
-    result
+    (result, true, None)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transformations::on_text;
 
     // Test cases from escapeSeqDecode.json
 
     #[test]
     fn test_escape_seq_decode_empty() {
-        let (result, changed, _) = escape_seq_decode("");
+        let (result, changed, _) = on_text(escape_seq_decode, "");
         assert_eq!(result, "");
         assert!(!changed);
     }
 
     #[test]
     fn test_escape_seq_decode_no_escapes() {
-        let (result, changed, _) = escape_seq_decode("TestCase");
+        let (result, changed, _) = on_text(escape_seq_decode, "TestCase");
         assert_eq!(result, "TestCase");
         assert!(!changed);
     }
 
     #[test]
     fn test_escape_seq_decode_with_null() {
-        let (result, changed, _) = escape_seq_decode("Test\u{0000}Case");
+        let (result, changed, _) = on_text(escape_seq_decode, "Test\u{0000}Case");
         assert_eq!(result, "Test\u{0000}Case");
         assert!(!changed);
     }
@@ -662,13 +641,11 @@ mod tests {
     #[test]
     fn test_escape_seq_decode_comprehensive() {
         let (result, changed, _) =
-            escape_seq_decode("\\a\\b\\f\\n\\r\\t\\v\\?\\'\\\"\\0\\12\\123\\x00\\xff");
-        // Build expected result from bytes
-        let expected_bytes: Vec<u8> = vec![
+            escape_seq_decode(b"\\a\\b\\f\\n\\r\\t\\v\\?\\'\\\"\\0\\12\\123\\x00\\xff");
+        let expected: &[u8] = &[
             0x07, 0x08, 0x0C, 0x0A, 0x0D, 0x09, 0x0B, b'?', b'\'', b'"', 0x00, 0x0A, 0x53, 0x00,
             0xFF,
         ];
-        let expected = String::from_utf8_lossy(&expected_bytes).into_owned();
         assert_eq!(result, expected);
         assert!(changed);
     }
@@ -676,45 +653,44 @@ mod tests {
     #[test]
     fn test_escape_seq_decode_invalid_sequences() {
         // Invalid hex and octal sequences
-        let (result, changed, _) = escape_seq_decode("\\8\\9\\666\\xag\\xga\\0123");
+        let (result, changed, _) = escape_seq_decode(b"\\8\\9\\666\\xag\\xga\\0123");
         // \8 -> 8, \9 -> 9, \666 -> \xb6 (0o666 = 182 = 0xb6), \xag -> ag, \xga -> ga, \0123 -> \x0a3 (0o12 = 10 = 0x0a, then '3')
-        let expected_bytes: Vec<u8> = vec![b'8', b'9', 0xb6, b'a', b'g', b'g', b'a', 0x0a, b'3'];
-        let expected = String::from_utf8_lossy(&expected_bytes).into_owned();
+        let expected: &[u8] = &[b'8', b'9', 0xb6, b'a', b'g', b'g', b'a', 0x0a, b'3'];
         assert_eq!(result, expected);
         assert!(changed);
     }
 
     #[test]
     fn test_escape_seq_decode_octal_single() {
-        let (result, changed, _) = escape_seq_decode("\\0");
+        let (result, changed, _) = on_text(escape_seq_decode, "\\0");
         assert_eq!(result, "\x00");
         assert!(changed);
     }
 
     #[test]
     fn test_escape_seq_decode_octal_double() {
-        let (result, changed, _) = escape_seq_decode("\\01");
+        let (result, changed, _) = on_text(escape_seq_decode, "\\01");
         assert_eq!(result, "\x01");
         assert!(changed);
     }
 
     #[test]
     fn test_escape_seq_decode_octal_triple() {
-        let (result, changed, _) = escape_seq_decode("\\012");
+        let (result, changed, _) = on_text(escape_seq_decode, "\\012");
         assert_eq!(result, "\n"); // 0o12 = 10 = '\n'
         assert!(changed);
     }
 
     #[test]
     fn test_escape_seq_decode_trailing_backslash() {
-        let (result, changed, _) = escape_seq_decode("\\");
+        let (result, changed, _) = on_text(escape_seq_decode, "\\");
         assert_eq!(result, "\\");
         assert!(!changed);
     }
 
     #[test]
     fn test_escape_seq_decode_escaped_backslash() {
-        let (result, changed, _) = escape_seq_decode("\\\\u0000");
+        let (result, changed, _) = on_text(escape_seq_decode, "\\\\u0000");
         assert_eq!(result, "\\u0000");
         assert!(changed);
     }
@@ -723,21 +699,21 @@ mod tests {
 
     #[test]
     fn test_js_decode_empty() {
-        let (result, changed, _) = js_decode("");
+        let (result, changed, _) = on_text(js_decode, "");
         assert_eq!(result, "");
         assert!(!changed);
     }
 
     #[test]
     fn test_js_decode_no_escapes() {
-        let (result, changed, _) = js_decode("TestCase");
+        let (result, changed, _) = on_text(js_decode, "TestCase");
         assert_eq!(result, "TestCase");
         assert!(!changed);
     }
 
     #[test]
     fn test_js_decode_with_null() {
-        let (result, changed, _) = js_decode("Test\u{0000}Case");
+        let (result, changed, _) = on_text(js_decode, "Test\u{0000}Case");
         assert_eq!(result, "Test\u{0000}Case");
         assert!(!changed);
     }
@@ -745,7 +721,7 @@ mod tests {
     #[test]
     fn test_js_decode_unicode_escapes() {
         // \u0048\u0065\u006c\u006c\u006f -> "Hello"
-        let (result, changed, _) = js_decode("\\u0048\\u0065\\u006c\\u006c\\u006f");
+        let (result, changed, _) = on_text(js_decode, "\\u0048\\u0065\\u006c\\u006c\\u006f");
         assert_eq!(result, "Hello");
         assert!(changed);
     }
@@ -753,7 +729,7 @@ mod tests {
     #[test]
     fn test_js_decode_hex_escapes() {
         // \x48\x65\x6c\x6c\x6f -> "Hello"
-        let (result, changed, _) = js_decode("\\x48\\x65\\x6c\\x6c\\x6f");
+        let (result, changed, _) = on_text(js_decode, "\\x48\\x65\\x6c\\x6c\\x6f");
         assert_eq!(result, "Hello");
         assert!(changed);
     }
@@ -761,7 +737,7 @@ mod tests {
     #[test]
     fn test_js_decode_octal_escapes() {
         // \110\145\154\154\157 -> "Hello" (octal)
-        let (result, changed, _) = js_decode("\\110\\145\\154\\154\\157");
+        let (result, changed, _) = on_text(js_decode, "\\110\\145\\154\\154\\157");
         assert_eq!(result, "Hello");
         assert!(changed);
     }
@@ -769,7 +745,7 @@ mod tests {
     #[test]
     fn test_js_decode_simple_escapes() {
         // \n\t\r -> newline, tab, carriage return
-        let (result, changed, _) = js_decode("\\n\\t\\r");
+        let (result, changed, _) = on_text(js_decode, "\\n\\t\\r");
         assert_eq!(result, "\n\t\r");
         assert!(changed);
     }
@@ -777,12 +753,12 @@ mod tests {
     #[test]
     fn test_js_decode_full_width_ascii() {
         // \uff41 is full-width 'ａ' (U+FF41), should become 'a' (0x41 + 0x20 = 0x61)
-        let (result, changed, _) = js_decode("\\uff41");
+        let (result, changed, _) = on_text(js_decode, "\\uff41");
         assert_eq!(result, "a");
         assert!(changed);
 
         // \uff21 is full-width 'Ａ' (U+FF21), should become 'A' (0x21 + 0x20 = 0x41)
-        let (result, changed, _) = js_decode("\\uff21");
+        let (result, changed, _) = on_text(js_decode, "\\uff21");
         assert_eq!(result, "A");
         assert!(changed);
     }
@@ -790,7 +766,7 @@ mod tests {
     #[test]
     fn test_js_decode_mixed() {
         // Mix of different escape types
-        let (result, changed, _) = js_decode("\\u0048\\x65\\154\\154\\u006f");
+        let (result, changed, _) = on_text(js_decode, "\\u0048\\x65\\154\\154\\u006f");
         assert_eq!(result, "Hello");
         assert!(changed);
     }
@@ -798,7 +774,7 @@ mod tests {
     #[test]
     fn test_js_decode_incomplete_unicode() {
         // \u123 (incomplete, only 3 hex digits) - should pass through as-is
-        let (result, changed, _) = js_decode("\\u123x");
+        let (result, changed, _) = on_text(js_decode, "\\u123x");
         assert_eq!(result, "u123x"); // Backslash removed, rest passed through
         assert!(changed);
     }
@@ -806,7 +782,7 @@ mod tests {
     #[test]
     fn test_js_decode_incomplete_hex() {
         // \x4 (incomplete, only 1 hex digit) - should pass through
-        let (result, changed, _) = js_decode("\\x4z");
+        let (result, changed, _) = on_text(js_decode, "\\x4z");
         assert_eq!(result, "x4z"); // Backslash removed, rest passed through
         assert!(changed);
     }
@@ -815,7 +791,7 @@ mod tests {
     fn test_js_decode_octal_overflow() {
         // \777 would be 511 in octal, which overflows u8
         // Should use only first 2 digits: \77 = 63
-        let (result, changed, _) = js_decode("\\777");
+        let (result, changed, _) = on_text(js_decode, "\\777");
         assert_eq!(result.as_bytes()[0], 0o77); // 63 in decimal
         assert!(changed);
     }
@@ -824,21 +800,21 @@ mod tests {
 
     #[test]
     fn test_css_decode_empty() {
-        let (result, changed, _) = css_decode("");
+        let (result, changed, _) = on_text(css_decode, "");
         assert_eq!(result, "");
         assert!(!changed);
     }
 
     #[test]
     fn test_css_decode_no_escapes() {
-        let (result, changed, _) = css_decode("TestCase");
+        let (result, changed, _) = on_text(css_decode, "TestCase");
         assert_eq!(result, "TestCase");
         assert!(!changed);
     }
 
     #[test]
     fn test_css_decode_with_null() {
-        let (result, changed, _) = css_decode("Test\u{0000}Case");
+        let (result, changed, _) = on_text(css_decode, "Test\u{0000}Case");
         assert_eq!(result, "Test\u{0000}Case");
         assert!(!changed);
     }
@@ -846,12 +822,12 @@ mod tests {
     #[test]
     fn test_css_decode_hex_escapes() {
         // \48\65\6c\6c\6f -> "Hello"
-        let (result, changed, _) = css_decode("\\48\\65\\6c\\6c\\6f");
+        let (result, changed, _) = on_text(css_decode, "\\48\\65\\6c\\6c\\6f");
         assert_eq!(result, "Hello");
         assert!(changed);
 
         // \000048 (6 hex digits) -> "H"
-        let (result, changed, _) = css_decode("\\000048");
+        let (result, changed, _) = on_text(css_decode, "\\000048");
         assert_eq!(result, "H");
         assert!(changed);
     }
@@ -859,12 +835,12 @@ mod tests {
     #[test]
     fn test_css_decode_whitespace_after_hex() {
         // Whitespace after hex escape should be ignored
-        let (result, changed, _) = css_decode("\\48 ello");
+        let (result, changed, _) = on_text(css_decode, "\\48 ello");
         assert_eq!(result, "Hello");
         assert!(changed);
 
         // Tab after hex escape
-        let (result, changed, _) = css_decode("\\48\tello");
+        let (result, changed, _) = on_text(css_decode, "\\48\tello");
         assert_eq!(result, "Hello");
         assert!(changed);
     }
@@ -872,7 +848,7 @@ mod tests {
     #[test]
     fn test_css_decode_full_width_ascii() {
         // \ff41 is full-width 'ａ' (U+FF41), should become 'a' (0x41 + 0x20 = 0x61)
-        let (result, changed, _) = css_decode("\\00ff41");
+        let (result, changed, _) = on_text(css_decode, "\\00ff41");
         assert_eq!(result, "a");
         assert!(changed);
     }
@@ -880,7 +856,7 @@ mod tests {
     #[test]
     fn test_css_decode_backslash_newline() {
         // Backslash before newline should be ignored
-        let (result, changed, _) = css_decode("Hello\\\nWorld");
+        let (result, changed, _) = on_text(css_decode, "Hello\\\nWorld");
         assert_eq!(result, "HelloWorld");
         assert!(changed);
     }
@@ -888,7 +864,7 @@ mod tests {
     #[test]
     fn test_css_decode_backslash_non_hex() {
         // Backslash before non-hex character: remove backslash
-        let (result, changed, _) = css_decode("\\g\\h\\i");
+        let (result, changed, _) = on_text(css_decode, "\\g\\h\\i");
         assert_eq!(result, "ghi");
         assert!(changed);
     }
@@ -896,7 +872,7 @@ mod tests {
     #[test]
     fn test_css_decode_trailing_backslash() {
         // Trailing backslash should be removed
-        let (result, changed, _) = css_decode("Hello\\");
+        let (result, changed, _) = on_text(css_decode, "Hello\\");
         assert_eq!(result, "Hello");
         assert!(changed);
     }
@@ -905,21 +881,21 @@ mod tests {
 
     #[test]
     fn test_url_decode_uni_empty() {
-        let (result, changed, _) = url_decode_uni("");
+        let (result, changed, _) = on_text(url_decode_uni, "");
         assert_eq!(result, "");
         assert!(!changed);
     }
 
     #[test]
     fn test_url_decode_uni_no_encoding() {
-        let (result, changed, _) = url_decode_uni("TestCase");
+        let (result, changed, _) = on_text(url_decode_uni, "TestCase");
         assert_eq!(result, "TestCase");
         assert!(!changed);
     }
 
     #[test]
     fn test_url_decode_uni_with_null() {
-        let (result, changed, _) = url_decode_uni("Test\u{0000}Case");
+        let (result, changed, _) = on_text(url_decode_uni, "Test\u{0000}Case");
         assert_eq!(result, "Test\u{0000}Case");
         assert!(!changed);
     }
@@ -927,19 +903,19 @@ mod tests {
     #[test]
     fn test_url_decode_uni_standard_percent() {
         // %20 -> space
-        let (result, changed, _) = url_decode_uni("Hello%20World");
+        let (result, changed, _) = on_text(url_decode_uni, "Hello%20World");
         assert_eq!(result, "Hello World");
         assert!(changed);
 
         // %48%65%6c%6c%6f -> "Hello"
-        let (result, changed, _) = url_decode_uni("%48%65%6c%6c%6f");
+        let (result, changed, _) = on_text(url_decode_uni, "%48%65%6c%6c%6f");
         assert_eq!(result, "Hello");
         assert!(changed);
     }
 
     #[test]
     fn test_url_decode_uni_plus_to_space() {
-        let (result, changed, _) = url_decode_uni("Hello+World");
+        let (result, changed, _) = on_text(url_decode_uni, "Hello+World");
         assert_eq!(result, "Hello World");
         assert!(changed);
     }
@@ -947,7 +923,7 @@ mod tests {
     #[test]
     fn test_url_decode_uni_iis_unicode() {
         // %u0048%u0065%u006c%u006c%u006f -> "Hello"
-        let (result, changed, _) = url_decode_uni("%u0048%u0065%u006c%u006c%u006f");
+        let (result, changed, _) = on_text(url_decode_uni, "%u0048%u0065%u006c%u006c%u006f");
         assert_eq!(result, "Hello");
         assert!(changed);
     }
@@ -955,7 +931,7 @@ mod tests {
     #[test]
     fn test_url_decode_uni_full_width_ascii() {
         // %uff41 is full-width 'ａ' (U+FF41), should become 'a'
-        let (result, changed, _) = url_decode_uni("%uff41");
+        let (result, changed, _) = on_text(url_decode_uni, "%uff41");
         assert_eq!(result, "a");
         assert!(changed);
     }
@@ -963,12 +939,12 @@ mod tests {
     #[test]
     fn test_url_decode_uni_invalid_percent() {
         // %G is invalid (G is not hex), should keep %G
-        let (result, changed, _) = url_decode_uni("%GG");
+        let (result, changed, _) = on_text(url_decode_uni, "%GG");
         assert_eq!(result, "%GG");
         assert!(changed); // Changed because we found a %
 
         // %2 (incomplete) should keep %2
-        let (result, changed, _) = url_decode_uni("%2");
+        let (result, changed, _) = on_text(url_decode_uni, "%2");
         assert_eq!(result, "%2");
         assert!(changed);
     }
@@ -976,12 +952,12 @@ mod tests {
     #[test]
     fn test_url_decode_uni_invalid_unicode() {
         // %u12 (incomplete, only 2 hex digits) should keep %u12
-        let (result, changed, _) = url_decode_uni("%u12");
+        let (result, changed, _) = on_text(url_decode_uni, "%u12");
         assert_eq!(result, "%u12");
         assert!(changed);
 
         // %uGGGG (invalid hex) should keep %uGGGG
-        let (result, changed, _) = url_decode_uni("%uGGGG");
+        let (result, changed, _) = on_text(url_decode_uni, "%uGGGG");
         assert_eq!(result, "%uGGGG");
         assert!(changed);
     }
@@ -989,7 +965,7 @@ mod tests {
     #[test]
     fn test_url_decode_uni_mixed() {
         // Mix of standard %, +, and %u encoding
-        let (result, changed, _) = url_decode_uni("Hello+%20%u0057orld");
+        let (result, changed, _) = on_text(url_decode_uni, "Hello+%20%u0057orld");
         assert_eq!(result, "Hello  World");
         assert!(changed);
     }
@@ -998,21 +974,21 @@ mod tests {
 
     #[test]
     fn test_utf8_to_unicode_empty() {
-        let (result, changed, _) = utf8_to_unicode("");
+        let (result, changed, _) = on_text(utf8_to_unicode, "");
         assert_eq!(result, "");
         assert!(!changed);
     }
 
     #[test]
     fn test_utf8_to_unicode_ascii_only() {
-        let (result, changed, _) = utf8_to_unicode("TestCase");
+        let (result, changed, _) = on_text(utf8_to_unicode, "TestCase");
         assert_eq!(result, "TestCase");
         assert!(!changed);
     }
 
     #[test]
     fn test_utf8_to_unicode_with_null() {
-        let (result, changed, _) = utf8_to_unicode("Test\u{0000}Case");
+        let (result, changed, _) = on_text(utf8_to_unicode, "Test\u{0000}Case");
         assert_eq!(result, "Test\u{0000}Case");
         assert!(!changed);
     }
@@ -1020,12 +996,12 @@ mod tests {
     #[test]
     fn test_utf8_to_unicode_latin_chars() {
         // café -> caf%u00e9
-        let (result, changed, _) = utf8_to_unicode("café");
+        let (result, changed, _) = on_text(utf8_to_unicode, "café");
         assert_eq!(result, "caf%u00e9");
         assert!(changed);
 
         // naïve -> na%u00efve
-        let (result, changed, _) = utf8_to_unicode("naïve");
+        let (result, changed, _) = on_text(utf8_to_unicode, "naïve");
         assert_eq!(result, "na%u00efve");
         assert!(changed);
     }
@@ -1033,7 +1009,7 @@ mod tests {
     #[test]
     fn test_utf8_to_unicode_chinese() {
         // 中文 (Chinese characters)
-        let (result, changed, _) = utf8_to_unicode("中文");
+        let (result, changed, _) = on_text(utf8_to_unicode, "中文");
         assert_eq!(result, "%u4e2d%u6587");
         assert!(changed);
     }
@@ -1041,8 +1017,18 @@ mod tests {
     #[test]
     fn test_utf8_to_unicode_mixed() {
         // Hello世界 -> Hello%u4e16%u754c
-        let (result, changed, _) = utf8_to_unicode("Hello世界");
+        let (result, changed, _) = on_text(utf8_to_unicode, "Hello世界");
         assert_eq!(result, "Hello%u4e16%u754c");
         assert!(changed);
+    }
+
+    #[test]
+    fn test_bytes_that_are_not_utf8() {
+        assert_eq!(escape_seq_decode(b"\\377\xfe").0, b"\xff\xfe");
+        assert_eq!(js_decode(b"\\x80\\200").0, b"\x80\x80");
+        assert_eq!(css_decode(b"\\ff\xfe").0, b"\xff\xfe");
+        assert_eq!(url_decode_uni(b"%uff80%ff").0, b"\x80\xff");
+        // As in Go, a byte that isn't part of a character is U+FFFD
+        assert_eq!(utf8_to_unicode(b"a\xff").0, b"a%ufffd");
     }
 }

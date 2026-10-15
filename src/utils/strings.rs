@@ -56,9 +56,8 @@ pub fn hex_value(digit: u8) -> Option<u8> {
     char::from(digit).to_digit(16).map(|value| value as u8)
 }
 
-/// Converts a two-character hex string to its byte value.
+/// The byte two hex digits encode, e.g. `b"41"` for `A`.
 ///
-/// Assumes the input is exactly 2 characters and both are valid hex digits.
 /// Check digits with [`u8::is_ascii_hexdigit`] first.
 ///
 /// # Examples
@@ -66,20 +65,21 @@ pub fn hex_value(digit: u8) -> Option<u8> {
 /// ```
 /// use coraza::utils::strings::x2c;
 ///
-/// assert_eq!(x2c("41"), b'A');  // 0x41 = 65 = 'A'
-/// assert_eq!(x2c("0a"), 10);
-/// assert_eq!(x2c("FF"), 255);
-/// assert_eq!(x2c("00"), 0);
+/// assert_eq!(x2c(b"41"), b'A');  // 0x41 = 65 = 'A'
+/// assert_eq!(x2c(b"0a"), 10);
+/// assert_eq!(x2c(b"FF"), 255);
+/// assert_eq!(x2c(b"00"), 0);
 /// ```
 ///
 /// # Panics
 ///
-/// Panics if the string is not exactly 2 bytes or contains invalid hex characters.
-pub fn x2c(what: &str) -> u8 {
-    assert_eq!(what.len(), 2, "x2c requires exactly 2 hex characters");
-
-    // Use stdlib's from_str_radix for cleaner, safer code
-    u8::from_str_radix(what, 16).expect("x2c requires valid hex characters")
+/// Panics if `what` isn't exactly two hex digits.
+pub fn x2c(what: &[u8]) -> u8 {
+    let &[high, low] = what else {
+        panic!("x2c requires exactly 2 hex digits");
+    };
+    let digit = |digit| hex_value(digit).expect("x2c requires valid hex digits");
+    (digit(high) << 4) | digit(low)
 }
 
 /// Removes surrounding quotes from a string if present.
@@ -215,30 +215,30 @@ mod tests {
 
     #[test]
     fn test_x2c() {
-        assert_eq!(x2c("00"), 0);
-        assert_eq!(x2c("09"), 9);
-        assert_eq!(x2c("0a"), 10);
-        assert_eq!(x2c("0A"), 10);
-        assert_eq!(x2c("0f"), 15);
-        assert_eq!(x2c("0F"), 15);
-        assert_eq!(x2c("10"), 16);
-        assert_eq!(x2c("20"), 32);
-        assert_eq!(x2c("41"), b'A'); // 0x41 = 65 = 'A'
-        assert_eq!(x2c("ff"), 255);
-        assert_eq!(x2c("FF"), 255);
-        assert_eq!(x2c("Ff"), 255);
+        assert_eq!(x2c(b"00"), 0);
+        assert_eq!(x2c(b"09"), 9);
+        assert_eq!(x2c(b"0a"), 10);
+        assert_eq!(x2c(b"0A"), 10);
+        assert_eq!(x2c(b"0f"), 15);
+        assert_eq!(x2c(b"0F"), 15);
+        assert_eq!(x2c(b"10"), 16);
+        assert_eq!(x2c(b"20"), 32);
+        assert_eq!(x2c(b"41"), b'A'); // 0x41 = 65 = 'A'
+        assert_eq!(x2c(b"ff"), 255);
+        assert_eq!(x2c(b"FF"), 255);
+        assert_eq!(x2c(b"Ff"), 255);
     }
 
     #[test]
     #[should_panic]
     fn test_x2c_invalid_length() {
-        x2c("1"); // Too short
+        x2c(b"1"); // Too short
     }
 
     #[test]
     #[should_panic]
     fn test_x2c_invalid_char() {
-        x2c("GG"); // Invalid hex
+        x2c(b"GG"); // Invalid hex
     }
 
     #[test]

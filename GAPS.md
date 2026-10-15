@@ -254,10 +254,27 @@ None of these is used by CRS v4.30.0.
   `bar`).
   - Done: they now replace invalid sequences with U+FFFD (`transformations::text_from_bytes`), and the unsafe
     `utils::strings::wrap_unsafe` is removed.
-- [ ] **Values are text, so bytes are lost.** Go Coraza's values are bytes. Here, what a transformation produces
+- [x] **Values are text, so bytes are lost.** Go Coraza's values are bytes. Here, what a transformation produces
   that isn't UTF-8 becomes U+FFFD, so `t:sha1,t:hexEncode` (CRS 901320 and 901410) and `t:md5,t:hexEncode` don't
   give the digest in hex, and `%ff` doesn't stay one byte. A fix would carry bytes through a rule's transformations
   and turn them into text only for the operator.
+  - Done: transformations take and return bytes (`Transformation` is `fn(&[u8]) -> TransformationResult`), and a
+    rule's chain turns its result into text once, for the operator. Those that read characters (`t:lowercase`,
+    `t:uppercase`, `t:removeWhitespace`, `t:utf8toUnicode`) replace each byte that isn't part of one with U+FFFD,
+    as Go does. `t:normalisePath` now cleans paths as Go's `path.Clean` does, on `/` whatever the platform, rather
+    than with `path-clean`, which follows the platform's separators.
+  - Go's transformation tests (`internal/transformations/testdata`, 348 cases for the transformations both have):
+    333 passed before, 342 after. The 6 left are the next item.
+  - Left: collection values are still text, so `?a=%ff` puts U+FFFD in `ARGS:a` where Go keeps the byte; operators
+    see the U+FFFD too.
+- [ ] **Transformations behind Go's current ones.** Found while porting the above. Go Coraza has since changed:
+  - `t:urlDecodeUni`: `%uHHHH` outside full-width ASCII is mapped to its best-fit ASCII (`%u201c` is `"`, `%u00e9`
+    is `e`, `unicode_bestfit.go`); ours keeps the low byte, as ModSecurity does. 4 of Go's tests.
+  - `t:cssDecode`: an escape decodes to its whole code point in UTF-8 (`\123` is `ģ`); ours keeps the low byte, as
+    ModSecurity does. 2 of Go's tests.
+  - `t:normalisePathWin`: it strips an NTFS stream suffix (`file.txt::$DATA`) and trailing dots and spaces from each
+    element, as Windows does when it opens the file.
+  - `t:cmdLine`: it reports a change only when a byte changed (a lone space doesn't).
 - [x] **`@rx` and `@pm` compiled for every value.** Found while running the FTW tests, which took about half a
   second per request. Both used the regular expression or matcher built at load time only when called without a
   transaction, which rules never do.

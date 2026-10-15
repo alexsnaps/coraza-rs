@@ -7,6 +7,11 @@
 //! sequentially to input values before operator matching. Transformations can be
 //! chained together (e.g., `t:lowercase,urlDecode`) and are applied in order.
 //!
+//! Values pass from one transformation to the next as bytes, so that one can produce
+//! bytes that aren't UTF-8 (`t:sha1`, `t:urlDecode` of `%ff`) for the next
+//! (`t:hexEncode`). The result becomes text for the operator: each invalid sequence
+//! is then replaced by U+FFFD.
+//!
 //! # Modes
 //!
 //! - **Simple Mode**: Apply transformations in sequence, returning the final value
@@ -26,7 +31,7 @@
 //! assert_eq!(result, "hello world");
 //! ```
 
-use crate::transformations::{Transformation, TransformationError};
+use crate::transformations::{Transformation, TransformationError, text_from_bytes};
 
 /// A transformation in the chain with its name for identification.
 #[derive(Debug, Clone)]
@@ -184,7 +189,7 @@ impl TransformationChain {
             return (input.to_string(), Vec::new());
         }
 
-        let mut value = input.to_string();
+        let mut value = input.as_bytes().to_vec();
         let mut errors = Vec::new();
 
         for t in &self.transformations {
@@ -196,7 +201,7 @@ impl TransformationChain {
             value = transformed;
         }
 
-        (value, errors)
+        (text_from_bytes(value), errors)
     }
 
     /// Apply all transformations in multi-match mode.
@@ -237,7 +242,7 @@ impl TransformationChain {
             return (values, errors);
         }
 
-        let mut value = input.to_string();
+        let mut value = input.as_bytes().to_vec();
 
         for t in &self.transformations {
             let (transformed, changed, err) = (t.function)(&value);
@@ -248,7 +253,7 @@ impl TransformationChain {
 
             // Only collect values that changed
             if changed {
-                values.push(transformed.clone());
+                values.push(text_from_bytes(transformed.clone()));
                 value = transformed;
             }
         }
@@ -266,31 +271,25 @@ impl Default for TransformationChain {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transformations::{lowercase, uppercase};
+    use crate::transformations::{
+        TransformationResult, hex_encode, lowercase, sha1_hash, uppercase, url_decode,
+    };
 
     // Helper transformations for testing
-    fn append_a(input: &str) -> (String, bool, Option<TransformationError>) {
-        (format!("{input}A"), true, None)
+    fn append_a(input: &[u8]) -> TransformationResult {
+        ([input, b"A"].concat(), true, None)
     }
 
-    fn append_b(input: &str) -> (String, bool, Option<TransformationError>) {
-        (format!("{input}B"), true, None)
+    fn append_b(input: &[u8]) -> TransformationResult {
+        ([input, b"B"].concat(), true, None)
     }
 
-    fn error_a(_input: &str) -> (String, bool, Option<TransformationError>) {
-        (
-            String::new(),
-            false,
-            Some(TransformationError::new("errorA")),
-        )
+    fn error_a(_input: &[u8]) -> TransformationResult {
+        (Vec::new(), false, Some(TransformationError::new("errorA")))
     }
 
-    fn error_b(_input: &str) -> (String, bool, Option<TransformationError>) {
-        (
-            String::new(),
-            false,
-            Some(TransformationError::new("errorB")),
-        )
+    fn error_b(_input: &[u8]) -> TransformationResult {
+        (Vec::new(), false, Some(TransformationError::new("errorB")))
     }
 
     // Ported from: coraza/internal/corazawaf/rule_test.go::TestAddTransformation
@@ -403,8 +402,8 @@ mod tests {
     #[test]
     fn test_multimatch_no_change() {
         // If a transformation doesn't change the value, it shouldn't be included
-        fn no_change(input: &str) -> (String, bool, Option<TransformationError>) {
-            (input.to_string(), false, None)
+        fn no_change(input: &[u8]) -> TransformationResult {
+            (input.to_vec(), false, None)
         }
 
         let mut chain = TransformationChain::new();
@@ -454,5 +453,25 @@ mod tests {
         let chain = TransformationChain::new();
         let names = chain.names();
         assert!(names.is_empty());
+    }
+
+    #[test]
+    fn test_bytes_pass_between_transformations() {
+        let mut chain = TransformationChain::new();
+        chain.add("sha1", sha1_hash).unwrap();
+        chain.add("hexEncode", hex_encode).unwrap();
+        let (result, errors) = chain.apply("hello");
+        assert_eq!(result, "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
+        assert!(errors.is_empty());
+
+        let mut chain = TransformationChain::new();
+        chain.add("urlDecode", url_decode).unwrap();
+        chain.add("hexEncode", hex_encode).unwrap();
+        assert_eq!(chain.apply("%ff").0, "ff");
+        // The operator gets text
+        assert_eq!(
+            chain.apply_multimatch("%ff").0,
+            vec!["%ff", "\u{FFFD}", "ff"]
+        );
     }
 }
