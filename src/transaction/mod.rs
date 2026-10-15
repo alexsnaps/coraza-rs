@@ -17,10 +17,12 @@ use crate::body_processors::{BodyProcessorKind, BodyProcessorOptions};
 use crate::collection::{Map, MatchData, Single};
 use crate::config::WafConfig;
 use crate::rules::RuleGroup;
+use crate::transformations::text_from_bytes;
 use crate::types::{
     AuditEngineStatus, AuditLogPart, AuditLogParts, BodyLimitAction, RuleEngineStatus, RulePhase,
     RuleSeverity,
 };
+use crate::utils::strings::x2c;
 use crate::utils::time::UtcTime;
 
 /// A rule, with its chain, that matched in a transaction, as recorded for logging.
@@ -755,46 +757,67 @@ impl TimeVariables {
     }
 }
 
-/// Whether `uri` is a request URI as Go's `url.ParseRequestURI` accepts one: `*`, an
-/// absolute path or an absolute URL, with no control character and only valid
-/// `%`-escapes in its path. The query string is not checked.
-fn is_request_uri(uri: &str) -> bool {
+/// The path, still `%`-escaped, of `uri` if it is a request URI as Go's
+/// `url.ParseRequestURI` accepts one: `*`, an absolute path or an absolute URL, with no
+/// control character and only valid `%`-escapes in its path; `None` otherwise. The
+/// query string is not checked.
+fn request_uri_path(uri: &str) -> Option<&str> {
     if uri.bytes().any(|b| b.is_ascii_control()) {
-        return false;
+        return None;
     }
     if uri == "*" {
-        return true;
+        return Some(uri);
     }
     let before_query = uri.split_once('?').map_or(uri, |(path, _)| path);
     let path = if before_query.starts_with('/') {
         before_query
     } else {
-        let Some((scheme, rest)) = before_query.split_once(':') else {
-            return false;
-        };
+        let (scheme, rest) = before_query.split_once(':')?;
         let is_scheme = scheme.starts_with(|c: char| c.is_ascii_alphabetic())
             && scheme
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
         if !is_scheme {
-            return false;
+            return None;
         }
-        // The path follows the authority (`//host`), if any
+        // The path follows the authority (`//host`), if any; a URL without either, such
+        // as `mailto:x`, is opaque and has no path
         match rest.strip_prefix("//") {
             Some(authority_and_path) => authority_and_path
                 .find('/')
                 .map_or("", |start| &authority_and_path[start..]),
-            None => rest,
+            None => "",
         }
     };
 
     let bytes = path.as_bytes();
-    bytes.iter().enumerate().all(|(i, &b)| {
-        b != b'%'
-            || bytes
-                .get(i + 1..i + 3)
-                .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
-    })
+    bytes
+        .iter()
+        .enumerate()
+        .all(|(i, &b)| {
+            b != b'%'
+                || bytes
+                    .get(i + 1..i + 3)
+                    .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
+        })
+        .then_some(path)
+}
+
+/// `path` with its `%`-escapes, all valid, decoded; `+` stays, as in a URL's path.
+fn decode_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            decoded.push(x2c(&bytes[i + 1..i + 3]));
+            i += 3;
+        } else {
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+    }
+    text_from_bytes(decoded)
 }
 
 impl Transaction {
@@ -1577,19 +1600,22 @@ impl Transaction {
 
         // The path and query string, as in ModSecurity: the request URI without fragment
         self.request_uri.set(uri_without_anchor);
-        if !is_request_uri(uri_without_anchor) {
-            self.uri_parse_error.set("1");
-        }
 
-        // Extract basename (last component of path)
-        if let Some(last_slash) = path.rfind(['/', '\\']) {
-            let basename = &path[last_slash + 1..];
-            self.request_basename.set(basename);
-        } else {
-            self.request_basename.set(path);
-        }
-
-        self.request_filename.set(path);
+        // As in Go Coraza, the URL's path, decoded, or the raw path if it isn't one
+        let filename = match request_uri_path(uri_without_anchor) {
+            Some(path) => decode_path(path),
+            None => {
+                self.uri_parse_error.set("1");
+                path.to_string()
+            }
+        };
+        // After the last separator, unless the path ends with it, as in Go Coraza
+        let basename = match filename.rfind(['/', '\\']) {
+            Some(last_slash) if last_slash + 1 < filename.len() => &filename[last_slash + 1..],
+            _ => &filename,
+        };
+        self.request_basename.set(basename);
+        self.request_filename.set(&filename);
         self.query_string.set(query);
 
         // Parse query string into ARGS_GET
@@ -2503,6 +2529,28 @@ mod tests {
         // Check ARGS_GET populated
         assert_eq!(tx.args_get().get("q"), vec!["test"]);
         assert_eq!(tx.args_get().get("page"), vec!["2"]);
+    }
+
+    #[test]
+    fn test_process_uri_decodes_the_path() {
+        // As Go Coraza: the path of the URL `url.ParseRequestURI` reads, %-decoded ('+'
+        // stays), or the raw path when the URI doesn't parse
+        for (uri, filename, basename) in [
+            (
+                "/path/with/%3Bid%20-a+b?x=%3B",
+                "/path/with/;id -a+b",
+                ";id -a+b",
+            ),
+            ("http://example.com/a%2Fb/c?x", "/a/b/c", "c"),
+            ("http://example.com", "", ""),
+            ("/bad/%zz", "/bad/%zz", "%zz"),
+            ("/dir/", "/dir/", "/dir/"),
+        ] {
+            let mut tx = Transaction::new("tx");
+            tx.process_uri(uri, "GET", "HTTP/1.1");
+            assert_eq!(tx.request_filename.get(), filename, "{uri}");
+            assert_eq!(tx.request_basename.get(), basename, "{uri}");
+        }
     }
 
     #[test]

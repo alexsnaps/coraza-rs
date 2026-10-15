@@ -304,6 +304,12 @@ None of these is used by CRS v4.30.0.
   Go Coraza, like ModSecurity, sets `REQUEST_BODY` and `REQUEST_BODY_LENGTH` only in the URLENCODED and RAW body
   processors, so not for XML, JSON or multipart bodies; CRS forces URLENCODED (901340) for bodies without one.
   - Done: as in Go; `REQUEST_BODY_LENGTH` is `0` until then.
+- [x] **`REQUEST_FILENAME` and `REQUEST_BASENAME` were not decoded.** Found by the FTW tests: CRS's "RCE in last
+  path segment" tests (one in most of the 932xxx rules, about 30) send `/path/with/%3Bid`, which Go Coraza reads
+  as `/path/with/;id`.
+  - Done: as in Go, they hold the path of the URL `url.ParseRequestURI` reads, `%`-decoded (`+` stays), or the raw
+    path when the URI doesn't parse (`URI_PARSE_ERROR`); an absolute URL's path is its own (`/a` for
+    `http://host/a`), and a path ending with `/` is its own basename.
 - [ ] **Run CRS v4.30.0's FTW tests and record the pass rate.** Not run yet; `ftw-runner/` drives
   `examples/ftw_server_async.rs`.
   - Go Coraza's CI runs all 5,260 tests (`testing/coreruleset`). It ignores 7 (`.ftw.yml`) and changes the expected
