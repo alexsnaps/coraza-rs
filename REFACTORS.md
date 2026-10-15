@@ -116,11 +116,14 @@ probed bugs.
 
 ## 6. Smaller duplicates
 
-- [ ] **Directive boilerplate and errors.** About 25 directive functions repeat the "requires an argument" check and
+- [x] **Directive boilerplate and errors.** About 25 directive functions repeat the "requires an argument" check and
   `ParseError` construction; `evaluate_line` then drops that location (`src/seclang/parser.rs:475`). Five
   `{ message: String }` error types in `seclang` (`ParseError`, `CompileError`, `ActionParseError`,
   `OperatorParseError`, `VariableParseError`). Directive functions return a plain message; the dispatcher attaches
   location once; one `seclang` error type.
+  - Done: directives return a message and the parser checks for a missing argument and adds the location once.
+    The sub-parser errors fold into `CompileError`; two types remain, unlocated (`CompileError`) and located
+    (`ParseError`), so no error carries a placeholder line or file.
 - [ ] **One URL decoder and one query parser.** `Transaction::url_decode` (`src/transaction/mod.rs:866`) decodes
   `%C3%A9` to `"Ã©"`; `transformations::url_decode` gives `"é"` **(probe)**. `body_processors::urlencoded::parse_query`
   collects into a `HashMap`, losing argument order.

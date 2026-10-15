@@ -5,45 +5,12 @@
 //!
 //! Compiles SecRule, SecAction, and SecMarker directives into executable Rule structures.
 
-use crate::actions::{Action, ActionError};
+use crate::actions::Action;
 use crate::rules::Rule;
+use crate::seclang::CompileError;
 use crate::seclang::action_parser::ParsedAction;
 use crate::seclang::{parse_actions, parse_operator, parse_variables};
 use crate::utils::strings::maybe_remove_quotes;
-
-/// Compilation error for SecLang rules
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompileError {
-    pub message: String,
-}
-
-impl std::fmt::Display for CompileError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl std::error::Error for CompileError {}
-
-impl CompileError {
-    fn new(message: String) -> Self {
-        Self { message }
-    }
-}
-
-impl From<String> for CompileError {
-    fn from(message: String) -> Self {
-        Self { message }
-    }
-}
-
-impl From<ActionError> for CompileError {
-    fn from(err: ActionError) -> Self {
-        Self {
-            message: format!("action error: {}", err),
-        }
-    }
-}
 
 type CompileResult<T> = Result<T, CompileError>;
 

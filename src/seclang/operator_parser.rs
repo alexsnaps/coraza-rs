@@ -13,27 +13,9 @@
 use crate::operators::OperatorEnum;
 use crate::rules::RuleOperator;
 
-/// Parse error for operator syntax
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OperatorParseError {
-    pub message: String,
-}
+use crate::seclang::CompileError;
 
-impl std::fmt::Display for OperatorParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl std::error::Error for OperatorParseError {}
-
-impl OperatorParseError {
-    fn new(message: String) -> Self {
-        Self { message }
-    }
-}
-
-type ParseResult<T> = Result<T, OperatorParseError>;
+type ParseResult<T> = Result<T, CompileError>;
 
 /// Parse operator from SecRule syntax
 ///
@@ -84,9 +66,8 @@ pub fn parse_operator(input: &str) -> ParseResult<RuleOperator> {
     // Extract operator name without @ or !@ prefix
     let op_name = extract_operator_name(op_raw);
 
-    let operator = OperatorEnum::new(op_name, op_data).map_err(|e| {
-        OperatorParseError::new(format!("failed to create @{} operator: {}", op_name, e))
-    })?;
+    let operator = OperatorEnum::new(op_name, op_data)
+        .map_err(|e| CompileError::new(format!("failed to create @{} operator: {}", op_name, e)))?;
 
     Ok(RuleOperator::new(operator, op_raw, op_data))
 }

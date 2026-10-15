@@ -10,27 +10,9 @@
 //! - `msg:'Attack detected'` - Quoted value
 //! - `msg:'O\'Reilly'` - Escaped quotes
 
-/// Parse error for action syntax
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ActionParseError {
-    pub message: String,
-}
+use crate::seclang::CompileError;
 
-impl std::fmt::Display for ActionParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl std::error::Error for ActionParseError {}
-
-impl ActionParseError {
-    fn new(message: String) -> Self {
-        Self { message }
-    }
-}
-
-type ParseResult<T> = Result<T, ActionParseError>;
+type ParseResult<T> = Result<T, CompileError>;
 
 /// One action of a rule's action list, as written; see [`crate::actions::Action::parse`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,7 +138,7 @@ pub fn parse_actions(input: &str) -> ParseResult<Vec<ParsedAction>> {
 
     // Check for unclosed quotes
     if in_quotes {
-        return Err(ActionParseError::new(format!(
+        return Err(CompileError::new(format!(
             "unclosed quotes in action line: {}",
             input
         )));
