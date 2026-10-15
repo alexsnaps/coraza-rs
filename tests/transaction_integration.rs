@@ -407,6 +407,8 @@ fn test_json_api_request_with_nested_data() {
     tx.process_uri("/api/v1/users", "POST", "HTTP/2");
     tx.add_request_header("Content-Type", "application/json");
     tx.add_request_header("Authorization", "Bearer token123");
+    // As in Go, JSON bodies are parsed once the JSON processor is selected
+    tx.set_request_body_processor(BodyProcessorKind::Json);
 
     let json_body = br#"{
         "user": {

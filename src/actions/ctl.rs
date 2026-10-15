@@ -8,6 +8,7 @@
 //! the global configuration or other parallel transactions.
 //!
 use crate::actions::{ActionError, RuleMetadata};
+use crate::body_processors::BodyProcessorKind;
 use crate::transaction::Transaction;
 use crate::types::{AuditEngineStatus, ParseValueError, RuleEngineStatus, RulePhase, RuleVariable};
 use std::ops::RangeInclusive;
@@ -23,6 +24,8 @@ enum CtlCommand {
     ResponseBodyAccess(bool),
     ResponseBodyLimit(i64),
     ForceResponseBodyVariable(bool),
+    RequestBodyProcessor(BodyProcessorKind),
+    ResponseBodyProcessor(BodyProcessorKind),
     /// Inclusive range of rule IDs; a single ID is a one-element range
     RuleRemoveById(RangeInclusive<i32>),
     RuleRemoveByTag(String),
@@ -31,8 +34,7 @@ enum CtlCommand {
     RuleRemoveTargetByTag(String, RuleTarget),
     RuleRemoveTargetByMsg(String, RuleTarget),
     /// Accepted (and validated where possible) but not acted on yet: `auditEngine`,
-    /// `auditLogParts`, `debugLogLevel`, `requestBodyProcessor`, `responseBodyProcessor`,
-    /// `hashEngine`, `hashEnforcement`
+    /// `auditLogParts`, `debugLogLevel`, `hashEngine`, `hashEnforcement`
     NotImplemented,
 }
 
@@ -63,6 +65,8 @@ impl CtlCommand {
             "responseBodyAccess" => Self::ResponseBodyAccess(parse_on_off(value)?),
             "responseBodyLimit" => Self::ResponseBodyLimit(parse_limit(value)?),
             "forceResponseBodyVariable" => Self::ForceResponseBodyVariable(parse_on_off(value)?),
+            "requestBodyProcessor" => Self::RequestBodyProcessor(parse_processor(value)?),
+            "responseBodyProcessor" => Self::ResponseBodyProcessor(parse_processor(value)?),
             "ruleRemoveById" => Self::RuleRemoveById(parse_id_range(value)?),
             "ruleRemoveByTag" => Self::RuleRemoveByTag(value.to_string()),
             "ruleRemoveByMsg" => Self::RuleRemoveByMsg(value.to_string()),
@@ -89,11 +93,7 @@ impl CtlCommand {
                 }
                 Self::NotImplemented
             }
-            "auditLogParts"
-            | "requestBodyProcessor"
-            | "responseBodyProcessor"
-            | "hashEngine"
-            | "hashEnforcement" => Self::NotImplemented,
+            "auditLogParts" | "hashEngine" | "hashEnforcement" => Self::NotImplemented,
             _ => return Err(invalid(format!("unknown ctl command '{}'", name))),
         };
         Ok(command)
@@ -102,6 +102,12 @@ impl CtlCommand {
 
 fn invalid(message: String) -> ActionError {
     ActionError::InvalidArguments(message)
+}
+
+fn parse_processor(value: &str) -> Result<BodyProcessorKind, ActionError> {
+    value
+        .parse()
+        .map_err(|e: ParseValueError| invalid(e.to_string()))
 }
 
 fn parse_on_off(value: &str) -> Result<bool, ActionError> {
@@ -248,6 +254,16 @@ impl CtlAction {
             CtlCommand::ForceResponseBodyVariable(enabled) => {
                 tx.set_force_response_body_variable(*enabled);
             }
+            CtlCommand::RequestBodyProcessor(processor) => {
+                if before_phase(tx, RulePhase::RequestBody) {
+                    tx.set_request_body_processor(*processor);
+                }
+            }
+            CtlCommand::ResponseBodyProcessor(processor) => {
+                if before_phase(tx, RulePhase::ResponseBody) {
+                    tx.set_response_body_processor(*processor);
+                }
+            }
             CtlCommand::RuleRemoveById(ids) => {
                 for id in ids.clone() {
                     tx.remove_rule_by_id(id);
@@ -378,11 +394,37 @@ mod tests {
         for data in [
             "auditEngine=RelevantOnly",
             "auditLogParts=ABZ",
-            "requestBodyProcessor=XML",
             "debugLogLevel=3",
         ] {
             assert_eq!(parse(data), CtlCommand::NotImplemented, "{}", data);
         }
+    }
+
+    #[test]
+    fn test_ctl_body_processors() {
+        assert_eq!(
+            parse("requestBodyProcessor=xml"),
+            CtlCommand::RequestBodyProcessor(BodyProcessorKind::Xml)
+        );
+
+        let mut tx = Transaction::new("ctl-processor");
+        CtlAction::parse("requestBodyProcessor=JSON")
+            .unwrap()
+            .evaluate(&mut tx);
+        assert_eq!(
+            tx.get_variable(RuleVariable::ReqbodyProcessor, None).as_deref(),
+            Some("JSON")
+        );
+
+        // Too late once the request body phase started
+        tx.process_request_body(b"").unwrap();
+        CtlAction::parse("requestBodyProcessor=XML")
+            .unwrap()
+            .evaluate(&mut tx);
+        assert_eq!(
+            tx.get_variable(RuleVariable::ReqbodyProcessor, None).as_deref(),
+            Some("JSON")
+        );
     }
 
     #[test]

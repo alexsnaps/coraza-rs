@@ -11,6 +11,10 @@ fn waf(rules: &str) -> Waf {
     parser.into_waf().expect("config should be valid")
 }
 
+/// Coraza's rule 200001 (`coraza.conf-recommended`): as in Go, JSON bodies are parsed only
+/// once a rule selects the JSON body processor.
+const JSON_PROCESSOR: &str = r#"SecRule REQUEST_HEADERS:Content-Type "^application/json" "id:200001,phase:1,t:none,t:lowercase,pass,nolog,ctl:requestBodyProcessor=JSON""#;
+
 fn request_with_arg(waf: &Waf, key: &str, value: &str) -> Transaction {
     let mut tx = waf.new_transaction();
     tx.args_mut().add(key, value);
@@ -205,9 +209,13 @@ fn ctl_rule_engine_applies_to_later_phases() {
 
 #[test]
 fn malformed_bodies_are_reported_to_rules() {
-    let waf = waf(r#"
-        SecRule REQBODY_ERROR "@eq 1" "id:1,phase:2,deny,status:400,logdata:'%{REQBODY_ERROR_MSG}'"
-    "#);
+    let waf = waf(&format!(
+        r#"
+        SecRequestBodyAccess On
+        {JSON_PROCESSOR}
+        SecRule REQBODY_ERROR "@eq 1" "id:1,phase:2,deny,status:400,logdata:'%{{REQBODY_ERROR_MSG}}'"
+        "#
+    ));
 
     let mut tx = waf.new_transaction();
     tx.add_request_header("Content-Type", "application/json");
@@ -217,13 +225,24 @@ fn malformed_bodies_are_reported_to_rules() {
     assert_eq!(interruption.map(|i| i.rule_id), Some(1));
     assert!(
         tx.get_variable(coraza::RuleVariable::ReqbodyErrorMsg, None)
-            .is_some_and(|msg| !msg.is_empty())
+            .is_some_and(|msg| msg.starts_with("JSON: "))
+    );
+    assert_eq!(
+        tx.get_variable(coraza::RuleVariable::ReqbodyProcessorError, None)
+            .as_deref(),
+        Some("1")
     );
 }
 
 #[test]
 fn well_formed_bodies_raise_no_body_error() {
-    let waf = waf(r#"SecRule REQBODY_ERROR "@eq 1" "id:1,phase:2,deny,status:400""#);
+    let waf = waf(&format!(
+        r#"
+        SecRequestBodyAccess On
+        {JSON_PROCESSOR}
+        SecRule REQBODY_ERROR "@eq 1" "id:1,phase:2,deny,status:400"
+        "#
+    ));
 
     let mut tx = waf.new_transaction();
     tx.add_request_header("Content-Type", "application/json");
@@ -476,10 +495,13 @@ fn arguments_over_the_limit_are_dropped_and_flagged() {
 
 #[test]
 fn body_arguments_of_every_processor_are_in_args() {
-    let waf = waf(r#"
+    let waf = waf(&format!(
+        r#"
         SecRequestBodyAccess On
+        {JSON_PROCESSOR}
         SecRule ARGS "@streq evil" "id:1,phase:2,deny,status:403"
-    "#);
+        "#
+    ));
 
     let multipart = "--b\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nevil\r\n--b--\r\n";
     for (content_type, body) in [
@@ -600,11 +622,14 @@ fn invalid_audit_log_and_body_directives_are_parse_errors() {
 
 #[test]
 fn json_bodies_deeper_than_the_limit_are_body_errors() {
-    let waf = waf(r#"
+    let waf = waf(&format!(
+        r#"
         SecRequestBodyAccess On
         SecRequestBodyJsonDepthLimit 2
+        {JSON_PROCESSOR}
         SecRule REQBODY_ERROR "@eq 1" "id:1,phase:2,deny,status:400"
-    "#);
+        "#
+    ));
 
     for (body, too_deep) in [
         (r#"{"a": {"b": 1}}"#, false),
@@ -635,5 +660,87 @@ fn only_response_bodies_of_listed_types_are_inspected() {
         tx.process_response_headers(200, "HTTP/1.1");
         let interruption = tx.process_response_body(b"a secret");
         assert_eq!(interruption.is_some(), inspected, "{content_type}");
+    }
+}
+
+#[test]
+fn the_request_body_processor_is_chosen_as_in_go() {
+    use coraza::RuleVariable::ReqbodyProcessor;
+
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule REQUEST_HEADERS:Content-Type "[+]json" "id:100,phase:1,pass,nolog,ctl:requestBodyProcessor=JSON"
+        SecRule ARGS "@streq evil" "id:1,phase:2,deny,status:403"
+    "#);
+
+    // JSON is parsed only when a rule selects it; urlencoded and multipart by Content-Type
+    for (content_type, body, processor, parsed) in [
+        ("application/vnd.api+json", r#"{"a": "evil"}"#, "JSON", true),
+        ("application/json", r#"{"a": "evil"}"#, "", false),
+        (
+            "application/x-www-form-urlencoded",
+            "a=evil",
+            "URLENCODED",
+            true,
+        ),
+    ] {
+        let mut tx = waf.new_transaction();
+        tx.add_request_header("Content-Type", content_type);
+        tx.process_request_headers();
+        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        assert_eq!(interruption.is_some(), parsed, "{content_type}");
+        assert_eq!(
+            tx.get_variable(ReqbodyProcessor, None).as_deref(),
+            Some(processor),
+            "{content_type}"
+        );
+    }
+}
+
+#[test]
+fn forcing_the_request_body_variable_defaults_to_urlencoded() {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecAction "id:100,phase:1,pass,nolog,ctl:forceRequestBodyVariable=On"
+        SecRule ARGS_POST "@streq evil" "id:1,phase:2,deny,status:403"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "text/plain");
+    tx.process_request_headers();
+
+    assert_eq!(
+        tx.process_request_body(b"a=evil")
+            .unwrap()
+            .map(|i| i.rule_id),
+        Some(1)
+    );
+}
+
+#[test]
+fn the_response_body_processor_is_chosen_by_ctl() {
+    let waf = waf(r#"
+        SecResponseBodyAccess On
+        SecResponseBodyMimeType application/json
+        SecRule RESPONSE_HEADERS:Content-Type "@beginsWith application/json" "id:100,phase:3,pass,nolog,ctl:responseBodyProcessor=JSON"
+        SecRule RESPONSE_ARGS "@streq leak" "id:1,phase:4,deny,status:403"
+        SecRule RESBODY_ERROR "@eq 1" "id:2,phase:4,deny,status:500"
+    "#);
+
+    for (body, rule_id) in [(r#"{"a": "leak"}"#, Some(1)), ("{not json", Some(2))] {
+        let mut tx = waf.new_transaction();
+        tx.add_response_header("Content-Type", "application/json");
+        tx.process_response_headers(200, "HTTP/1.1");
+        let interruption = tx.process_response_body(body.as_bytes());
+        assert_eq!(interruption.map(|i| i.rule_id), rule_id, "{body}");
+    }
+}
+
+#[test]
+fn unknown_body_processors_are_parse_errors() {
+    for ctl in ["requestBodyProcessor=YAML", "responseBodyProcessor=CSV"] {
+        let mut parser = Parser::new();
+        let rule = format!(r#"SecAction "id:1,phase:1,pass,ctl:{ctl}""#);
+        assert!(parser.from_string(&rule).is_err(), "{ctl}");
     }
 }

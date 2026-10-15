@@ -122,6 +122,22 @@ macro_rules! variable_storage {
             RuleVariable::RequestBodyLength => Some(Single($($borrow)+ $tx.request_body_length)),
             RuleVariable::ReqbodyError => Some(Single($($borrow)+ $tx.reqbody_error)),
             RuleVariable::ReqbodyErrorMsg => Some(Single($($borrow)+ $tx.reqbody_error_msg)),
+            RuleVariable::ReqbodyProcessor => Some(Single($($borrow)+ $tx.reqbody_processor)),
+            RuleVariable::ReqbodyProcessorError => {
+                Some(Single($($borrow)+ $tx.reqbody_processor_error))
+            }
+            RuleVariable::ReqbodyProcessorErrorMsg => {
+                Some(Single($($borrow)+ $tx.reqbody_processor_error_msg))
+            }
+            RuleVariable::ResBodyProcessor => Some(Single($($borrow)+ $tx.res_body_processor)),
+            RuleVariable::ResBodyError => Some(Single($($borrow)+ $tx.res_body_error)),
+            RuleVariable::ResBodyErrorMsg => Some(Single($($borrow)+ $tx.res_body_error_msg)),
+            RuleVariable::ResBodyProcessorError => {
+                Some(Single($($borrow)+ $tx.res_body_processor_error))
+            }
+            RuleVariable::ResBodyProcessorErrorMsg => {
+                Some(Single($($borrow)+ $tx.res_body_processor_error_msg))
+            }
             RuleVariable::FilesCombinedSize => Some(Single($($borrow)+ $tx.files_combined_size)),
             RuleVariable::MultipartStrictError => Some(Single($($borrow)+ $tx.multipart_strict_error)),
             RuleVariable::MultipartDuplicatePartHeader => {
@@ -148,9 +164,6 @@ macro_rules! variable_storage {
             | RuleVariable::MultipartDataAfter
             | RuleVariable::OutboundDataError
             | RuleVariable::RemoteHost
-            | RuleVariable::ReqbodyProcessorError
-            | RuleVariable::ReqbodyProcessorErrorMsg
-            | RuleVariable::ReqbodyProcessor
             | RuleVariable::HighestSeverity
             | RuleVariable::StatusLine
             | RuleVariable::Duration
@@ -162,7 +175,6 @@ macro_rules! variable_storage {
             | RuleVariable::MultipartName
             | RuleVariable::MatchedVarsNames
             | RuleVariable::MatchedVars
-            | RuleVariable::ResBodyProcessor
             | RuleVariable::Geo
             | RuleVariable::RequestCookiesNames
             | RuleVariable::ArgsNames
@@ -191,10 +203,6 @@ macro_rules! variable_storage {
             | RuleVariable::Sessionid
             | RuleVariable::Userid
             | RuleVariable::IP
-            | RuleVariable::ResBodyError
-            | RuleVariable::ResBodyErrorMsg
-            | RuleVariable::ResBodyProcessorError
-            | RuleVariable::ResBodyProcessorErrorMsg
             | RuleVariable::Time
             | RuleVariable::TimeDay
             | RuleVariable::TimeEpoch
@@ -298,8 +306,34 @@ pub struct Transaction {
     /// REQBODY_ERROR - "1" when the request body processor failed
     reqbody_error: Single,
 
-    /// REQBODY_ERROR_MSG - Why the request body processor failed
+    /// REQBODY_ERROR_MSG - Why the request body processor failed, after its name
     reqbody_error_msg: Single,
+
+    /// REQBODY_PROCESSOR - Name of the processor that parses the request body; empty for
+    /// none. The only record of the choice: see [`Transaction::set_request_body_processor`]
+    reqbody_processor: Single,
+
+    /// REQBODY_PROCESSOR_ERROR - "1" when the request body processor failed
+    reqbody_processor_error: Single,
+
+    /// REQBODY_PROCESSOR_ERROR_MSG - Why the request body processor failed
+    reqbody_processor_error_msg: Single,
+
+    /// RESBODY_PROCESSOR - Name of the processor that parses the response body; empty for
+    /// none, which stores it in RESPONSE_BODY instead
+    res_body_processor: Single,
+
+    /// RESBODY_ERROR - "1" when the response body processor failed
+    res_body_error: Single,
+
+    /// RESBODY_ERROR_MSG - Why the response body processor failed, after its name
+    res_body_error_msg: Single,
+
+    /// RESBODY_PROCESSOR_ERROR - "1" when the response body processor failed
+    res_body_processor_error: Single,
+
+    /// RESBODY_PROCESSOR_ERROR_MSG - Why the response body processor failed
+    res_body_processor_error_msg: Single,
 
     /// URI_PARSE_ERROR - "1" when the request URI could not be parsed
     uri_parse_error: Single,
@@ -501,8 +535,16 @@ impl Transaction {
             query_string: Single::new(RuleVariable::QueryString),
             request_body: Single::new(RuleVariable::RequestBody),
             request_body_length: Single::new(RuleVariable::RequestBodyLength),
-            reqbody_error: Single::new(RuleVariable::ReqbodyError),
+            reqbody_error: flag(RuleVariable::ReqbodyError),
             reqbody_error_msg: Single::new(RuleVariable::ReqbodyErrorMsg),
+            reqbody_processor: Single::new(RuleVariable::ReqbodyProcessor),
+            reqbody_processor_error: flag(RuleVariable::ReqbodyProcessorError),
+            reqbody_processor_error_msg: Single::new(RuleVariable::ReqbodyProcessorErrorMsg),
+            res_body_processor: Single::new(RuleVariable::ResBodyProcessor),
+            res_body_error: Single::new(RuleVariable::ResBodyError),
+            res_body_error_msg: Single::new(RuleVariable::ResBodyErrorMsg),
+            res_body_processor_error: Single::new(RuleVariable::ResBodyProcessorError),
+            res_body_processor_error_msg: Single::new(RuleVariable::ResBodyProcessorErrorMsg),
             uri_parse_error: flag(RuleVariable::UriParseError),
             arguments_limit_reached: flag(RuleVariable::ArgumentsLimitReached),
             files: Map::new_case_sensitive(RuleVariable::Files),
@@ -1096,10 +1138,32 @@ impl Transaction {
 
         // Handle special headers
         let key_lower = key.to_lowercase();
-        if key_lower.as_str() == "cookie" {
-            // Parse cookies: "key1=value1; key2=value2"
-            self.parse_cookies(value);
+        match key_lower.as_str() {
+            "cookie" => self.parse_cookies(value),
+            // Only the first Content-Type picks the processor, as in Go Coraza: letting a
+            // later one choose would inspect the body differently from a backend that
+            // reads the first (GHSA-w253-m66g-rx24)
+            "content-type" if self.request_headers.get("content-type").len() == 1 => {
+                if let Some(processor) = BodyProcessorKind::for_content_type(value) {
+                    self.set_request_body_processor(processor);
+                }
+            }
+            _ => {}
         }
+    }
+
+    /// Makes `processor` parse the request body (`REQBODY_PROCESSOR`), as
+    /// `ctl:requestBodyProcessor` does. The first `Content-Type` request header selects
+    /// the urlencoded or multipart one.
+    pub fn set_request_body_processor(&mut self, processor: BodyProcessorKind) {
+        self.reqbody_processor.set(processor.name());
+    }
+
+    /// Makes `processor` parse the response body (`RESBODY_PROCESSOR`), as
+    /// `ctl:responseBodyProcessor` does. Without one, the response body is stored in
+    /// RESPONSE_BODY.
+    pub fn set_response_body_processor(&mut self, processor: BodyProcessorKind) {
+        self.res_body_processor.set(processor.name());
     }
 
     /// Parse cookie header value and populate REQUEST_COOKIES.
@@ -1240,7 +1304,17 @@ impl Transaction {
             .map(|s| s.as_str())
             .unwrap_or("");
 
-        if let Some(processor) = BodyProcessorKind::for_content_type(content_type) {
+        let mut processor = self
+            .reqbody_processor
+            .get()
+            .parse::<BodyProcessorKind>()
+            .ok();
+        if processor.is_none() && self.force_request_body_variable {
+            self.set_request_body_processor(BodyProcessorKind::UrlEncoded);
+            processor = Some(BodyProcessorKind::UrlEncoded);
+        }
+
+        if let Some(processor) = processor {
             let options = BodyProcessorOptions {
                 mime: content_type.to_string(),
                 json_depth_limit: self.config.request_body_json_depth_limit,
@@ -1250,7 +1324,10 @@ impl Transaction {
             // A malformed body doesn't stop the transaction: rules see it in REQBODY_ERROR
             if let Err(e) = processor.process_request(body, self, &options) {
                 self.reqbody_error.set("1");
-                self.reqbody_error_msg.set(e.to_string());
+                self.reqbody_error_msg
+                    .set(format!("{}: {}", processor.name(), e));
+                self.reqbody_processor_error.set("1");
+                self.reqbody_processor_error_msg.set(e.to_string());
             }
         }
 
@@ -1346,9 +1423,26 @@ impl Transaction {
         }
 
         if self.is_response_body_processable() {
-            let body_str = String::from_utf8_lossy(body).to_string();
-            self.response_body.set(&body_str);
-            self.response_content_length.set(body.len().to_string());
+            match self.res_body_processor.get().parse::<BodyProcessorKind>() {
+                Ok(processor) => {
+                    let options = BodyProcessorOptions {
+                        json_depth_limit: self.config.response_body_json_depth_limit,
+                        ..Default::default()
+                    };
+                    if let Err(e) = processor.process_response(body, self, &options) {
+                        self.res_body_error.set("1");
+                        self.res_body_error_msg
+                            .set(format!("{}: {}", processor.name(), e));
+                        self.res_body_processor_error.set("1");
+                        self.res_body_processor_error_msg.set(e.to_string());
+                    }
+                }
+                // As in Go Coraza, the body is stored only when no processor parses it
+                Err(_) => {
+                    self.response_body.set(String::from_utf8_lossy(body));
+                    self.response_content_length.set(body.len().to_string());
+                }
+            }
         }
 
         // Update phase
@@ -1823,6 +1917,8 @@ mod tests {
     fn test_process_request_body_json() {
         let mut tx = Transaction::new("tx-021");
         tx.add_request_header("Content-Type", "application/json");
+        // As in Go, the content type alone selects no JSON or XML processor
+        tx.set_request_body_processor(BodyProcessorKind::Json);
 
         let body = br#"{"user": "admin", "id": 123}"#;
         let result = tx.process_request_body(body);
@@ -1838,6 +1934,8 @@ mod tests {
     fn test_process_request_body_xml() {
         let mut tx = Transaction::new("tx-022");
         tx.add_request_header("Content-Type", "application/xml");
+        // As in Go, the content type alone selects no JSON or XML processor
+        tx.set_request_body_processor(BodyProcessorKind::Xml);
 
         let body = br#"<user name="admin"><id>123</id></user>"#;
         let result = tx.process_request_body(body);

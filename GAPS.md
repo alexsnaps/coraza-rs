@@ -90,6 +90,13 @@ Suggested order: 1 → 2 → 3 → 6, then 4 and 5. The first three items of 1 a
   (`src/actions/ctl.rs:81`-`96`).
   - The body parser is chosen by a prefix match on `Content-Type` instead. So rule 200006 of
     `coraza.conf-recommended`, which sends `application/*+json` bodies to the JSON parser, has no effect.
+  - Done for `requestBodyProcessor` and `responseBodyProcessor`. As in Go, `REQBODY_PROCESSOR` decides which
+    processor parses the request body: the first `Content-Type` sets it to `URLENCODED` or `MULTIPART`, and
+    `ctl:requestBodyProcessor` to any processor until the request body phase. JSON and XML are no longer chosen by
+    content type alone. `ctl:forceRequestBodyVariable` falls back to `URLENCODED`. `ctl:responseBodyProcessor`
+    sets `RESBODY_PROCESSOR`, whose processor then parses the response body instead of storing it in
+    `RESPONSE_BODY`. A processor failing sets `REQBODY_ERROR`, `REQBODY_PROCESSOR_ERROR` and their messages, or
+    the `RESBODY_*` ones. Unlike Go, an unknown processor name is a compile error.
 - [ ] **`SecRequestBodyAccess` and `SecResponseBodyAccess` are not enforced.** Found while working on 1.6: bodies are
   stored and processed whatever the setting, while Go skips them (and defaults both to `Off`, as `WafConfig` does).
 
@@ -108,7 +115,8 @@ naming them expands to nothing. CRS v4.30.0 uses the ones below.
   chained rules inspect `MATCHED_VAR(S)`.
 - [ ] **The names variables:** `ARGS_NAMES` (190 uses), `REQUEST_COOKIES_NAMES` (165), `REQUEST_HEADERS_NAMES`,
   `ARGS_GET_NAMES`, and the unused `ARGS_POST_NAMES` and `RESPONSE_HEADERS_NAMES`.
-- [ ] **`REQBODY_PROCESSOR`, `ARGS_COMBINED_SIZE`, `UNIQUE_ID` and `MULTIPART_INVALID_QUOTING`.**
+- [ ] **`REQBODY_PROCESSOR`, `ARGS_COMBINED_SIZE`, `UNIQUE_ID` and `MULTIPART_INVALID_QUOTING`.** `REQBODY_PROCESSOR`
+  is done, with the `ctl` body processors in section 2.
   - `REQBODY_PROCESSOR` drives 901340/901350 and three 920 rules.
   - `UNIQUE_ID` drives CRS's sampling (901450).
 - [ ] **The rest, which CRS doesn't use.**
@@ -116,7 +124,7 @@ naming them expands to nothing. CRS v4.30.0 uses the ones below.
     `HIGHEST_SEVERITY`, `INBOUND_DATA_ERROR`, `IP`, `JSON`, `OUTBOUND_DATA_ERROR`, `PATH_INFO`, `REMOTE_HOST`, `RULE`,
     `SESSIONID`, `STATUS_LINE`, `URLENCODED_ERROR`, `USERID`.
   - The other `MULTIPART_*` flags and `MULTIPART_FILENAME`/`MULTIPART_NAME`.
-  - `REQBODY_PROCESSOR_ERROR(_MSG)`, `RESBODY_*`.
+  - `REQBODY_PROCESSOR_ERROR(_MSG)` and `RESBODY_*` are done, with the `ctl` body processors in section 2.
   - `TIME` and the `TIME_*` parts.
 
 ## 4. Other missing directives
