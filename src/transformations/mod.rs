@@ -16,7 +16,7 @@ mod simple;
 
 pub use complex::{
     cmd_line, html_entity_decode, normalise_path, normalise_path_win, remove_comments,
-    replace_comments,
+    remove_comments_char, replace_comments,
 };
 pub use encoding::{
     base64_decode, base64_decode_ext, base64_encode, hex_decode, hex_encode, length, md5_hash,
@@ -93,6 +93,7 @@ pub fn by_name(name: &str) -> Option<Transformation> {
         "normalisepath" | "normalizepath" => normalise_path,
         "normalisepathwin" | "normalizepathwin" => normalise_path_win,
         "removecomments" => remove_comments,
+        "removecommentschar" => remove_comments_char,
         "removenulls" => remove_nulls,
         "removewhitespace" => remove_whitespace,
         "replacecomments" => replace_comments,

@@ -64,7 +64,9 @@ Suggested order: 1 → 2 → 3 → 6, then 4 and 5. The first three items of 1 a
     - A multipart part that repeats a header or a `Content-Disposition` parameter sets
       `MULTIPART_DUPLICATE_PART_HEADER` and `MULTIPART_STRICT_ERROR`, as in Go.
     - The CRS load check now skips 9 directives.
-- [ ] **Transformation `removeCommentsChar`.** 1 skipped: 942190.
+- [x] **Transformation `removeCommentsChar`.** 1 skipped: 942190.
+  - Done: ported from Go, with its test vectors; it removes the markers `/*`, `*/`, `<!--`, `-->`, `--` and `#` and
+    keeps what they enclose. The CRS load check now skips 8 directives.
 - [ ] **Configuration directives.** 8 skipped: `SecAuditLogFormat`, `SecAuditLogParts`, `SecAuditLogType`,
   `SecAuditLogRelevantStatus`, `SecRxPreFilter`, `SecRequestBodyJsonDepthLimit`, `SecResponseBodyJsonDepthLimit`
   and `SecResponseBodyMimeType`.

@@ -378,6 +378,40 @@ pub fn remove_comments(input: &str) -> TransformationResult {
     (String::from_utf8_lossy(&result).into_owned(), changed, None)
 }
 
+/// Removes comment markers, keeping what they enclose: `/*`, `*/`, `<!--`, `-->`, `--`
+/// and `#`.
+///
+/// Unlike [`remove_comments`], the text between markers stays, so
+/// `SELECT/**/1` becomes `SELECT1`, and a lone marker is removed too.
+///
+/// # Examples
+///
+/// ```
+/// # use coraza::transformations::complex::remove_comments_char;
+/// let (result, changed, _) = remove_comments_char("Before/* TestCase */After");
+/// assert_eq!(result, "Before TestCase After");
+/// assert!(changed);
+/// ```
+pub fn remove_comments_char(input: &str) -> TransformationResult {
+    const MARKERS: [&[u8]; 6] = [b"/*", b"*/", b"<!--", b"-->", b"--", b"#"];
+
+    let mut rest = input.as_bytes();
+    let mut output = Vec::with_capacity(rest.len());
+    while let Some((&byte, after)) = rest.split_first() {
+        match MARKERS.iter().find(|marker| rest.starts_with(marker)) {
+            Some(marker) => rest = &rest[marker.len()..],
+            None => {
+                output.push(byte);
+                rest = after;
+            }
+        }
+    }
+
+    let changed = output.len() != input.len();
+    let output = String::from_utf8(output).expect("removing ASCII markers keeps UTF-8 valid");
+    (output, changed, None)
+}
+
 /// Replace C-style comments with spaces.
 ///
 /// Replaces C-style comments (`/* comment */`) with a single space.
@@ -452,6 +486,35 @@ pub fn replace_comments(input: &str) -> TransformationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_remove_comments_char() {
+        // Go Coraza's testdata/removeCommentsChar.json, and the markers it doesn't cover
+        for (input, output) in [
+            ("", ""),
+            ("TestCase", "TestCase"),
+            ("Test\\u0000Case", "Test\\u0000Case"),
+            ("/* TestCase */", " TestCase "),
+            ("/*TestCase*/", "TestCase"),
+            ("/* TestCase*/", " TestCase"),
+            ("/*TestCase */", "TestCase "),
+            ("Before/* TestCase */After", "Before TestCase After"),
+            ("Before /* TestCase */ After", "Before  TestCase  After"),
+            ("/* Test\r\nCase */", " Test\r\nCase "),
+            ("Before /* Test\nCase ", "Before  Test\nCase "),
+            ("Test\r\nCase */After", "Test\r\nCase After"),
+            ("Test\nCase */ After", "Test\nCase  After"),
+            ("a<!--b-->c", "abc"),
+            ("1--2", "12"),
+            ("x#y", "xy"),
+            ("é--ü", "éü"),
+        ] {
+            let (result, changed, error) = remove_comments_char(input);
+            assert_eq!(result, output, "{input:?}");
+            assert_eq!(changed, input != output, "{input:?}");
+            assert!(error.is_none());
+        }
+    }
 
     // Test cases from htmlEntityDecode.json
     #[test]
