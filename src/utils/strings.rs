@@ -279,6 +279,7 @@ mod tests {
 
         // Double quotes
         assert_eq!(maybe_remove_quotes("\"\""), "");
+        assert_eq!(maybe_remove_quotes("'value\""), "'value\"");
         assert_eq!(maybe_remove_quotes("\"hello world\""), "hello world");
         assert_eq!(
             maybe_remove_quotes("\"hello \\\"world\""),

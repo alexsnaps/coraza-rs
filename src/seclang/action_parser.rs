@@ -11,6 +11,7 @@
 //! - `msg:'O\'Reilly'` - Escaped quotes
 
 use crate::seclang::CompileError;
+use crate::utils::strings::maybe_remove_quotes;
 
 type ParseResult<T> = Result<T, CompileError>;
 
@@ -167,67 +168,14 @@ pub fn parse_actions(input: &str) -> ParseResult<Vec<ParsedAction>> {
 fn append_action(result: &mut Vec<ParsedAction>, key: String, value: String) -> ParseResult<()> {
     result.push(ParsedAction {
         key: key.trim().to_lowercase(),
-        value: maybe_remove_quotes(value.trim()),
+        value: maybe_remove_quotes(value.trim()).to_string(),
     });
     Ok(())
-}
-
-/// Remove surrounding quotes from a string if present
-///
-/// Handles both single and double quotes.
-/// - `'value'` → `value`
-/// - `"value"` → `value`
-/// - `value` → `value` (unchanged)
-fn maybe_remove_quotes(input: &str) -> String {
-    if input.len() < 2 {
-        return input.to_string();
-    }
-
-    let bytes = input.as_bytes();
-    let first = bytes[0];
-    let last = bytes[bytes.len() - 1];
-
-    // Check if surrounded by matching quotes
-    if (first == b'\'' && last == b'\'') || (first == b'"' && last == b'"') {
-        input[1..input.len() - 1].to_string()
-    } else {
-        input.to_string()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_maybe_remove_quotes_single() {
-        assert_eq!(maybe_remove_quotes("'value'"), "value");
-    }
-
-    #[test]
-    fn test_maybe_remove_quotes_double() {
-        assert_eq!(maybe_remove_quotes("\"value\""), "value");
-    }
-
-    #[test]
-    fn test_maybe_remove_quotes_no_quotes() {
-        assert_eq!(maybe_remove_quotes("value"), "value");
-    }
-
-    #[test]
-    fn test_maybe_remove_quotes_mismatched() {
-        assert_eq!(maybe_remove_quotes("'value\""), "'value\"");
-    }
-
-    #[test]
-    fn test_maybe_remove_quotes_empty() {
-        assert_eq!(maybe_remove_quotes(""), "");
-    }
-
-    #[test]
-    fn test_maybe_remove_quotes_single_char() {
-        assert_eq!(maybe_remove_quotes("'"), "'");
-    }
 
     #[test]
     fn test_parse_single_bare_action() {
