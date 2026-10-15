@@ -3,12 +3,15 @@
 //! A transaction represents a single HTTP request/response pair and holds
 //! all the data (headers, arguments, cookies, etc.) that rules operate on.
 
+mod phase;
 pub mod variables;
 
 use std::sync::Arc;
 
+use phase::FlowState;
+
 use crate::RuleVariable;
-use crate::actions::{AllowType, RuleMetadata};
+use crate::actions::RuleMetadata;
 use crate::audit_log::{
     AuditFile, AuditLog, AuditLogger, AuditMessage, AuditMessageData, AuditProducer, AuditRequest,
     AuditResponse, AuditTransaction, mime_type_of,
@@ -664,28 +667,12 @@ pub struct Transaction {
     /// Last phase that was processed
     last_phase: Option<RulePhase>,
 
-    /// Current interruption (if any disruptive action was triggered)
-    pub(crate) interruption: Option<Interruption>,
-
-    /// Number of rules to skip in current phase (controlled by skip action)
-    pub(crate) skip: i32,
-
-    /// Marker ID to skip to (controlled by skipAfter action)
-    pub(crate) skip_after: String,
+    /// What phase evaluation reads and the rules' actions change: the interruption,
+    /// `skip`, `skipAfter`, `allow` and the rules `ctl` removed
+    flow: FlowState,
 
     /// Whether operators of the rule being evaluated store their captures in TX.0-TX.9
     capturing: bool,
-
-    // ===== CTL Runtime Exclusions =====
-    /// Rules with these IDs will be skipped for this transaction
-    /// (set by ctl:ruleRemoveById, ctl:ruleRemoveByTag, ctl:ruleRemoveByMsg)
-    rule_remove_by_id: std::collections::BTreeSet<i32>,
-
-    /// Variable exclusions per rule ID
-    /// (set by ctl:ruleRemoveTargetById, ctl:ruleRemoveTargetByTag, ctl:ruleRemoveTargetByMsg)
-    /// Map: rule_id -> Vec<(variable, key)>
-    rule_remove_target_by_id:
-        std::collections::BTreeMap<i32, Vec<(RuleVariable, crate::rules::VariableException)>>,
 
     /// All rules that matched during this transaction (for audit logging)
     matched_rules: Vec<MatchedRule>,
@@ -693,9 +680,6 @@ pub struct Transaction {
     /// Reference to WAF's rule group for CTL tag/msg-based exclusions
     /// Optional because transactions created via Transaction::new() don't have a WAF reference
     rules: Option<Arc<RuleGroup>>,
-
-    /// Rules skipped because of an `allow` action
-    allow_type: AllowType,
 }
 
 impl Default for Transaction {
@@ -936,15 +920,10 @@ impl Transaction {
             response_body_limit: 524288, // 512KB default
             force_response_body_variable: false,
             last_phase: None,
-            interruption: None,
-            skip: 0,
-            skip_after: String::new(),
+            flow: FlowState::new(),
             capturing: false,
-            rule_remove_by_id: std::collections::BTreeSet::new(),
-            rule_remove_target_by_id: std::collections::BTreeMap::new(),
             matched_rules: Vec::new(),
             rules: None, // No WAF reference for standalone transactions
-            allow_type: AllowType::Unset,
         }
     }
 
@@ -1031,10 +1010,7 @@ impl Transaction {
             .sum();
         self.args_combined_size.set(combined_size.to_string());
 
-        if let Some(rules) = self.rules.clone() {
-            let rule_engine_on = self.rule_engine == RuleEngineStatus::On;
-            rules.eval(phase, self, rule_engine_on);
-        }
+        self.run_phase(phase);
     }
 
     /// Records a value a rule (or chain link) matched, before its actions run: in
@@ -1306,7 +1282,7 @@ impl Transaction {
     // ===== CTL Action Setters =====
 
     /// Set rule engine status (used by ctl:ruleEngine).
-    pub fn set_rule_engine(&mut self, status: RuleEngineStatus) {
+    pub(crate) fn set_rule_engine(&mut self, status: RuleEngineStatus) {
         self.rule_engine = status;
     }
 
@@ -1474,38 +1450,6 @@ impl Transaction {
     /// Get last processed phase.
     pub fn last_phase(&self) -> Option<RulePhase> {
         self.last_phase
-    }
-
-    // ===== Flow Control & Interruption =====
-
-    /// Get the current interruption, if any.
-    pub fn interruption(&self) -> Option<&Interruption> {
-        self.interruption.as_ref()
-    }
-
-    /// Set an interruption (used for testing and internal rule actions).
-    pub fn set_interruption(&mut self, interruption: Option<Interruption>) {
-        self.interruption = interruption;
-    }
-
-    /// Get the skip counter (number of rules to skip).
-    pub fn skip(&self) -> i32 {
-        self.skip
-    }
-
-    /// Set the skip counter (used by skip action).
-    pub fn set_skip(&mut self, count: i32) {
-        self.skip = count;
-    }
-
-    /// Get the skip_after marker.
-    pub fn skip_after(&self) -> &str {
-        &self.skip_after
-    }
-
-    /// Set the skip_after marker (used by skipAfter action).
-    pub fn set_skip_after(&mut self, marker: impl Into<String>) {
-        self.skip_after = marker.into();
     }
 
     // ===== HTTP Processing Methods =====
@@ -1780,7 +1724,7 @@ impl Transaction {
         // Evaluate rules for Phase 1 (Request Headers)
         self.evaluate_rules(RulePhase::RequestHeaders);
 
-        self.interruption.clone()
+        self.interruption().cloned()
     }
 
     /// Stores the request body in REQUEST_BODY and parses it with the processor
@@ -1879,7 +1823,7 @@ impl Transaction {
         // Evaluate rules for Phase 2 (Request Body)
         self.evaluate_rules(RulePhase::RequestBody);
 
-        Ok(self.interruption.clone())
+        Ok(self.interruption().cloned())
     }
 
     /// Process response headers and populate response variables.
@@ -1919,7 +1863,7 @@ impl Transaction {
         // Evaluate rules for Phase 3 (Response Headers)
         self.evaluate_rules(RulePhase::ResponseHeaders);
 
-        self.interruption.clone()
+        self.interruption().cloned()
     }
 
     /// Whether [`Transaction::process_response_body`] inspects the body, given response
@@ -1959,19 +1903,6 @@ impl Transaction {
                 self.response_content_length.set(body.len().to_string());
             }
         }
-    }
-
-    /// Interrupts the transaction for a body over its limit (`Reject`), as Go Coraza does:
-    /// with `deny` and `status`, outside any rule.
-    fn interrupt_for_body_limit(&mut self, status: u16) -> Interruption {
-        let interruption = Interruption {
-            rule_id: 0,
-            action: "deny".to_string(),
-            status,
-            data: String::new(),
-        };
-        self.interruption = Some(interruption.clone());
-        interruption
     }
 
     /// Process response body.
@@ -2019,7 +1950,7 @@ impl Transaction {
         // Evaluate rules for Phase 4 (Response Body)
         self.evaluate_rules(RulePhase::ResponseBody);
 
-        self.interruption.clone()
+        self.interruption().cloned()
     }
 
     /// Process logging phase (final phase): runs its rules, then writes the transaction's
@@ -2055,7 +1986,7 @@ impl Transaction {
             AuditEngineStatus::Off => false,
             AuditEngineStatus::On => true,
             AuditEngineStatus::RelevantOnly => {
-                let status = match &self.interruption {
+                let status = match self.interruption() {
                     Some(interruption) => interruption.status.to_string(),
                     None => self.response_status.get().to_string(),
                 };
@@ -2103,7 +2034,7 @@ impl Transaction {
                 ..AuditRequest::default()
             },
             highest_severity: self.highest_severity.get().to_string(),
-            is_interrupted: self.interruption.is_some(),
+            is_interrupted: self.interruption().is_some(),
             ..AuditTransaction::default()
         };
 
@@ -2209,127 +2140,6 @@ impl Transaction {
             messages,
         }
     }
-
-    // ===== CTL Action Methods =====
-
-    /// Removes a rule by ID for this transaction only.
-    ///
-    /// Rules with the specified ID will be skipped during rule evaluation
-    /// for this transaction. This does not affect the WAF's rule set or
-    /// other transactions.
-    ///
-    /// Called by `ctl:ruleRemoveById` action.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::transaction::Transaction;
-    ///
-    /// let mut tx = Transaction::new("tx-1");
-    /// tx.remove_rule_by_id(123);
-    /// // Rule 123 will be skipped for this transaction
-    /// ```
-    pub fn remove_rule_by_id(&mut self, id: i32) {
-        self.rule_remove_by_id.insert(id);
-    }
-
-    /// Removes a specific variable target from a rule for this transaction only.
-    ///
-    /// The specified variable will be excluded from the rule's targets
-    /// during evaluation for this transaction.
-    ///
-    /// Called by `ctl:ruleRemoveTargetById`, `ctl:ruleRemoveTargetByTag`,
-    /// and `ctl:ruleRemoveTargetByMsg` actions.
-    ///
-    /// # Arguments
-    ///
-    /// * `rule_id` - The rule ID to modify
-    /// * `variable` - The variable type to exclude
-    /// * `key` - The specific key to exclude (e.g., "user-agent" for HEADERS)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::transaction::Transaction;
-    /// use coraza::RuleVariable;
-    ///
-    /// let mut tx = Transaction::new("tx-1");
-    ///
-    /// // Exclude ARGS:username from rule 123
-    /// tx.remove_rule_target_by_id(123, RuleVariable::Args, "username");
-    ///
-    /// // Exclude REQUEST_HEADERS:User-Agent from rule 456
-    /// tx.remove_rule_target_by_id(456, RuleVariable::RequestHeaders, "user-agent");
-    /// ```
-    pub fn remove_rule_target_by_id(
-        &mut self,
-        rule_id: i32,
-        variable: RuleVariable,
-        key: impl Into<String>,
-    ) {
-        let exception = crate::rules::VariableException::new_string(key.into());
-        self.remove_rule_target(rule_id, variable, exception);
-    }
-
-    /// Excludes the keys of `variable` that `exception` matches from rule `rule_id`, for
-    /// this transaction.
-    pub(crate) fn remove_rule_target(
-        &mut self,
-        rule_id: i32,
-        variable: RuleVariable,
-        exception: crate::rules::VariableException,
-    ) {
-        self.rule_remove_target_by_id
-            .entry(rule_id)
-            .or_default()
-            .push((variable, exception));
-    }
-
-    /// Checks if a rule should be skipped for this transaction.
-    ///
-    /// Returns true if the rule was excluded via `ctl:ruleRemoveById`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::transaction::Transaction;
-    ///
-    /// let mut tx = Transaction::new("tx-1");
-    /// tx.remove_rule_by_id(123);
-    ///
-    /// assert!(tx.is_rule_removed(123));
-    /// assert!(!tx.is_rule_removed(456));
-    /// ```
-    pub fn is_rule_removed(&self, rule_id: i32) -> bool {
-        self.rule_remove_by_id.contains(&rule_id)
-    }
-
-    /// Checks if a specific variable target is excluded from a rule.
-    ///
-    /// Returns true if the variable/key combination was excluded via
-    /// `ctl:ruleRemoveTargetById` actions.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::transaction::Transaction;
-    /// use coraza::RuleVariable;
-    ///
-    /// let mut tx = Transaction::new("tx-1");
-    /// tx.remove_rule_target_by_id(123, RuleVariable::Args, "id");
-    ///
-    /// assert!(tx.is_rule_target_removed(123, RuleVariable::Args, "id"));
-    /// assert!(!tx.is_rule_target_removed(123, RuleVariable::Args, "other"));
-    /// ```
-    pub fn is_rule_target_removed(&self, rule_id: i32, variable: RuleVariable, key: &str) -> bool {
-        self.rule_remove_target_by_id
-            .get(&rule_id)
-            .is_some_and(|targets| {
-                targets
-                    .iter()
-                    .any(|(removed, exception)| *removed == variable && exception.matches(key))
-            })
-    }
 }
 
 /// State that operators and actions read and change while a rule is evaluated.
@@ -2364,39 +2174,6 @@ impl Transaction {
     pub fn capture_field(&mut self, index: usize, value: &str) {
         if self.capturing {
             self.tx.set(&index.to_string(), vec![value.to_string()]);
-        }
-    }
-
-    /// Interrupts the transaction on behalf of a disruptive action of `rule_id`.
-    pub(crate) fn interrupt(&mut self, rule_id: i32, action: &str, status: i32, data: &str) {
-        self.interruption = Some(Interruption {
-            rule_id: rule_id as usize,
-            action: action.to_string(),
-            status: status as u16,
-            data: data.to_string(),
-        });
-    }
-
-    /// Records an `allow` action; see [`AllowType`] for which rules it skips.
-    pub(crate) fn set_allow_type(&mut self, allow_type: AllowType) {
-        self.allow_type = allow_type;
-    }
-
-    /// Whether an earlier `allow` action skips the rules of `phase` still to be evaluated.
-    pub(crate) fn is_allowed(&self, phase: RulePhase) -> bool {
-        match self.allow_type {
-            AllowType::Unset => false,
-            AllowType::All | AllowType::Phase => phase != RulePhase::Logging,
-            AllowType::Request => {
-                matches!(phase, RulePhase::RequestHeaders | RulePhase::RequestBody)
-            }
-        }
-    }
-
-    /// Ends an `allow:phase` once the phase that triggered it has been evaluated.
-    pub(crate) fn end_phase_allow(&mut self) {
-        if self.allow_type == AllowType::Phase {
-            self.allow_type = AllowType::Unset;
         }
     }
 

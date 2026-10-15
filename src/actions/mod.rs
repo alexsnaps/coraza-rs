@@ -17,7 +17,8 @@
 //! - **Non-disruptive** (`setvar`, `ctl`, `setenv`): for every value the rule matches.
 //! - **Flow** (`skip`, `skipAfter`): once the rule's whole chain matched.
 //! - **Disruptive** (`deny`, `drop`, `block`, `allow`, `redirect`, `pass`): once the whole
-//!   chain matched, and only if SecRuleEngine is `On`. Only the last one a rule lists applies.
+//!   chain matched; they take effect only if SecRuleEngine is `On`. Only the last one a rule
+//!   lists applies.
 //!
 //! # Usage
 //!
@@ -96,7 +97,7 @@ pub enum ActionType {
     /// Runs once the whole chain matched (skip, skipAfter).
     Flow,
 
-    /// Runs once the whole chain matched, and only if the rule engine is `On`
+    /// Runs once the whole chain matched, and takes effect only if the rule engine is `On`
     /// (deny, drop, block, allow, redirect, pass). A rule has at most one.
     Disruptive,
 }
@@ -319,7 +320,7 @@ impl Action {
     }
 
     /// Runs the action for a match of the rule described by `rule`.
-    pub fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
+    pub(crate) fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
         match self {
             Self::Deny(action) => action.evaluate(rule, tx),
             Self::Drop(action) => action.evaluate(rule, tx),

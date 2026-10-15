@@ -119,6 +119,133 @@ fn chain_disrupts_only_when_every_link_matches() {
     assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(7));
 }
 
+/// The keys of the values rule `id` matched in `tx`, sorted.
+fn matched_keys(tx: &Transaction, id: i32) -> Vec<String> {
+    let mut keys: Vec<String> = tx
+        .matched_rules()
+        .iter()
+        .filter(|matched| matched.rule.id == id)
+        .flat_map(|matched| matched.matches.iter().map(|data| data.key.clone()))
+        .collect();
+    keys.sort();
+    keys
+}
+
+fn get_request(waf: &Waf, uri: &str) -> Transaction {
+    let mut tx = waf.new_transaction();
+    tx.process_uri(uri, "GET", "HTTP/1.1");
+    tx
+}
+
+// Ported from: coraza/internal/corazawaf/rule_test.go::TestMatchEvaluate
+#[test]
+fn a_rule_matches_a_value_its_operator_accepts() {
+    let waf = waf(r#"SecRule ARGS_GET:test "@eq 0" "id:1,phase:1,pass,nolog""#);
+
+    let mut tx = get_request(&waf, "/?test=0");
+    tx.process_request_headers();
+
+    let matches = &tx.matched_rules()[0].matches;
+    assert_eq!(matches.len(), 1);
+    assert_eq!(
+        (matches[0].key.as_str(), matches[0].value.as_str()),
+        ("test", "0")
+    );
+}
+
+// Ported from: coraza/internal/corazawaf/rule_test.go::TestNoMatchEvaluate
+#[test]
+fn a_rule_does_not_match_a_value_its_operator_rejects() {
+    let waf = waf(r#"SecRule ARGS_GET:test "@eq 1" "id:1,phase:1,pass,nolog""#);
+
+    let mut tx = get_request(&waf, "/?test=999");
+    tx.process_request_headers();
+
+    assert!(tx.matched_rules().is_empty());
+}
+
+// Ported from: coraza/internal/corazawaf/rule_test.go::TestNoMatchEvaluateBecauseOfException
+#[test]
+fn a_rule_does_not_match_a_key_it_excludes() {
+    let waf = waf(r#"SecRule ARGS_GET|!ARGS_GET:test "@eq 0" "id:1,phase:1,pass,nolog""#);
+
+    let mut tx = get_request(&waf, "/?test=0");
+    tx.process_request_headers();
+
+    assert!(tx.matched_rules().is_empty());
+}
+
+#[test]
+fn transformations_are_applied_in_turn() {
+    let waf = waf(
+        r#"SecRule ARGS_GET:data "@streq HELLO" "id:1,phase:1,t:lowercase,t:uppercase,pass,nolog""#,
+    );
+
+    let mut tx = get_request(&waf, "/?data=HeLLo");
+    tx.process_request_headers();
+
+    let matches = &tx.matched_rules()[0].matches;
+    assert_eq!(matches[0].value, "HELLO");
+}
+
+#[test]
+fn a_chain_does_not_match_when_its_first_rule_does_not() {
+    let waf = waf(r#"
+        SecRule ARGS_GET:username "@streq admin" "id:1,phase:1,deny,status:403,chain"
+            SecRule ARGS_GET:password "@streq secret" ""
+    "#);
+
+    let mut tx = get_request(&waf, "/?username=user&password=secret");
+
+    assert!(tx.process_request_headers().is_none());
+    assert!(tx.matched_rules().is_empty());
+}
+
+#[test]
+fn a_variable_without_a_key_matches_each_of_its_values() {
+    let waf = waf(r#"SecRule ARGS_GET "@streq attack" "id:1,phase:1,pass,nolog""#);
+
+    let mut tx = get_request(&waf, "/?param1=safe&param2=attack&param3=safe");
+    tx.process_request_headers();
+
+    assert_eq!(matched_keys(&tx, 1), ["param2"]);
+}
+
+#[test]
+fn a_regex_key_selects_the_keys_it_matches() {
+    let waf = waf(r#"SecRule ARGS_GET:/id.*/ "@eq 123" "id:1,phase:1,pass,nolog""#);
+
+    let mut tx = get_request(&waf, "/?id=123&id_number=123&name=123");
+    tx.process_request_headers();
+
+    assert_eq!(matched_keys(&tx, 1), ["id", "id_number"]);
+}
+
+#[test]
+fn each_link_of_a_chain_applies_its_own_transformations() {
+    let waf = waf(r#"
+        SecRule ARGS_GET:action "@streq delete" "id:1,phase:1,t:lowercase,deny,status:403,chain"
+            SecRule REQUEST_HEADERS:User-Agent "@streq bot" "t:lowercase"
+    "#);
+
+    let mut tx = get_request(&waf, "/?action=DELETE");
+    tx.add_request_header("User-Agent", "BOT");
+
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+    assert_eq!(tx.matched_rules()[0].matches.len(), 2);
+}
+
+#[test]
+fn a_negated_operator_matches_what_the_operator_rejects() {
+    let waf = waf(r#"SecRule ARGS_GET:user "!@streq admin" "id:1,phase:1,deny,status:403""#);
+
+    let mut tx = get_request(&waf, "/?user=guest");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+
+    let mut tx = get_request(&waf, "/?user=admin");
+    assert!(tx.process_request_headers().is_none());
+}
+
 #[test]
 fn allow_skips_the_rest_of_the_transaction() {
     let waf = waf(r#"
@@ -161,6 +288,161 @@ fn allow_request_skips_the_request_phases_only() {
     assert_eq!(tx.process_request_body(b"").unwrap(), None);
     let interruption = tx.process_response_headers(200, "HTTP/1.1");
     assert_eq!(interruption.map(|i| i.rule_id), Some(3));
+}
+
+#[test]
+fn rules_run_only_in_their_own_phase() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:2,pass,nolog,setvar:tx.phase2=1"
+        SecAction "id:2,phase:1,pass,nolog,setvar:tx.phase1=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "phase1").as_deref(), Some("1"));
+    assert_eq!(tx_var(&tx, "phase2"), None);
+}
+
+#[test]
+fn skip_skips_the_next_rules_of_the_phase() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,nolog,skip:2"
+        SecAction "id:2,phase:2,pass,nolog,setvar:tx.other_phase=1"
+        SecAction "id:3,phase:1,pass,nolog,setvar:tx.three=1"
+        SecAction "id:4,phase:1,pass,nolog,setvar:tx.four=1"
+        SecAction "id:5,phase:1,pass,nolog,setvar:tx.five=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+
+    // Rules of other phases don't count
+    assert_eq!(tx_var(&tx, "three"), None);
+    assert_eq!(tx_var(&tx, "four"), None);
+    assert_eq!(tx_var(&tx, "five").as_deref(), Some("1"));
+}
+
+#[test]
+fn skip_after_resumes_after_the_marker() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,nolog,skipAfter:END"
+        SecAction "id:2,phase:1,pass,nolog,setvar:tx.skipped=1"
+        SecMarker END
+        SecAction "id:3,phase:1,pass,nolog,setvar:tx.resumed=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "skipped"), None);
+    assert_eq!(tx_var(&tx, "resumed").as_deref(), Some("1"));
+}
+
+#[test]
+fn an_interruption_ends_the_phase_and_the_request() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,deny,status:403"
+        SecAction "id:2,phase:1,pass,nolog,setvar:tx.same_phase=1"
+        SecAction "id:3,phase:2,pass,nolog,setvar:tx.later_phase=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    let interruption = tx.process_request_headers().expect("rule 1 denies");
+    assert_eq!((interruption.rule_id, interruption.status), (1, 403));
+
+    let later = tx.process_request_body(b"").unwrap();
+    assert_eq!(later.map(|i| i.rule_id), Some(1));
+    assert_eq!(tx_var(&tx, "same_phase"), None);
+    assert_eq!(tx_var(&tx, "later_phase"), None);
+    let rule_1 = &tx.matched_rules()[0];
+    assert_eq!(
+        (rule_1.disruptive_action, rule_1.disruptive),
+        (Some("deny"), true)
+    );
+}
+
+#[test]
+fn logging_phase_rules_run_after_an_interruption() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,deny,status:403"
+        SecAction "id:2,phase:5,pass,nolog,setvar:tx.logged=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+    tx.process_logging().unwrap();
+
+    assert_eq!(tx_var(&tx, "logged").as_deref(), Some("1"));
+}
+
+#[test]
+fn ctl_rule_remove_by_id_skips_rules_for_one_transaction() {
+    let waf = waf(r#"
+        SecRule REQUEST_HEADERS:X-Quiet "@streq yes" "id:1,phase:1,pass,nolog,ctl:ruleRemoveById=10-19"
+        SecAction "id:10,phase:1,pass,nolog,setvar:tx.ten=1"
+        SecAction "id:20,phase:1,pass,nolog,setvar:tx.twenty=1"
+    "#);
+
+    let mut quiet = waf.new_transaction();
+    quiet.add_request_header("X-Quiet", "yes");
+    quiet.process_request_headers();
+    assert_eq!(tx_var(&quiet, "ten"), None);
+    assert_eq!(tx_var(&quiet, "twenty").as_deref(), Some("1"));
+
+    let mut other = waf.new_transaction();
+    other.process_request_headers();
+    assert_eq!(tx_var(&other, "ten").as_deref(), Some("1"));
+}
+
+#[test]
+fn ctl_rule_remove_by_tag_and_msg_skip_the_rules_they_select() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,nolog,ctl:ruleRemoveByTag=noisy,ctl:ruleRemoveByMsg=Chatty"
+        SecAction "id:2,phase:1,pass,nolog,tag:noisy,setvar:tx.tagged=1"
+        SecAction "id:3,phase:1,pass,nolog,msg:'Chatty',setvar:tx.messaged=1"
+        SecAction "id:4,phase:1,pass,nolog,setvar:tx.other=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "tagged"), None);
+    assert_eq!(tx_var(&tx, "messaged"), None);
+    assert_eq!(tx_var(&tx, "other").as_deref(), Some("1"));
+}
+
+#[test]
+fn detection_only_records_disruptive_actions_without_interrupting() {
+    let waf = waf(r#"
+        SecRuleEngine DetectionOnly
+        SecAction "id:1,phase:1,deny,status:403"
+        SecAction "id:2,phase:1,pass,nolog,setvar:tx.after=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+
+    assert_eq!(tx.process_request_headers(), None);
+    assert_eq!(tx_var(&tx, "after").as_deref(), Some("1"));
+    let rule_1 = &tx.matched_rules()[0];
+    assert_eq!(
+        (rule_1.disruptive_action, rule_1.disruptive),
+        (Some("deny"), false)
+    );
+}
+
+#[test]
+fn detection_only_does_not_enforce_allow() {
+    let waf = waf(r#"
+        SecRuleEngine DetectionOnly
+        SecAction "id:1,phase:1,allow"
+        SecAction "id:2,phase:1,pass,nolog,setvar:tx.after=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "after").as_deref(), Some("1"));
 }
 
 #[test]

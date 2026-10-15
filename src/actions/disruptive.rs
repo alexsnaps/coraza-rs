@@ -5,8 +5,8 @@
 //!
 //! Disruptive actions stop rule processing and can interrupt transactions.
 //! Only one disruptive action per rule applies; if multiple are specified,
-//! the last one takes precedence. These actions are NOT executed if
-//! SecRuleEngine is set to DetectionOnly.
+//! the last one takes precedence. These actions take effect only if
+//! SecRuleEngine is `On`.
 
 use crate::actions::{ActionError, RuleMetadata};
 use crate::transaction::Transaction;
@@ -48,7 +48,7 @@ impl DenyAction {
         no_argument(data).map(|()| Self)
     }
 
-    pub fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
+    pub(crate) fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
         let status = if rule.status == 0 {
             403 // deny action defaults to status 403
         } else {
@@ -86,7 +86,7 @@ impl DropAction {
         no_argument(data).map(|()| Self)
     }
 
-    pub fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
+    pub(crate) fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
         tx.interrupt(rule.id, "drop", rule.status, "");
     }
 }
@@ -139,8 +139,8 @@ impl AllowAction {
         Ok(Self { allow_type })
     }
 
-    pub fn evaluate(&self, tx: &mut Transaction) {
-        tx.set_allow_type(self.allow_type);
+    pub(crate) fn evaluate(&self, tx: &mut Transaction) {
+        tx.allow(self.allow_type);
     }
 }
 
@@ -214,7 +214,7 @@ impl RedirectAction {
         })
     }
 
-    pub fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
+    pub(crate) fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
         let status = match rule.status {
             301 | 302 | 303 | 307 => rule.status,
             _ => 302, // default redirect status
@@ -389,19 +389,6 @@ mod tests {
         rule.status = 404;
         DenyAction.evaluate(&rule, &mut tx);
         assert_eq!(interruption(&tx).status, 404);
-    }
-
-    #[test]
-    fn test_allow_evaluate() {
-        let action = AllowAction::parse("phase").unwrap();
-        let mut tx = Transaction::new("action-test");
-        action.evaluate(&mut tx);
-        assert!(tx.is_allowed(crate::RulePhase::RequestHeaders));
-        assert!(!tx.is_allowed(crate::RulePhase::Logging));
-
-        // allow:phase ends with the phase that triggered it
-        tx.end_phase_allow();
-        assert!(!tx.is_allowed(crate::RulePhase::RequestBody));
     }
 
     #[test]

@@ -31,16 +31,12 @@
 //! 4. If match: execute deny, log, and msg actions
 //! ```
 
-pub mod action;
 pub mod group;
 pub mod operator;
 pub mod rule;
 pub mod transformation;
 pub mod variable;
 
-pub use action::{
-    execute_actions, execute_flow_and_disruptive_actions, execute_nondisruptive_actions,
-};
 pub use group::RuleGroup;
 pub use operator::RuleOperator;
 pub use rule::Rule;

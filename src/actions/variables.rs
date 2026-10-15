@@ -121,7 +121,7 @@ impl SetvarAction {
         })
     }
 
-    pub fn evaluate(&self, tx: &mut Transaction) {
+    pub(crate) fn evaluate(&self, tx: &mut Transaction) {
         let key = self.key.expand(Some(tx)).to_lowercase();
         let value = self.value.expand(Some(tx));
 

@@ -93,7 +93,7 @@ impl SkipAction {
         Ok(Self { count })
     }
 
-    pub fn evaluate(&self, tx: &mut Transaction) {
+    pub(crate) fn evaluate(&self, tx: &mut Transaction) {
         tx.set_skip(self.count);
     }
 }
@@ -139,7 +139,7 @@ impl SkipAfterAction {
         })
     }
 
-    pub fn evaluate(&self, tx: &mut Transaction) {
+    pub(crate) fn evaluate(&self, tx: &mut Transaction) {
         tx.set_skip_after(&self.marker);
     }
 }
@@ -204,15 +204,6 @@ mod tests {
     }
 
     #[test]
-    fn test_skip_evaluate() {
-        let action = SkipAction::parse("3").unwrap();
-
-        let mut tx = Transaction::new("action-test");
-        action.evaluate(&mut tx);
-        assert_eq!(tx.skip(), 3);
-    }
-
-    #[test]
     fn test_skipafter_no_arguments() {
         assert_eq!(
             SkipAfterAction::parse("").map(|_| ()),
@@ -230,14 +221,5 @@ mod tests {
     fn test_skipafter_with_quotes() {
         let action = SkipAfterAction::parse("'MARKER_NAME'").unwrap();
         assert_eq!(action.marker, "MARKER_NAME");
-    }
-
-    #[test]
-    fn test_skipafter_evaluate() {
-        let action = SkipAfterAction::parse("END_CHECK").unwrap();
-
-        let mut tx = Transaction::new("action-test");
-        action.evaluate(&mut tx);
-        assert_eq!(tx.skip_after(), "END_CHECK");
     }
 }

@@ -8,14 +8,13 @@
 //! - Variable population (connection, headers, body)
 //! - Phase processing with rule evaluation
 //! - CTL action execution
-//! - Flow control (skip, skipAfter)
 //! - Deferred actions (exec, expirevar, setenv, initcol)
 
 use coraza::RulePhase;
 use coraza::actions::{Action, ActionType, RuleMetadata};
 use coraza::body_processors::{BodyProcessorKind, BodyProcessorOptions};
-use coraza::rules::{Rule, RuleGroup};
-use coraza::transaction::{Interruption, Transaction};
+use coraza::seclang::Parser;
+use coraza::transaction::Transaction;
 
 // ===== Body Processor Integration Tests =====
 
@@ -144,31 +143,6 @@ fn test_response_variable_population() {
 // ===== Phase Processing Integration Tests =====
 
 #[test]
-fn test_phase_processing_with_interruption() {
-    let mut tx = Transaction::new("phase-interrupt-test");
-
-    // Process request body
-    let body = b"username=admin&password=test";
-    let result = tx.process_request_body(body);
-    assert!(result.is_ok());
-
-    // Simulate an interruption
-    tx.set_interruption(Some(Interruption {
-        rule_id: 123,
-        action: "deny".to_string(),
-        status: 403,
-        data: String::new(),
-    }));
-
-    // Try to process response headers - should return the interruption
-    let interruption = tx.process_response_headers(200, "HTTP/1.1");
-    assert!(interruption.is_some());
-    let int = interruption.unwrap();
-    assert_eq!(int.action, "deny");
-    assert_eq!(int.status, 403);
-}
-
-#[test]
 fn test_phase_prevents_duplicate_processing() {
     let mut tx = Transaction::new("phase-duplicate-test");
 
@@ -197,12 +171,10 @@ fn test_ctl_modifies_transaction_settings() {
     assert_eq!(tx.request_body_limit(), 131072); // 128KB
 
     // Modify via CTL-like setters (simulating CTL action execution)
-    tx.set_rule_engine(RuleEngineStatus::DetectionOnly);
     tx.set_request_body_access(false);
     tx.set_request_body_limit(262144); // 256KB
 
     // Verify changes
-    assert_eq!(tx.rule_engine(), RuleEngineStatus::DetectionOnly);
     assert!(!tx.request_body_access());
     assert_eq!(tx.request_body_limit(), 262144);
 }
@@ -222,59 +194,6 @@ fn test_ctl_phase_restrictions() {
     assert_eq!(tx.last_phase(), Some(RulePhase::RequestBody));
 }
 
-// ===== Flow Control Integration Tests =====
-
-#[test]
-fn test_skip_and_skipafter_with_rulegroup() {
-    let mut group = RuleGroup::new();
-
-    // Add 5 rules for RequestHeaders phase
-    for id in 1..=5 {
-        let mut rule = Rule::new().with_id(id);
-        rule.metadata_mut().phase = RulePhase::RequestHeaders;
-        group.add(rule).unwrap();
-    }
-
-    let mut tx = Transaction::new("flow-control-test");
-
-    // Set skip = 2
-    tx.set_skip(2);
-
-    // Evaluate - should skip 2 rules
-    group.eval(RulePhase::RequestHeaders, &mut tx, true);
-
-    // Skip counter should be decremented to 0
-    assert_eq!(tx.skip(), 0);
-}
-
-#[test]
-fn test_skipafter_finds_marker() {
-    let mut group = RuleGroup::new();
-
-    // Add rules with a marker
-    let mut rule1 = Rule::new().with_id(1);
-    rule1.metadata_mut().phase = RulePhase::RequestHeaders;
-    group.add(rule1).unwrap();
-
-    // Add SecMarker
-    let mut marker = Rule::new().with_id(0);
-    marker.metadata_mut().phase = RulePhase::RequestHeaders;
-    marker.metadata_mut().sec_mark = Some("END_BLOCK".to_string());
-    group.add(marker).unwrap();
-
-    let mut rule2 = Rule::new().with_id(2);
-    rule2.metadata_mut().phase = RulePhase::RequestHeaders;
-    group.add(rule2).unwrap();
-
-    let mut tx = Transaction::new("skipafter-test");
-    tx.set_skip_after("END_BLOCK");
-
-    // Evaluate - should find marker and clear skip_after
-    group.eval(RulePhase::RequestHeaders, &mut tx, true);
-
-    assert!(tx.skip_after().is_empty());
-}
-
 // ===== Deferred Actions Integration Tests =====
 
 #[test]
@@ -286,8 +205,13 @@ fn test_setenv_action_execution() {
     assert_eq!(action.action_type(), ActionType::Nondisruptive);
 
     // Sets ENV, not the process environment
-    let mut tx = Transaction::new("action-test");
-    action.evaluate(&rule, &mut tx);
+    let mut parser = Parser::new();
+    parser
+        .from_string(r#"SecAction "id:1,phase:1,pass,nolog,setenv:TEST_VAR=test_value""#)
+        .expect("rules should parse");
+    let waf = parser.into_waf().expect("config should be valid");
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
 
     assert_eq!(
         tx.get_variable(coraza::RuleVariable::Env, Some("TEST_VAR"))
@@ -440,30 +364,4 @@ fn test_json_api_request_with_nested_data() {
     assert_eq!(tx.args_post().get("json.tags"), vec!["2"]); // array length
     assert_eq!(tx.args_post().get("json.tags.0"), vec!["developer"]);
     assert_eq!(tx.args_post().get("json.tags.1"), vec!["admin"]);
-}
-
-#[test]
-fn test_ctl_and_phase_processing_integration() {
-    use coraza::types::RuleEngineStatus;
-
-    let mut tx = Transaction::new("ctl-phase-integration");
-
-    // Initially rule engine is On
-    assert_eq!(tx.rule_engine(), RuleEngineStatus::On);
-
-    // Simulate CTL action changing rule engine to DetectionOnly
-    tx.set_rule_engine(RuleEngineStatus::DetectionOnly);
-
-    // Process phases
-    tx.process_connection("127.0.0.1", 8080, "10.0.0.1", 80);
-
-    // CTL setting should persist
-    assert_eq!(tx.rule_engine(), RuleEngineStatus::DetectionOnly);
-
-    // Process request body
-    let result = tx.process_request_body(b"test=data");
-    assert!(result.is_ok());
-
-    // Settings still intact after phase processing
-    assert_eq!(tx.rule_engine(), RuleEngineStatus::DetectionOnly);
 }

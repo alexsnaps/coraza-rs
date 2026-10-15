@@ -240,7 +240,7 @@ impl CtlAction {
         CtlCommand::parse(data).map(|command| Self { command })
     }
 
-    pub fn evaluate(&self, tx: &mut Transaction) {
+    pub(crate) fn evaluate(&self, tx: &mut Transaction) {
         match &self.command {
             CtlCommand::RuleEngine(status) => tx.set_rule_engine(*status),
             CtlCommand::RequestBodyAccess(enabled) => {
