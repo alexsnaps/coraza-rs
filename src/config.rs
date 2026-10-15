@@ -151,7 +151,7 @@ impl Default for WafConfig {
             request_body_limit_action: BodyLimitAction::Reject,
             response_body_access: false,
             response_body_limit: 512 * 1024,
-            response_body_limit_action: BodyLimitAction::Reject,
+            response_body_limit_action: BodyLimitAction::ProcessPartial,
             response_body_mime_types: Vec::new(),
             request_body_json_depth_limit: DEFAULT_JSON_DEPTH_LIMIT,
             response_body_json_depth_limit: DEFAULT_JSON_DEPTH_LIMIT,

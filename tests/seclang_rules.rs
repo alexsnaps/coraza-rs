@@ -1056,3 +1056,65 @@ fn multipart_part_names_and_filenames_are_variables() {
     assert_eq!(tx_var(&tx, "name").as_deref(), Some("1"));
     assert_eq!(interruption.map(|i| i.rule_id), Some(2));
 }
+
+#[test]
+fn request_bodies_reaching_the_limit_are_rejected_or_cut() {
+    for (action, interrupted, seen) in [
+        ("Reject", Some(413), None),
+        ("ProcessPartial", None, Some("1")),
+    ] {
+        let waf = waf(&format!(
+            r#"
+            SecRequestBodyAccess On
+            SecRequestBodyLimit 10
+            SecRequestBodyLimitAction {action}
+            SecRule REQUEST_BODY "@streq 0123456789" "id:1,phase:2,pass,setvar:tx.seen=1"
+            "#
+        ));
+
+        let mut tx = waf.new_transaction();
+        tx.process_request_headers();
+        let interruption = tx.process_request_body(b"0123456789abcdef").unwrap();
+
+        assert_eq!(interruption.map(|i| i.status), interrupted, "{action}");
+        assert_eq!(tx_var(&tx, "seen").as_deref(), seen, "{action}");
+        assert_eq!(
+            tx.get_variable(coraza::RuleVariable::InboundDataError, None)
+                .as_deref(),
+            Some("1"),
+            "{action}"
+        );
+    }
+}
+
+#[test]
+fn response_bodies_reaching_the_limit_are_rejected_or_cut() {
+    for (action, interrupted, seen) in [
+        ("Reject", Some(500), None),
+        ("ProcessPartial", None, Some("1")),
+    ] {
+        let waf = waf(&format!(
+            r#"
+            SecResponseBodyAccess On
+            SecResponseBodyMimeType text/plain
+            SecResponseBodyLimit 10
+            SecResponseBodyLimitAction {action}
+            SecRule RESPONSE_BODY "@streq 0123456789" "id:1,phase:4,pass,setvar:tx.seen=1"
+            "#
+        ));
+
+        let mut tx = waf.new_transaction();
+        tx.add_response_header("Content-Type", "text/plain");
+        tx.process_response_headers(200, "HTTP/1.1");
+        let interruption = tx.process_response_body(b"0123456789abcdef");
+
+        assert_eq!(interruption.map(|i| i.status), interrupted, "{action}");
+        assert_eq!(tx_var(&tx, "seen").as_deref(), seen, "{action}");
+        assert_eq!(
+            tx.get_variable(coraza::RuleVariable::OutboundDataError, None)
+                .as_deref(),
+            Some("1"),
+            "{action}"
+        );
+    }
+}

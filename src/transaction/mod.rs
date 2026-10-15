@@ -14,7 +14,8 @@ use crate::collection::{Map, MatchData, Single};
 use crate::config::WafConfig;
 use crate::rules::RuleGroup;
 use crate::types::{
-    AuditEngineStatus, AuditLogPart, AuditLogParts, RuleEngineStatus, RulePhase, RuleSeverity,
+    AuditEngineStatus, AuditLogPart, AuditLogParts, BodyLimitAction, RuleEngineStatus, RulePhase,
+    RuleSeverity,
 };
 
 /// Information about a rule that matched during transaction processing.
@@ -158,6 +159,7 @@ macro_rules! variable_storage {
                 Some(Single($($borrow)+ $tx.multipart_data_after))
             }
             RuleVariable::OutboundDataError => Some(Single($($borrow)+ $tx.outbound_data_error)),
+            RuleVariable::InboundDataError => Some(Single($($borrow)+ $tx.inbound_data_error)),
             RuleVariable::MatchedVars => Some(Map($($borrow)+ $tx.matched_vars)),
             RuleVariable::MatchedVarsNames => {
                 Some(Names(RuleVariable::MatchedVarsNames, $($borrow)+ $tx.matched_vars))
@@ -214,7 +216,6 @@ macro_rules! variable_storage {
 
             // Not populated by this engine yet
             RuleVariable::Unknown
-            | RuleVariable::InboundDataError
             | RuleVariable::RemoteHost
             | RuleVariable::StatusLine
             | RuleVariable::FilesTmpContent
@@ -446,12 +447,17 @@ pub struct Transaction {
     /// TIME, TIME_* - When the transaction started
     time: TimeVariables,
 
-    /// URLENCODED_ERROR, FULL_REQUEST_LENGTH, DURATION, MULTIPART_DATA_AFTER,
-    /// OUTBOUND_DATA_ERROR - "0", as Go Coraza sets them and never changes them
+    /// URLENCODED_ERROR, FULL_REQUEST_LENGTH, DURATION, MULTIPART_DATA_AFTER - "0", as Go
+    /// Coraza sets them and never changes them
     urlencoded_error: Single,
     full_request_length: Single,
     duration: Single,
     multipart_data_after: Single,
+
+    /// INBOUND_DATA_ERROR - "1" once the request body reached its limit; empty before
+    inbound_data_error: Single,
+
+    /// OUTBOUND_DATA_ERROR - "1" once the response body reached its limit; "0" before
     outbound_data_error: Single,
 
     /// MATCHED_VAR - The value of the latest match
@@ -741,6 +747,7 @@ impl Transaction {
             full_request_length: flag(RuleVariable::FullRequestLength),
             duration: flag(RuleVariable::Duration),
             multipart_data_after: flag(RuleVariable::MultipartDataAfter),
+            inbound_data_error: Single::new(RuleVariable::InboundDataError),
             outbound_data_error: flag(RuleVariable::OutboundDataError),
             matched_var: Single::new(RuleVariable::MatchedVar),
             matched_var_name: Single::new(RuleVariable::MatchedVarName),
@@ -1639,6 +1646,19 @@ impl Transaction {
 
         // As in Go Coraza, an empty body or one without access is left alone
         if self.request_body_access && !body.is_empty() {
+            let limit = usize::try_from(self.request_body_limit).unwrap_or(0);
+            let mut body = body;
+            // As in Go Coraza, reaching the limit counts
+            if body.len() >= limit {
+                self.inbound_data_error.set("1");
+                match self.config.request_body_limit_action {
+                    BodyLimitAction::Reject => {
+                        self.last_phase = Some(RulePhase::RequestBody);
+                        return Ok(Some(self.interrupt_for_body_limit(413)));
+                    }
+                    BodyLimitAction::ProcessPartial => body = &body[..limit],
+                }
+            }
             self.inspect_request_body(body);
         }
 
@@ -1705,6 +1725,44 @@ impl Transaction {
                 .any(|mime| mime.eq_ignore_ascii_case(self.response_content_type.get()))
     }
 
+    /// Parses the response body with the processor RESBODY_PROCESSOR names, or stores it
+    /// in RESPONSE_BODY if none.
+    fn inspect_response_body(&mut self, body: &[u8]) {
+        match self.res_body_processor.get().parse::<BodyProcessorKind>() {
+            Ok(processor) => {
+                let options = BodyProcessorOptions {
+                    json_depth_limit: self.config.response_body_json_depth_limit,
+                    ..Default::default()
+                };
+                if let Err(e) = processor.process_response(body, self, &options) {
+                    self.res_body_error.set("1");
+                    self.res_body_error_msg
+                        .set(format!("{}: {}", processor.name(), e));
+                    self.res_body_processor_error.set("1");
+                    self.res_body_processor_error_msg.set(e.to_string());
+                }
+            }
+            // As in Go Coraza, the body is stored only when no processor parses it
+            Err(_) => {
+                self.response_body.set(String::from_utf8_lossy(body));
+                self.response_content_length.set(body.len().to_string());
+            }
+        }
+    }
+
+    /// Interrupts the transaction for a body over its limit (`Reject`), as Go Coraza does:
+    /// with `deny` and `status`, outside any rule.
+    fn interrupt_for_body_limit(&mut self, status: u16) -> Interruption {
+        let interruption = Interruption {
+            rule_id: 0,
+            action: "deny".to_string(),
+            status,
+            data: String::new(),
+        };
+        self.interruption = Some(interruption.clone());
+        interruption
+    }
+
     /// Process response body.
     ///
     /// # Example
@@ -1728,26 +1786,20 @@ impl Transaction {
         }
 
         if self.response_body_access && self.is_response_body_processable() {
-            match self.res_body_processor.get().parse::<BodyProcessorKind>() {
-                Ok(processor) => {
-                    let options = BodyProcessorOptions {
-                        json_depth_limit: self.config.response_body_json_depth_limit,
-                        ..Default::default()
-                    };
-                    if let Err(e) = processor.process_response(body, self, &options) {
-                        self.res_body_error.set("1");
-                        self.res_body_error_msg
-                            .set(format!("{}: {}", processor.name(), e));
-                        self.res_body_processor_error.set("1");
-                        self.res_body_processor_error_msg.set(e.to_string());
+            let limit = usize::try_from(self.response_body_limit).unwrap_or(0);
+            let mut body = body;
+            // As in Go Coraza, reaching the limit counts
+            if body.len() >= limit {
+                self.outbound_data_error.set("1");
+                match self.config.response_body_limit_action {
+                    BodyLimitAction::Reject => {
+                        self.last_phase = Some(RulePhase::ResponseBody);
+                        return Some(self.interrupt_for_body_limit(500));
                     }
-                }
-                // As in Go Coraza, the body is stored only when no processor parses it
-                Err(_) => {
-                    self.response_body.set(String::from_utf8_lossy(body));
-                    self.response_content_length.set(body.len().to_string());
+                    BodyLimitAction::ProcessPartial => body = &body[..limit],
                 }
             }
+            self.inspect_response_body(body);
         }
 
         // Update phase

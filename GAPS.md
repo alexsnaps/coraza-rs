@@ -107,6 +107,14 @@ Suggested order: 1 → 2 → 3 → 6, then 4 and 5. The first three items of 1 a
     response body only with response body access and a processable content type; the phase's rules run either way.
     A transaction made with `Transaction::new`, outside a WAF, keeps request body access on.
 
+- [x] **Body limits are not enforced.** Found while working on section 3: `SecRequestBodyLimit`,
+  `SecResponseBodyLimit` and their `…LimitAction` were stored and ignored, and `WafConfig` defaulted the response
+  action to `Reject` where Go has `ProcessPartial`.
+  - Done: as in Go, a body that reaches its limit sets `INBOUND_DATA_ERROR` or `OUTBOUND_DATA_ERROR`; `Reject` then
+    interrupts the transaction (413 for a request, 500 for a response, outside any rule) before that phase's rules,
+    and `ProcessPartial` inspects only the first `limit` bytes. Go counts a body exactly at the limit as reaching
+    it, and so does this.
+
 ## 3. Variables that parse but are never set
 
 Found while working on 1.4: the list in 5 compared only names. 65 variables parse, but `Transaction::collection`
@@ -135,7 +143,7 @@ naming them expands to nothing. CRS v4.30.0 uses the ones below.
     `MULTIPART_STRICT_ERROR`) flags a quoted `filename*`, as in Go.
   - `REQBODY_PROCESSOR` drives 901340/901350 and three 920 rules.
   - `UNIQUE_ID` drives CRS's sampling (901450).
-- [ ] **The rest, which CRS doesn't use.**
+- [x] **The rest, which CRS doesn't use.**
   - `ARGS_PATH`, `AUTH_TYPE`, `DURATION`, `ENV`, `FILES_TMP_CONTENT`, `FULL_REQUEST`, `FULL_REQUEST_LENGTH`, `GEO`,
     `HIGHEST_SEVERITY`, `INBOUND_DATA_ERROR`, `IP`, `JSON`, `OUTBOUND_DATA_ERROR`, `PATH_INFO`, `REMOTE_HOST`, `RULE`,
     `SESSIONID`, `STATUS_LINE`, `URLENCODED_ERROR`, `USERID`.
@@ -153,6 +161,10 @@ naming them expands to nothing. CRS v4.30.0 uses the ones below.
   - Done for `ARGS_PATH`, `MULTIPART_NAME` and `MULTIPART_FILENAME`: `Transaction::add_path_argument` (Go's
     `AddPathRequestArgument`) adds to `ARGS_PATH` and `ARGS` within the argument limit, and the multipart processor
     records each part's name and file name.
+  - Done for `INBOUND_DATA_ERROR` and `OUTBOUND_DATA_ERROR`, with the body limits in section 2.
+  - What remains is what Go doesn't set either, so a rule on it never matches in Go too: `AUTH_TYPE`,
+    `FILES_TMP_CONTENT`, `FULL_REQUEST`, `GEO` (for `@geoLookup`, section 5), `IP`, `JSON`, `PATH_INFO`,
+    `REMOTE_HOST`, `SESSIONID`, `STATUS_LINE`, `USERID`, and the `MULTIPART_*` flags other than those above.
 
 ## 4. Other missing directives
 
