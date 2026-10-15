@@ -8,7 +8,6 @@
 
 use coraza::RulePhase;
 use coraza::RuleVariable;
-use coraza::collection::MapCollection;
 use coraza::operators::{eq, streq};
 use coraza::rules::{Rule, RuleGroup, RuleOperator, VariableSpec};
 use coraza::transaction::Transaction;

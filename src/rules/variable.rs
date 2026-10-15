@@ -12,7 +12,7 @@
 
 use regex::Regex;
 
-use crate::collection::{Collection, Keyed, MatchData};
+use crate::collection::MatchData;
 use crate::transaction::{Transaction, VariableCollection};
 use crate::types::RuleVariable;
 
@@ -242,7 +242,6 @@ impl VariableSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collection::MapCollection;
     use crate::transaction::Transaction;
 
     // ============================================================================

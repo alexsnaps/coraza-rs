@@ -8,7 +8,6 @@
 //! and configuration inheritance.
 
 use coraza::actions::{DenyAction, StatusAction};
-use coraza::collection::{Keyed, MapCollection};
 use coraza::config::WafConfig;
 use coraza::operators::streq;
 use coraza::rules::{Rule, RuleAction, RuleOperator, VariableSpec};

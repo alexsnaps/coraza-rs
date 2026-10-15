@@ -8,7 +8,6 @@
 //! submissions.
 
 use super::{BodyProcessor, BodyProcessorError, BodyProcessorOptions};
-use crate::collection::MapCollection;
 use crate::transaction::Transaction;
 use crate::transformations::url_decode;
 
@@ -123,8 +122,6 @@ pub fn create_urlencoded() -> Box<dyn BodyProcessor> {
 mod tests {
     use super::*;
     use crate::body_processors::get_body_processor;
-    use crate::collection::{Collection, Keyed, SingleCollection};
-
     #[test]
     fn test_urlencoded_basic() {
         let processor = UrlencodedBodyProcessor;

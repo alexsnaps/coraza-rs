@@ -345,8 +345,6 @@ mod tests {
     }
 
     fn mock_tx() -> Transaction {
-        use crate::collection::MapCollection;
-
         let mut tx = Transaction::new("macro-test");
         let Some(crate::transaction::VariableCollection::Map(vars)) =
             tx.collection_mut(RuleVariable::TX)

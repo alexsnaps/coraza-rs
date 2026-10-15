@@ -468,8 +468,6 @@ mod tests {
     use crate::types::RuleVariable;
 
     fn mock_tx() -> Transaction {
-        use crate::collection::MapCollection;
-
         let mut tx = Transaction::new("operator-test");
         let Some(crate::transaction::VariableCollection::Map(vars)) =
             tx.collection_mut(RuleVariable::TX)

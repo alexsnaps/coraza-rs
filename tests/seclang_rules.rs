@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Behaviour of rules loaded from SecLang, evaluated against real transactions.
-
-use coraza::collection::MapCollection;
 use coraza::seclang::Parser;
 use coraza::transaction::Transaction;
 use coraza::waf::Waf;

@@ -296,7 +296,6 @@ impl Default for Rule {
 mod tests {
     use super::*;
     use crate::RuleVariable;
-    use crate::collection::MapCollection;
     use crate::operators::streq;
     use crate::transaction::Transaction;
 

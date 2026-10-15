@@ -9,7 +9,6 @@
 
 use crate::RuleVariable;
 use crate::actions::{Action, ActionError, ActionType, RuleMetadata};
-use crate::collection::{Keyed, MapCollection};
 use crate::operators::Macro;
 use crate::transaction::{Transaction, VariableCollection};
 

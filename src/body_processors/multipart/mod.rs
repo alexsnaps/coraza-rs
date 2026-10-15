@@ -9,7 +9,6 @@
 mod parser;
 
 use super::{BodyProcessor, BodyProcessorError, BodyProcessorOptions};
-use crate::collection::MapCollection;
 use crate::transaction::Transaction;
 use mime::Mime;
 use std::io::Write;
@@ -151,7 +150,6 @@ pub fn create_multipart() -> Box<dyn BodyProcessor> {
 mod tests {
     use super::*;
     use crate::body_processors::get_body_processor;
-    use crate::collection::{Collection, Keyed, SingleCollection};
     use std::fs;
 
     #[test]

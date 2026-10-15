@@ -14,7 +14,6 @@
 use coraza::RulePhase;
 use coraza::actions::{ActionType, RuleMetadata};
 use coraza::body_processors::{BodyProcessorOptions, get_body_processor};
-use coraza::collection::Keyed;
 use coraza::rules::{Rule, RuleGroup};
 use coraza::transaction::{Interruption, Transaction};
 

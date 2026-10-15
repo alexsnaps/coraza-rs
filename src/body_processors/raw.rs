@@ -53,8 +53,6 @@ pub fn create_raw() -> Box<dyn BodyProcessor> {
 mod tests {
     use super::*;
     use crate::body_processors::get_body_processor;
-    use crate::collection::SingleCollection;
-
     #[test]
     fn test_raw_processor_basic() {
         let processor = RawBodyProcessor;

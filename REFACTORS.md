@@ -79,9 +79,11 @@ probed bugs.
   plus a `_mut` twin; derive `get_variable` from it.
   - Done: one `match` (shared by `collection`/`collection_mut` through a macro) maps all 105 variants, 37 to fields
     and the rest explicitly to `None`; `get_variable`, `VariableSpec` and `setvar` all go through it.
-- [ ] **Collapse the collection traits.** `Collection`, `SingleCollection`, `Keyed`, `MapCollection` cover two
+- [x] **Collapse the collection traits.** `Collection`, `SingleCollection`, `Keyed`, `MapCollection` cover two
   concrete types; calling `Map::add` requires importing `MapCollection`. Make the methods inherent; keep at most one
   trait if `ConcatKeyed` needs it.
+  - Done: all four traits removed, methods inherent on `Map`/`Single`. `ConcatCollection`, `ConcatKeyed` and `Noop`
+    were unused and are removed with them.
 
 ## 5. Name → implementation lookup done five ways
 

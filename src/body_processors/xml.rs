@@ -7,7 +7,6 @@
 //! This is a lenient parser that handles malformed/incomplete XML gracefully.
 
 use super::{BodyProcessor, BodyProcessorError, BodyProcessorOptions};
-use crate::collection::MapCollection;
 use crate::transaction::Transaction;
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -120,8 +119,6 @@ pub fn create_xml() -> Box<dyn BodyProcessor> {
 mod tests {
     use super::*;
     use crate::body_processors::get_body_processor;
-    use crate::collection::Keyed;
-
     #[test]
     fn test_xml_attributes() {
         // Go test: TestXMLAttribures

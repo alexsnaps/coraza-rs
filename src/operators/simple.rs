@@ -381,8 +381,6 @@ mod tests {
 
     // Mock transaction state for testing macro expansion
     fn mock_tx() -> Transaction {
-        use crate::collection::MapCollection;
-
         let mut tx = Transaction::new("operator-test");
         let Some(crate::transaction::VariableCollection::Map(vars)) =
             tx.collection_mut(RuleVariable::TX)

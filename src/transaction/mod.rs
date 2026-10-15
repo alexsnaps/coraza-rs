@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::RuleVariable;
 use crate::actions::AllowType;
-use crate::collection::{Keyed, Map, MapCollection, Single, SingleCollection};
+use crate::collection::{Map, Single};
 use crate::rules::RuleGroup;
 use crate::types::{RuleEngineStatus, RulePhase};
 
@@ -208,7 +208,6 @@ macro_rules! variable_storage {
 ///
 /// ```
 /// use coraza::transaction::Transaction;
-/// use coraza::collection::{Keyed, MapCollection};
 ///
 /// let mut tx = Transaction::new("tx-001");
 ///
@@ -881,7 +880,6 @@ impl Transaction {
     ///
     /// ```
     /// use coraza::transaction::Transaction;
-    /// use coraza::collection::Keyed;
     ///
     /// let mut tx = Transaction::new("tx-1");
     /// tx.process_uri("/api/users?id=123&name=admin", "GET", "HTTP/1.1");
@@ -1001,7 +999,6 @@ impl Transaction {
     ///
     /// ```
     /// use coraza::transaction::Transaction;
-    /// use coraza::collection::Keyed;
     ///
     /// let mut tx = Transaction::new("tx-1");
     /// tx.add_request_header("User-Agent", "Mozilla/5.0");
@@ -1051,7 +1048,6 @@ impl Transaction {
     ///
     /// ```
     /// use coraza::transaction::Transaction;
-    /// use coraza::collection::SingleCollection;
     ///
     /// let mut tx = Transaction::new("tx-1");
     /// tx.add_response_header("Content-Type", "application/json; charset=utf-8");
@@ -1134,7 +1130,6 @@ impl Transaction {
     ///
     /// ```
     /// use coraza::transaction::Transaction;
-    /// use coraza::collection::Keyed;
     ///
     /// let mut tx = Transaction::new("tx-1");
     /// tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
@@ -1221,7 +1216,6 @@ impl Transaction {
     ///
     /// ```
     /// use coraza::transaction::Transaction;
-    /// use coraza::collection::SingleCollection;
     ///
     /// let mut tx = Transaction::new("tx-1");
     /// tx.add_response_header("Content-Type", "application/json");
@@ -1501,8 +1495,6 @@ impl Transaction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collection::{Collection, MapCollection};
-
     #[test]
     fn test_transaction_new() {
         let tx = Transaction::new("tx-001");
