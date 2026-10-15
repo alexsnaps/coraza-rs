@@ -7,7 +7,6 @@
 //! For example: `{"user": {"name": "admin"}}` becomes `json.user.name` = "admin"
 
 use super::{BodyProcessor, BodyProcessorError, BodyProcessorOptions};
-use crate::collection::MapCollection;
 use crate::transaction::Transaction;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -155,17 +154,10 @@ fn flatten_value(value: &Value, key_buffer: &mut Vec<u8>, result: &mut HashMap<S
     }
 }
 
-/// Factory function for creating JSON body processors
-pub fn create_json() -> Box<dyn BodyProcessor> {
-    Box::new(JsonBodyProcessor)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::body_processors::get_body_processor;
-    use crate::collection::{Keyed, SingleCollection};
-
+    use crate::body_processors::BodyProcessorKind;
     #[test]
     fn test_json_map() {
         let json = r#"
@@ -341,7 +333,7 @@ mod tests {
 
     #[test]
     fn test_json_from_registry() {
-        let processor = get_body_processor("json").unwrap();
+        let processor = BodyProcessorKind::Json;
         let mut tx = Transaction::new("test-3");
 
         let body = br#"{"test": "value"}"#;

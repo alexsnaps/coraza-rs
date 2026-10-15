@@ -11,12 +11,11 @@
 //! - Flow control (skip, skipAfter)
 //! - Deferred actions (exec, expirevar, setenv, initcol)
 
-use coraza::actions::{ActionType, Rule as ActionRule};
-use coraza::body_processors::{BodyProcessorOptions, get_body_processor};
-use coraza::collection::Keyed;
+use coraza::RulePhase;
+use coraza::actions::{Action, ActionType, RuleMetadata};
+use coraza::body_processors::{BodyProcessorKind, BodyProcessorOptions};
 use coraza::rules::{Rule, RuleGroup};
 use coraza::transaction::{Interruption, Transaction};
-use coraza::{RulePhase, RuleVariable};
 
 // ===== Body Processor Integration Tests =====
 
@@ -25,7 +24,7 @@ fn test_urlencoded_body_processing() {
     let mut tx = Transaction::new("urlencoded-test");
 
     // Process URL-encoded body
-    let processor = get_body_processor("urlencoded").unwrap();
+    let processor = BodyProcessorKind::UrlEncoded;
     let body = b"username=admin&password=secret123&remember=true";
 
     processor
@@ -49,7 +48,7 @@ fn test_json_body_processing() {
     let mut tx = Transaction::new("json-test");
 
     // Process JSON body
-    let processor = get_body_processor("json").unwrap();
+    let processor = BodyProcessorKind::Json;
     let body = br#"{"user": {"name": "admin", "role": "super"}, "items": [1, 2, 3]}"#;
 
     processor
@@ -68,7 +67,7 @@ fn test_xml_body_processing() {
     let mut tx = Transaction::new("xml-test");
 
     // Process XML body
-    let processor = get_body_processor("xml").unwrap();
+    let processor = BodyProcessorKind::Xml;
     let body = br#"<user role="admin"><name>John</name></user>"#;
 
     processor
@@ -280,25 +279,14 @@ fn test_skipafter_finds_marker() {
 
 #[test]
 fn test_setenv_action_execution() {
-    use coraza::actions::get;
-
-    let mut action = get("setenv").unwrap();
-    let mut rule = ActionRule::new();
-
-    // Initialize with key=value
-    action.init(&mut rule, "TEST_VAR=test_value").unwrap();
+    let mut rule = RuleMetadata::new();
+    let action = Action::parse("setenv", "TEST_VAR=test_value", &mut rule)
+        .unwrap()
+        .expect("setenv runs when the rule matches");
     assert_eq!(action.action_type(), ActionType::Nondisruptive);
 
     // Execute (sets environment variable)
-    use coraza::operators::TransactionState;
-    struct MockTx;
-    impl TransactionState for MockTx {
-        fn get_variable(&self, _var: RuleVariable, _key: Option<&str>) -> Option<String> {
-            None
-        }
-    }
-
-    let mut tx = MockTx;
+    let mut tx = Transaction::new("action-test");
     action.evaluate(&rule, &mut tx);
 
     // Verify environment variable was set
@@ -311,27 +299,11 @@ fn test_setenv_action_execution() {
 }
 
 #[test]
-fn test_exec_action_is_safe_stub() {
-    use coraza::actions::get;
-
-    // Exec should be registered but not execute anything
-    let mut action = get("exec").unwrap();
-    let mut rule = ActionRule::new();
-
-    // Should parse script path
-    action.init(&mut rule, "/usr/bin/test.sh").unwrap();
-
-    // Execute should be safe (no-op)
-    use coraza::operators::TransactionState;
-    struct MockTx;
-    impl TransactionState for MockTx {
-        fn get_variable(&self, _var: RuleVariable, _key: Option<&str>) -> Option<String> {
-            None
-        }
-    }
-
-    let mut tx = MockTx;
-    action.evaluate(&rule, &mut tx); // Should not crash or execute anything
+fn test_exec_action_is_never_run() {
+    // exec is accepted, but has no runtime part: scripts are never executed
+    let mut rule = RuleMetadata::new();
+    let action = Action::parse("exec", "/usr/bin/test.sh", &mut rule).unwrap();
+    assert!(action.is_none());
 }
 
 // ===== Combined Scenario Tests =====

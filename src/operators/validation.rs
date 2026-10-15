@@ -4,7 +4,7 @@
 //! utility operators that always match or never match.
 
 use crate::operators::Operator;
-use crate::operators::macros::TransactionState;
+use crate::transaction::Transaction;
 
 /// Unconditional match operator.
 ///
@@ -34,7 +34,7 @@ use crate::operators::macros::TransactionState;
 pub struct UnconditionalMatch;
 
 impl Operator for UnconditionalMatch {
-    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, _input: &str) -> bool {
+    fn evaluate(&self, _tx: Option<&mut Transaction>, _input: &str) -> bool {
         true
     }
 }
@@ -81,7 +81,7 @@ pub fn unconditional_match() -> UnconditionalMatch {
 pub struct NoMatch;
 
 impl Operator for NoMatch {
-    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, _input: &str) -> bool {
+    fn evaluate(&self, _tx: Option<&mut Transaction>, _input: &str) -> bool {
         false
     }
 }
@@ -197,7 +197,7 @@ impl ValidateByteRange {
 }
 
 impl Operator for ValidateByteRange {
-    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, _tx: Option<&mut Transaction>, input: &str) -> bool {
         if input.is_empty() {
             return false; // Empty input is valid
         }
@@ -261,16 +261,8 @@ pub fn validate_byte_range(ranges: &str) -> Result<ValidateByteRange, String> {
 #[derive(Debug, Clone, Copy)]
 pub struct ValidateUrlEncoding;
 
-impl ValidateUrlEncoding {
-    /// Checks if a character is a valid hexadecimal digit.
-    #[inline]
-    fn is_hex_digit(c: u8) -> bool {
-        c.is_ascii_hexdigit()
-    }
-}
-
 impl Operator for ValidateUrlEncoding {
-    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, _tx: Option<&mut Transaction>, input: &str) -> bool {
         if input.is_empty() {
             return false; // Empty input is valid
         }
@@ -290,7 +282,7 @@ impl Operator for ValidateUrlEncoding {
                 let c1 = bytes[i + 1];
                 let c2 = bytes[i + 2];
 
-                if !Self::is_hex_digit(c1) || !Self::is_hex_digit(c2) {
+                if !c1.is_ascii_hexdigit() || !c2.is_ascii_hexdigit() {
                     return true; // Non-hexadecimal characters (violation)
                 }
 
@@ -352,7 +344,7 @@ pub fn validate_url_encoding() -> ValidateUrlEncoding {
 pub struct ValidateUtf8Encoding;
 
 impl Operator for ValidateUtf8Encoding {
-    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, _input: &str) -> bool {
+    fn evaluate(&self, _tx: Option<&mut Transaction>, _input: &str) -> bool {
         // In Rust, &str is guaranteed to be valid UTF-8, so this always returns false
         // However, if we receive input from C FFI or unsafe code, we should check
         // For now, since our input is &str, it's always valid UTF-8

@@ -5,44 +5,12 @@
 //!
 //! Compiles SecRule, SecAction, and SecMarker directives into executable Rule structures.
 
-use crate::actions::ActionError;
-use crate::rules::{Rule, RuleAction, RuleOperator};
+use crate::actions::Action;
+use crate::rules::Rule;
+use crate::seclang::CompileError;
+use crate::seclang::action_parser::ParsedAction;
 use crate::seclang::{parse_actions, parse_operator, parse_variables};
 use crate::utils::strings::maybe_remove_quotes;
-
-/// Compilation error for SecLang rules
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompileError {
-    pub message: String,
-}
-
-impl std::fmt::Display for CompileError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl std::error::Error for CompileError {}
-
-impl CompileError {
-    fn new(message: String) -> Self {
-        Self { message }
-    }
-}
-
-impl From<String> for CompileError {
-    fn from(message: String) -> Self {
-        Self { message }
-    }
-}
-
-impl From<ActionError> for CompileError {
-    fn from(err: ActionError) -> Self {
-        Self {
-            message: format!("action error: {}", err),
-        }
-    }
-}
 
 type CompileResult<T> = Result<T, CompileError>;
 
@@ -72,7 +40,7 @@ pub fn compile_sec_rule(input: &str) -> CompileResult<Rule> {
         .map_err(|e| CompileError::new(format!("failed to parse variables '{}': {}", vars, e)))?;
 
     // Parse operator
-    let parsed_operator = parse_operator(&operator).map_err(|e| {
+    let rule_operator = parse_operator(&operator).map_err(|e| {
         CompileError::new(format!("failed to parse operator '{}': {}", operator, e))
     })?;
 
@@ -93,27 +61,9 @@ pub fn compile_sec_rule(input: &str) -> CompileResult<Rule> {
         rule = rule.add_variable(var_spec);
     }
 
-    // Add operator
-    let operator_instance = RuleOperator::new(
-        parsed_operator.operator,
-        parsed_operator.function_name,
-        parsed_operator.arguments,
-    );
-    rule = rule.with_operator(operator_instance);
+    rule = rule.with_operator(rule_operator);
 
-    // Initialize and add actions
-    for mut parsed_action in parsed_actions {
-        // Initialize action with rule metadata
-        parsed_action
-            .action
-            .init(rule.metadata_mut(), &parsed_action.value)?;
-
-        // Create RuleAction and add to rule
-        let rule_action = RuleAction::new(parsed_action.key, parsed_action.action);
-        rule = rule.add_action(rule_action);
-    }
-
-    Ok(rule)
+    add_actions(rule, parsed_actions)
 }
 
 /// Compile a SecAction directive into a Rule.
@@ -145,20 +95,17 @@ pub fn compile_sec_action(input: &str) -> CompileResult<Rule> {
         .map_err(|e| CompileError::new(format!("failed to parse actions '{}': {}", actions, e)))?;
 
     // Build rule (no operator, no variables)
-    let mut rule = Rule::new();
+    add_actions(Rule::new(), parsed_actions)
+}
 
-    // Initialize and add actions
-    for mut parsed_action in parsed_actions {
-        // Initialize action with rule metadata
-        parsed_action
-            .action
-            .init(rule.metadata_mut(), &parsed_action.value)?;
-
-        // Create RuleAction and add to rule
-        let rule_action = RuleAction::new(parsed_action.key, parsed_action.action);
-        rule = rule.add_action(rule_action);
+/// Applies parsed actions to `rule` in order: metadata actions update its metadata,
+/// the others are added to it (a later disruptive action replaces an earlier one).
+fn add_actions(mut rule: Rule, parsed_actions: Vec<ParsedAction>) -> CompileResult<Rule> {
+    for parsed in parsed_actions {
+        if let Some(action) = Action::parse(&parsed.key, &parsed.value, rule.metadata_mut())? {
+            rule = rule.add_action(action);
+        }
     }
-
     Ok(rule)
 }
 
@@ -390,5 +337,18 @@ mod tests {
     fn test_compile_sec_marker_empty() {
         let result = compile_sec_marker("");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unknown_action_is_a_compile_error() {
+        let err = compile_sec_action("id:1,unknownaction").unwrap_err();
+        assert!(err.message.contains("unknown action"), "{}", err.message);
+    }
+
+    #[test]
+    fn test_last_disruptive_action_wins() {
+        let rule = compile_sec_action("id:1,deny,setvar:tx.a=1,drop").unwrap();
+        let names: Vec<&str> = rule.actions().iter().map(|a| a.name()).collect();
+        assert_eq!(names, ["setvar", "drop"]);
     }
 }

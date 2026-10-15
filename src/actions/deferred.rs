@@ -8,8 +8,9 @@
 //! - Persistence layer (expirevar, initcol)
 //! - Environment variable access (setenv)
 
-use crate::actions::{Action, ActionError, ActionType, Rule, TransactionState};
+use crate::actions::{ActionError, RuleMetadata};
 use crate::operators::Macro;
+use crate::transaction::Transaction;
 
 /// `exec` action - Execute external script/binary.
 ///
@@ -41,43 +42,12 @@ use crate::operators::Macro;
 /// SecRule REQUEST_URI "^/cgi-bin/script\.pl" \
 ///     "phase:2,id:112,block,exec:/usr/local/apache/bin/test.sh"
 /// ```
-#[derive(Debug)]
-pub struct ExecAction {
-    script: String,
-}
-
-impl ExecAction {
-    pub fn new() -> Self {
-        Self {
-            script: String::new(),
-        }
+/// Accepts the script path; scripts are never executed (as in Go Coraza).
+pub(super) fn exec(_rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
+    if data.is_empty() {
+        return Err(ActionError::MissingArguments);
     }
-}
-
-impl Default for ExecAction {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Action for ExecAction {
-    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
-        if data.is_empty() {
-            return Err(ActionError::MissingArguments);
-        }
-
-        self.script = data.to_string();
-        Ok(())
-    }
-
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
-        // Not implemented for security reasons (matches Go behavior)
-        // Executing arbitrary external processes from a WAF is dangerous
-    }
-
-    fn action_type(&self) -> ActionType {
-        ActionType::Nondisruptive
-    }
+    Ok(())
 }
 
 /// `expirevar` action - Configure collection variable expiration.
@@ -106,61 +76,20 @@ impl Action for ExecAction {
 /// SecRule REQUEST_URI "^/cgi-bin/script\.pl" \
 ///     "phase:2,id:115,log,allow,setvar:session.suspicious=1,expirevar:session.suspicious=3600"
 /// ```
-#[derive(Debug)]
-pub struct ExpirevarAction {
-    variable: String,
-    seconds: i64,
-}
-
-impl ExpirevarAction {
-    pub fn new() -> Self {
-        Self {
-            variable: String::new(),
-            seconds: 0,
-        }
-    }
-}
-
-impl Default for ExpirevarAction {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Action for ExpirevarAction {
-    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
-        if data.is_empty() {
-            return Err(ActionError::MissingArguments);
-        }
-
-        // Parse variable=seconds format
-        let parts: Vec<&str> = data.split('=').collect();
-        if parts.len() != 2 {
-            return Err(ActionError::InvalidArguments(
-                "expirevar requires format: variable=seconds".to_string(),
-            ));
-        }
-
-        self.variable = parts[0].to_string();
-        self.seconds = parts[1].parse::<i64>().map_err(|_| {
-            ActionError::InvalidArguments(format!("invalid expiration time: {}", parts[1]))
-        })?;
-
-        Ok(())
+/// Validates `variable=seconds`; expiring variables needs a persistence layer this engine
+/// doesn't have yet, so the action has no runtime effect (as in Go Coraza).
+pub(super) fn expirevar(_rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
+    if data.is_empty() {
+        return Err(ActionError::MissingArguments);
     }
 
-    fn evaluate(&self, rule: &Rule, _tx: &mut dyn TransactionState) {
-        // Not supported - would require persistence layer (matches Go behavior)
-        // Go logs: "Expirevar was used but it's not supported"
-        eprintln!(
-            "Warning: expirevar action in rule {} is not fully supported (requires persistence layer)",
-            rule.id
-        );
-    }
-
-    fn action_type(&self) -> ActionType {
-        ActionType::Nondisruptive
-    }
+    let (_variable, seconds) = data.split_once('=').ok_or_else(|| {
+        ActionError::InvalidArguments("expirevar requires format: variable=seconds".to_string())
+    })?;
+    seconds.parse::<i64>().map_err(|_| {
+        ActionError::InvalidArguments(format!("invalid expiration time: {}", seconds))
+    })?;
+    Ok(())
 }
 
 /// `setenv` action - Create, remove, or update environment variables.
@@ -187,43 +116,23 @@ impl Action for ExpirevarAction {
 /// SecRule TX:SESSIONID "!(?i:\;? ?httponly;?)" \
 ///     "phase:3,id:140,setenv:httponly_cookie=%{matched_var},pass,log"
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SetenvAction {
     key: String,
     value: Macro,
 }
 
 impl SetenvAction {
-    pub fn new() -> Self {
-        Self {
-            key: String::new(),
-            value: Macro::empty(),
-        }
-    }
-}
-
-impl Default for SetenvAction {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Action for SetenvAction {
-    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    /// Parses `key=value`; the value may contain macros.
+    pub fn parse(data: &str) -> Result<Self, ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
 
-        // Parse key=value format
-        let parts: Vec<&str> = data.splitn(2, '=').collect();
-        if parts.len() != 2 {
-            return Err(ActionError::InvalidArguments(
-                "setenv requires format: key=value".to_string(),
-            ));
-        }
-
-        let key = parts[0].trim();
-        let value = parts[1];
+        let (key, value) = data.split_once('=').ok_or_else(|| {
+            ActionError::InvalidArguments("setenv requires format: key=value".to_string())
+        })?;
+        let key = key.trim();
 
         if key.is_empty() {
             return Err(ActionError::InvalidArguments("missing env key".to_string()));
@@ -235,14 +144,14 @@ impl Action for SetenvAction {
             ));
         }
 
-        self.key = key.to_string();
-        self.value = Macro::new(value)
-            .map_err(|e| ActionError::InvalidArguments(format!("invalid macro: {}", e)))?;
-
-        Ok(())
+        Ok(Self {
+            key: key.to_string(),
+            value: Macro::new(value)
+                .map_err(|e| ActionError::InvalidArguments(format!("invalid macro: {}", e)))?,
+        })
     }
 
-    fn evaluate(&self, _rule: &Rule, tx: &mut dyn TransactionState) {
+    pub fn evaluate(&self, tx: &mut Transaction) {
         // Expand macro with transaction state
         let value = self.value.expand(Some(tx));
 
@@ -256,10 +165,6 @@ impl Action for SetenvAction {
 
         // TODO: Also set in ENV collection when we add it to Transaction
         // tx.env_mut().set(&self.key, &value);
-    }
-
-    fn action_type(&self) -> ActionType {
-        ActionType::Nondisruptive
     }
 }
 
@@ -290,62 +195,17 @@ impl Action for SetenvAction {
 /// # Initiates IP address tracking, best done in phase 1
 /// SecAction "phase:1,id:116,nolog,pass,initcol:ip=%{REMOTE_ADDR}"
 /// ```
-#[derive(Debug)]
-pub struct InitcolAction {
-    collection: String,
-    key: String,
-}
-
-impl InitcolAction {
-    pub fn new() -> Self {
-        Self {
-            collection: String::new(),
-            key: String::new(),
-        }
-    }
-}
-
-impl Default for InitcolAction {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Action for InitcolAction {
-    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
-        if data.is_empty() {
-            return Err(ActionError::MissingArguments);
-        }
-
-        // Parse collection=key format
-        let parts: Vec<&str> = data.splitn(2, '=').collect();
-        if parts.len() != 2 {
-            return Err(ActionError::InvalidArguments(
-                "initcol requires format: collection=key".to_string(),
-            ));
-        }
-
-        self.collection = parts[0].to_string();
-        self.key = parts[1].to_string();
-
-        Ok(())
+/// Validates `collection=key`; persistent collections need a persistence layer this
+/// engine doesn't have yet, so the action has no runtime effect.
+pub(super) fn initcol(_rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
+    if data.is_empty() {
+        return Err(ActionError::MissingArguments);
     }
 
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
-        // Not fully implemented - persistence layer deferred to Phase 10
-        // Go implementation has this commented out with TODO
-
-        // Would do:
-        // 1. Expand macro in key
-        // 2. Load collection from persistence storage
-        // 3. If not exists, create new collection with metadata:
-        //    - CREATE_TIME, IS_NEW, KEY, LAST_UPDATE_TIME, TIMEOUT, UPDATE_COUNTER
-        // 4. Set collection data in transaction
-    }
-
-    fn action_type(&self) -> ActionType {
-        ActionType::Nondisruptive
-    }
+    data.split_once('=').ok_or_else(|| {
+        ActionError::InvalidArguments("initcol requires format: collection=key".to_string())
+    })?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -356,164 +216,91 @@ mod tests {
 
     #[test]
     fn test_exec_missing_arguments() {
-        let mut action = ExecAction::new();
-        let result = action.init(&mut Rule::new(), "");
+        let result = exec(&mut RuleMetadata::new(), "");
         assert_eq!(result, Err(ActionError::MissingArguments));
     }
 
     #[test]
     fn test_exec_valid() {
-        let mut action = ExecAction::new();
-        let result = action.init(&mut Rule::new(), "/usr/bin/test.sh");
+        let result = exec(&mut RuleMetadata::new(), "/usr/bin/test.sh");
         assert!(result.is_ok());
-        assert_eq!(action.script, "/usr/bin/test.sh");
     }
-
-    #[test]
-    fn test_exec_evaluate_does_nothing() {
-        // Exec is a stub - evaluate should not crash but also not execute anything
-        let mut action = ExecAction::new();
-        action.init(&mut Rule::new(), "/usr/bin/test.sh").unwrap();
-
-        // Mock transaction state
-        struct MockTx;
-        impl TransactionState for MockTx {
-            fn get_variable(
-                &self,
-                _variable: crate::RuleVariable,
-                _key: Option<&str>,
-            ) -> Option<String> {
-                None
-            }
-        }
-
-        let mut tx = MockTx;
-        action.evaluate(&Rule::new(), &mut tx);
-        // Should not crash - verify by test completing
-    }
-
-    #[test]
-    fn test_exec_action_type() {
-        let action = ExecAction::new();
-        assert_eq!(action.action_type(), ActionType::Nondisruptive);
-    }
-
-    // ===== ExpirevarAction Tests =====
 
     #[test]
     fn test_expirevar_missing_arguments() {
-        let mut action = ExpirevarAction::new();
-        let result = action.init(&mut Rule::new(), "");
+        let result = expirevar(&mut RuleMetadata::new(), "");
         assert_eq!(result, Err(ActionError::MissingArguments));
     }
 
     #[test]
     fn test_expirevar_invalid_format() {
-        let mut action = ExpirevarAction::new();
-        let result = action.init(&mut Rule::new(), "session.suspicious");
+        let result = expirevar(&mut RuleMetadata::new(), "session.suspicious");
         assert!(matches!(result, Err(ActionError::InvalidArguments(_))));
     }
 
     #[test]
     fn test_expirevar_invalid_seconds() {
-        let mut action = ExpirevarAction::new();
-        let result = action.init(&mut Rule::new(), "session.suspicious=abc");
+        let result = expirevar(&mut RuleMetadata::new(), "session.suspicious=abc");
         assert!(matches!(result, Err(ActionError::InvalidArguments(_))));
     }
 
     #[test]
     fn test_expirevar_valid() {
-        let mut action = ExpirevarAction::new();
-        let result = action.init(&mut Rule::new(), "session.suspicious=3600");
+        let result = expirevar(&mut RuleMetadata::new(), "session.suspicious=3600");
         assert!(result.is_ok());
-        assert_eq!(action.variable, "session.suspicious");
-        assert_eq!(action.seconds, 3600);
     }
-
-    #[test]
-    fn test_expirevar_action_type() {
-        let action = ExpirevarAction::new();
-        assert_eq!(action.action_type(), ActionType::Nondisruptive);
-    }
-
-    // ===== SetenvAction Tests =====
 
     #[test]
     fn test_setenv_missing_arguments() {
-        let mut action = SetenvAction::new();
-        let result = action.init(&mut Rule::new(), "");
+        let result = SetenvAction::parse("").map(|_| ());
         assert_eq!(result, Err(ActionError::MissingArguments));
     }
 
     #[test]
     fn test_setenv_missing_equals() {
-        let mut action = SetenvAction::new();
-        let result = action.init(&mut Rule::new(), "MYVAR");
+        let result = SetenvAction::parse("MYVAR").map(|_| ());
         assert!(matches!(result, Err(ActionError::InvalidArguments(_))));
     }
 
     #[test]
     fn test_setenv_empty_key() {
-        let mut action = SetenvAction::new();
-        let result = action.init(&mut Rule::new(), "=value");
+        let result = SetenvAction::parse("=value").map(|_| ());
         assert!(matches!(result, Err(ActionError::InvalidArguments(_))));
     }
 
     #[test]
     fn test_setenv_empty_value() {
-        let mut action = SetenvAction::new();
-        let result = action.init(&mut Rule::new(), "MYVAR=");
+        let result = SetenvAction::parse("MYVAR=").map(|_| ());
         assert!(matches!(result, Err(ActionError::InvalidArguments(_))));
     }
 
     #[test]
     fn test_setenv_valid() {
-        let mut action = SetenvAction::new();
-        let result = action.init(&mut Rule::new(), "MYVAR=value123");
-        assert!(result.is_ok());
+        let action = SetenvAction::parse("MYVAR=value123").unwrap();
         assert_eq!(action.key, "MYVAR");
         assert_eq!(action.value.as_str(), "value123");
     }
 
     #[test]
     fn test_setenv_with_macro() {
-        let mut action = SetenvAction::new();
-        let result = action.init(&mut Rule::new(), "SESSION_ID=%{TX.session}");
-        assert!(result.is_ok());
+        let action = SetenvAction::parse("SESSION_ID=%{TX.session}").unwrap();
         assert_eq!(action.key, "SESSION_ID");
         assert_eq!(action.value.as_str(), "%{TX.session}");
     }
 
     #[test]
     fn test_setenv_with_equals_in_value() {
-        let mut action = SetenvAction::new();
-        let result = action.init(&mut Rule::new(), "MYVAR=key=value");
-        assert!(result.is_ok());
+        let action = SetenvAction::parse("MYVAR=key=value").unwrap();
         assert_eq!(action.key, "MYVAR");
         assert_eq!(action.value.as_str(), "key=value");
     }
 
     #[test]
     fn test_setenv_evaluate() {
-        let mut action = SetenvAction::new();
-        action
-            .init(&mut Rule::new(), "TEST_VAR=test_value")
-            .unwrap();
+        let action = SetenvAction::parse("TEST_VAR=test_value").unwrap();
 
-        // Mock transaction state
-        struct MockTx;
-        impl TransactionState for MockTx {
-            fn get_variable(
-                &self,
-                _variable: crate::RuleVariable,
-                _key: Option<&str>,
-            ) -> Option<String> {
-                None
-            }
-        }
-
-        let mut tx = MockTx;
-        action.evaluate(&Rule::new(), &mut tx);
+        let mut tx = Transaction::new("action-test");
+        action.evaluate(&mut tx);
 
         // Verify environment variable was set
         assert_eq!(std::env::var("TEST_VAR").unwrap(), "test_value");
@@ -526,48 +313,29 @@ mod tests {
     }
 
     #[test]
-    fn test_setenv_action_type() {
-        let action = SetenvAction::new();
-        assert_eq!(action.action_type(), ActionType::Nondisruptive);
-    }
-
-    // ===== InitcolAction Tests =====
-
-    #[test]
     fn test_initcol_missing_arguments() {
-        let mut action = InitcolAction::new();
-        let result = action.init(&mut Rule::new(), "");
+        let result = initcol(&mut RuleMetadata::new(), "");
         assert_eq!(result, Err(ActionError::MissingArguments));
     }
 
     #[test]
     fn test_initcol_invalid_format() {
-        let mut action = InitcolAction::new();
-        let result = action.init(&mut Rule::new(), "ip");
+        let result = initcol(&mut RuleMetadata::new(), "ip");
         assert!(matches!(result, Err(ActionError::InvalidArguments(_))));
     }
 
     #[test]
     fn test_initcol_valid() {
-        let mut action = InitcolAction::new();
-        let result = action.init(&mut Rule::new(), "ip=%{REMOTE_ADDR}");
+        let result = initcol(&mut RuleMetadata::new(), "ip=%{REMOTE_ADDR}");
         assert!(result.is_ok());
-        assert_eq!(action.collection, "ip");
-        assert_eq!(action.key, "%{REMOTE_ADDR}");
     }
 
     #[test]
     fn test_initcol_session() {
-        let mut action = InitcolAction::new();
-        let result = action.init(&mut Rule::new(), "session=%{REQUEST_COOKIES.JSESSIONID}");
+        let result = initcol(
+            &mut RuleMetadata::new(),
+            "session=%{REQUEST_COOKIES.JSESSIONID}",
+        );
         assert!(result.is_ok());
-        assert_eq!(action.collection, "session");
-        assert_eq!(action.key, "%{REQUEST_COOKIES.JSESSIONID}");
-    }
-
-    #[test]
-    fn test_initcol_action_type() {
-        let action = InitcolAction::new();
-        assert_eq!(action.action_type(), ActionType::Nondisruptive);
     }
 }

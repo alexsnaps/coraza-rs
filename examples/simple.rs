@@ -11,26 +11,28 @@
 //!
 //! Run with: cargo run --example simple
 
-use coraza::actions::{DenyAction, StatusAction};
+use coraza::actions::{Action, DenyAction};
 use coraza::config::WafConfig;
 use coraza::operators::contains;
-use coraza::rules::{Rule, RuleAction, RuleOperator, VariableSpec};
+use coraza::rules::{Rule, RuleOperator, VariableSpec};
 use coraza::types::{RuleEngineStatus, RulePhase, RuleVariable};
-use coraza::waf::Waf;
+use coraza::waf::{Waf, WafBuilder};
 
 fn main() {
     println!("🛡️  Coraza WAF - Simple Example\n");
 
     // Step 1: Create WAF with configuration
     println!("📝 Step 1: Creating WAF with configuration...");
-    let config = WafConfig::new()
-        .with_rule_engine(RuleEngineStatus::On)
-        .with_request_body_access(true)
-        .with_response_body_access(true)
-        .with_request_body_limit(1048576) // 1MB
-        .with_web_app_id("demo-app".to_string());
+    let config = WafConfig {
+        rule_engine: RuleEngineStatus::On,
+        request_body_access: true,
+        response_body_access: true,
+        request_body_limit: 1048576, // 1MB
+        web_app_id: "demo-app".to_string(),
+        ..WafConfig::default()
+    };
 
-    let mut waf = Waf::new(config).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(config);
     println!("✅ WAF created with configuration\n");
 
     // Step 2: Add security rules
@@ -45,8 +47,7 @@ fn main() {
             "@contains",
             "malicious".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)))
-        .add_action(RuleAction::new("status", Box::new(StatusAction)));
+        .add_action(Action::Deny(DenyAction));
     rule1.metadata_mut().phase = RulePhase::RequestHeaders;
     rule1.metadata_mut().status = 403;
 
@@ -59,16 +60,16 @@ fn main() {
             "@contains",
             "attack".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)))
-        .add_action(RuleAction::new("status", Box::new(StatusAction)));
+        .add_action(Action::Deny(DenyAction));
     rule2.metadata_mut().phase = RulePhase::RequestBody;
     rule2.metadata_mut().status = 403;
 
-    waf.add_rule(rule1).expect("Failed to add rule 100");
-    waf.add_rule(rule2).expect("Failed to add rule 101");
+    builder.add_rule(rule1).expect("Failed to add rule 100");
+    builder.add_rule(rule2).expect("Failed to add rule 101");
 
     println!("✅ Rule 100: Block 'malicious' in query params (Phase 1)");
     println!("✅ Rule 101: Block 'attack' in POST body (Phase 2)");
+    let waf = builder.build().expect("Failed to build WAF");
     println!("📊 Total rules loaded: {}\n", waf.rule_count());
 
     // Step 3: Demonstrate request processing

@@ -18,27 +18,9 @@ use crate::types::RuleVariable;
 use regex::Regex;
 use std::str::FromStr;
 
-/// Parse error for variable syntax
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VariableParseError {
-    pub message: String,
-}
+use crate::seclang::CompileError;
 
-impl std::fmt::Display for VariableParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl std::error::Error for VariableParseError {}
-
-impl VariableParseError {
-    fn new(message: String) -> Self {
-        Self { message }
-    }
-}
-
-type ParseResult<T> = Result<T, VariableParseError>;
+type ParseResult<T> = Result<T, CompileError>;
 
 /// Parsed variable result
 ///
@@ -92,7 +74,7 @@ struct ParsedVariable {
 /// ```
 pub fn parse_variables(input: &str) -> ParseResult<Vec<VariableSpec>> {
     if input.is_empty() {
-        return Err(VariableParseError::new(
+        return Err(CompileError::new(
             "empty variable specification".to_string(),
         ));
     }
@@ -150,12 +132,12 @@ fn parse_variable_list(input: &str) -> ParseResult<Vec<ParsedVariable>> {
             // Parse variable name
             let var_name = String::from_utf8_lossy(&cur_var).to_string();
             let variable = RuleVariable::from_str(&var_name).map_err(|e| {
-                VariableParseError::new(format!("invalid variable name '{}': {}", var_name, e))
+                CompileError::new(format!("invalid variable name '{}': {}", var_name, e))
             })?;
 
             // Check if variable can be selected (has key)
             if state == 1 && !cur_key.is_empty() && !variable.can_be_selected() {
-                return Err(VariableParseError::new(format!(
+                return Err(CompileError::new(format!(
                     "attempting to select a value inside a non-selectable collection: {}",
                     var_name
                 )));
@@ -164,7 +146,7 @@ fn parse_variable_list(input: &str) -> ParseResult<Vec<ParsedVariable>> {
             // Handle quoted keys
             if is_quoted {
                 if i + 1 < bytes.len() && bytes[i + 1] != b'\'' && bytes[i] != b'\'' {
-                    return Err(VariableParseError::new(format!(
+                    return Err(CompileError::new(format!(
                         "unclosed quote: {:?}",
                         String::from_utf8_lossy(&cur_key)
                     )));
@@ -270,7 +252,7 @@ fn parse_variable_list(input: &str) -> ParseResult<Vec<ParsedVariable>> {
     }
 
     if vars.is_empty() {
-        return Err(VariableParseError::new("no variables parsed".to_string()));
+        return Err(CompileError::new("no variables parsed".to_string()));
     }
 
     Ok(vars)
@@ -284,7 +266,7 @@ fn build_variable_spec(var: ParsedVariable) -> ParseResult<VariableSpec> {
             // Regex key
             let pattern = &key[1..key.len() - 1];
             let regex = Regex::new(pattern).map_err(|e| {
-                VariableParseError::new(format!("invalid regex pattern '{}': {}", pattern, e))
+                CompileError::new(format!("invalid regex pattern '{}': {}", pattern, e))
             })?;
             VariableSpec::new_regex(var.variable, regex)
         } else {
@@ -309,7 +291,7 @@ fn build_variable_spec(var: ParsedVariable) -> ParseResult<VariableSpec> {
             // Regex exception
             let pattern = &key[1..key.len() - 1];
             let regex = Regex::new(pattern).map_err(|e| {
-                VariableParseError::new(format!("invalid regex pattern '{}': {}", pattern, e))
+                CompileError::new(format!("invalid regex pattern '{}': {}", pattern, e))
             })?;
             spec.add_exception_regex(regex);
         } else {

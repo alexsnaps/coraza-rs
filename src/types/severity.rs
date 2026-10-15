@@ -7,6 +7,8 @@
 //! These are used to categorize the importance of rule matches and determine logging behavior.
 
 use std::fmt;
+
+use super::ParseValueError;
 use std::str::FromStr;
 
 /// Represents the severity of a triggered rule.
@@ -88,22 +90,8 @@ impl fmt::Display for RuleSeverity {
     }
 }
 
-/// Error type for invalid severity parsing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseSeverityError {
-    input: String,
-}
-
-impl fmt::Display for ParseSeverityError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid severity: {}", self.input)
-    }
-}
-
-impl std::error::Error for ParseSeverityError {}
-
 impl FromStr for RuleSeverity {
-    type Err = ParseSeverityError;
+    type Err = ParseValueError;
 
     /// Parses a string into a RuleSeverity.
     ///
@@ -135,9 +123,7 @@ impl FromStr for RuleSeverity {
                 5 => Ok(RuleSeverity::Notice),
                 6 => Ok(RuleSeverity::Info),
                 7 => Ok(RuleSeverity::Debug),
-                _ => Err(ParseSeverityError {
-                    input: s.to_string(),
-                }),
+                _ => Err(ParseValueError::new("invalid severity", s.to_string())),
             };
         }
 
@@ -151,9 +137,7 @@ impl FromStr for RuleSeverity {
             "notice" => Ok(RuleSeverity::Notice),
             "info" => Ok(RuleSeverity::Info),
             "debug" => Ok(RuleSeverity::Debug),
-            _ => Err(ParseSeverityError {
-                input: s.to_string(),
-            }),
+            _ => Err(ParseValueError::new("invalid severity", s.to_string())),
         }
     }
 }

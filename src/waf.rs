@@ -9,8 +9,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::actions::Action;
 use crate::config::WafConfig;
-use crate::rules::{Rule, RuleAction, RuleGroup, VariableSpec};
+use crate::rules::{Rule, RuleGroup, VariableSpec};
 use crate::transaction::Transaction;
 use crate::types::RulePhase;
 use crate::utils::strings::random_string;
@@ -58,11 +59,11 @@ impl std::fmt::Display for WafError {
 
 impl std::error::Error for WafError {}
 
-/// WAF instance that manages configuration, rules, and transactions.
+/// WAF instance that holds configuration and rules, and creates transactions.
 ///
-/// A WAF instance is thread-safe and can be shared across multiple threads.
-/// Each web application should have its own WAF instance, but you can share
-/// an instance if you're okay with sharing configurations and rules.
+/// A `Waf` is immutable and thread-safe: share one across threads (e.g. in an `Arc`)
+/// to process concurrent requests. Build one with [`WafBuilder`], with
+/// [`crate::seclang::Parser::into_waf`], or with [`Waf::new`] for a WAF without rules.
 ///
 /// # Examples
 ///
@@ -71,9 +72,11 @@ impl std::error::Error for WafError {}
 /// use coraza::config::WafConfig;
 /// use coraza::RuleEngineStatus;
 ///
-/// let config = WafConfig::new()
-///     .with_rule_engine(RuleEngineStatus::On)
-///     .with_request_body_limit(1048576);
+/// let config = WafConfig {
+///     rule_engine: RuleEngineStatus::On,
+///     request_body_limit: 1048576,
+///     ..WafConfig::default()
+/// };
 ///
 /// let waf = Waf::new(config).unwrap();
 ///
@@ -86,18 +89,15 @@ pub struct Waf {
     /// Configuration settings
     config: WafConfig,
 
-    /// Rule group for evaluation
-    /// Rules can be added during WAF setup, then the WAF is used read-only.
-    /// Wrapped in Arc to allow sharing with transactions for CTL rule exclusion.
+    /// Rules in evaluation order, shared with transactions for CTL rule exclusion
     rules: Arc<RuleGroup>,
 
     /// Default actions per phase
-    /// These are applied to rules in each phase if they don't have explicit actions
-    default_actions: HashMap<RulePhase, Vec<RuleAction>>,
+    default_actions: HashMap<RulePhase, Vec<Action>>,
 }
 
 impl Waf {
-    /// Creates a new WAF instance with the provided configuration.
+    /// Creates a WAF without rules.
     ///
     /// # Errors
     ///
@@ -116,20 +116,7 @@ impl Waf {
     /// let waf = Waf::new(config).unwrap();
     /// ```
     pub fn new(config: WafConfig) -> Result<Self, ConfigError> {
-        // Validate configuration
-        Self::validate_config(&config)?;
-
-        // Create empty rule group wrapped in Arc for sharing with transactions
-        let rules = Arc::new(RuleGroup::new());
-
-        // Initialize default actions storage
-        let default_actions = HashMap::new();
-
-        Ok(Self {
-            config,
-            rules,
-            default_actions,
-        })
+        WafBuilder::new(config).build()
     }
 
     /// Creates a new transaction with an auto-generated ID.
@@ -168,11 +155,11 @@ impl Waf {
         let mut tx = Transaction::new(id);
 
         // Inherit configuration from WAF
-        tx.set_rule_engine(self.config.rule_engine());
-        tx.set_request_body_access(self.config.request_body_access());
-        tx.set_request_body_limit(self.config.request_body_limit());
-        tx.set_response_body_access(self.config.response_body_access());
-        tx.set_response_body_limit(self.config.response_body_limit());
+        tx.set_rule_engine(self.config.rule_engine);
+        tx.set_request_body_access(self.config.request_body_access);
+        tx.set_request_body_limit(self.config.request_body_limit);
+        tx.set_response_body_access(self.config.response_body_access);
+        tx.set_response_body_limit(self.config.response_body_limit);
 
         // Share rules reference for CTL tag/msg-based exclusions
         tx.set_rules(Arc::clone(&self.rules));
@@ -189,10 +176,13 @@ impl Waf {
     /// use coraza::config::WafConfig;
     /// use coraza::RuleEngineStatus;
     ///
-    /// let config = WafConfig::new().with_rule_engine(RuleEngineStatus::DetectionOnly);
+    /// let config = WafConfig {
+    ///     rule_engine: RuleEngineStatus::DetectionOnly,
+    ///     ..WafConfig::default()
+    /// };
     /// let waf = Waf::new(config).unwrap();
     ///
-    /// assert_eq!(waf.config().rule_engine(), RuleEngineStatus::DetectionOnly);
+    /// assert_eq!(waf.config().rule_engine, RuleEngineStatus::DetectionOnly);
     /// ```
     pub fn config(&self) -> &WafConfig {
         &self.config
@@ -203,375 +193,24 @@ impl Waf {
         &self.rules
     }
 
-    /// Returns the number of rules loaded in this WAF.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::waf::Waf;
-    /// use coraza::config::WafConfig;
-    ///
-    /// let waf = Waf::new(WafConfig::new()).unwrap();
-    /// assert_eq!(waf.rule_count(), 0); // No rules loaded yet
-    /// ```
+    /// Returns the number of top-level rules; chained rules count with their parent.
     pub fn rule_count(&self) -> usize {
         self.rules.count()
     }
 
-    /// Adds a single rule to the WAF.
-    ///
-    /// # Errors
-    ///
-    /// Returns `WafError::RuleError` if:
-    /// - A rule with the same ID already exists
-    /// - The rule is invalid
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::waf::Waf;
-    /// use coraza::config::WafConfig;
-    /// use coraza::rules::Rule;
-    ///
-    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
-    /// let rule = Rule::new().with_id(1);
-    ///
-    /// waf.add_rule(rule).unwrap();
-    /// assert_eq!(waf.rule_count(), 1);
-    /// ```
-    pub fn add_rule(&mut self, rule: Rule) -> Result<(), WafError> {
-        Arc::get_mut(&mut self.rules)
-            .expect("Cannot modify rules after sharing with transactions")
-            .add(rule)
-            .map_err(WafError::RuleError)
-    }
-
-    /// Link chained rules together after loading all rules.
-    ///
-    /// This MUST be called after loading all rules from SecLang files and before
-    /// creating any transactions. Rules with the `chain` action need to be linked
-    /// to the next rule in the same phase to properly implement AND logic.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use coraza::waf::Waf;
-    /// # use coraza::config::WafConfig;
-    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
-    /// // Load rules from files...
-    /// waf.link_chains();  // Link chained rules
-    /// ```
-    pub fn link_chains(&mut self) {
-        Arc::get_mut(&mut self.rules)
-            .expect("Cannot modify rules after sharing with transactions")
-            .link_chains();
-    }
-
-    // Note: SecLang rule parsing (SecRule directives) will be added in future steps.
-    // For now, rules must be constructed programmatically using the Rule builder.
-
-    /// Removes a rule by its ID.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::waf::Waf;
-    /// use coraza::config::WafConfig;
-    /// use coraza::rules::Rule;
-    ///
-    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
-    /// waf.add_rule(Rule::new().with_id(1)).unwrap();
-    /// waf.add_rule(Rule::new().with_id(2)).unwrap();
-    ///
-    /// waf.remove_rule_by_id(1);
-    /// assert_eq!(waf.rule_count(), 1);
-    /// ```
-    pub fn remove_rule_by_id(&mut self, id: i32) {
-        Arc::get_mut(&mut self.rules)
-            .expect("Cannot modify rules after sharing with transactions")
-            .delete_by_id(id);
-    }
-
-    /// Removes rules within an ID range (inclusive).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::waf::Waf;
-    /// use coraza::config::WafConfig;
-    /// use coraza::rules::Rule;
-    ///
-    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
-    /// waf.add_rule(Rule::new().with_id(100)).unwrap();
-    /// waf.add_rule(Rule::new().with_id(101)).unwrap();
-    /// waf.add_rule(Rule::new().with_id(102)).unwrap();
-    /// waf.add_rule(Rule::new().with_id(200)).unwrap();
-    ///
-    /// waf.remove_rules_by_id_range(100, 102);
-    /// assert_eq!(waf.rule_count(), 1); // Only 200 remains
-    /// ```
-    pub fn remove_rules_by_id_range(&mut self, start: i32, end: i32) {
-        Arc::get_mut(&mut self.rules)
-            .expect("Cannot modify rules after sharing with transactions")
-            .delete_by_range(start, end);
-    }
-
-    /// Removes rules by tag.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::waf::Waf;
-    /// use coraza::config::WafConfig;
-    /// use coraza::rules::Rule;
-    ///
-    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
-    ///
-    /// let mut rule1 = Rule::new().with_id(1);
-    /// rule1.metadata_mut().tags.push("attack".to_string());
-    /// waf.add_rule(rule1).unwrap();
-    ///
-    /// let mut rule2 = Rule::new().with_id(2);
-    /// rule2.metadata_mut().tags.push("sqli".to_string());
-    /// waf.add_rule(rule2).unwrap();
-    ///
-    /// waf.remove_rules_by_tag("attack");
-    /// assert_eq!(waf.rule_count(), 1); // Only rule 2 remains
-    /// ```
-    pub fn remove_rules_by_tag(&mut self, tag: &str) {
-        Arc::get_mut(&mut self.rules)
-            .expect("Cannot modify rules after sharing with transactions")
-            .delete_by_tag(tag);
-    }
-
-    /// Removes rules by message.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::waf::Waf;
-    /// use coraza::config::WafConfig;
-    /// use coraza::rules::Rule;
-    /// use coraza::operators::Macro;
-    ///
-    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
-    ///
-    /// let mut rule1 = Rule::new().with_id(1);
-    /// rule1.metadata_mut().msg = Some(Macro::new("SQL Injection").unwrap());
-    /// waf.add_rule(rule1).unwrap();
-    ///
-    /// let mut rule2 = Rule::new().with_id(2);
-    /// rule2.metadata_mut().msg = Some(Macro::new("XSS Attack").unwrap());
-    /// waf.add_rule(rule2).unwrap();
-    ///
-    /// waf.remove_rules_by_msg("SQL Injection");
-    /// assert_eq!(waf.rule_count(), 1); // Only rule 2 remains
-    /// ```
-    pub fn remove_rules_by_msg(&mut self, msg: &str) {
-        Arc::get_mut(&mut self.rules)
-            .expect("Cannot modify rules after sharing with transactions")
-            .delete_by_msg(msg);
-    }
-
-    /// Finds a rule by its ID.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::waf::Waf;
-    /// use coraza::config::WafConfig;
-    /// use coraza::rules::Rule;
-    ///
-    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
-    /// waf.add_rule(Rule::new().with_id(123)).unwrap();
-    ///
-    /// assert!(waf.find_rule_by_id(123).is_some());
-    /// assert!(waf.find_rule_by_id(999).is_none());
-    /// ```
+    /// Finds a top-level rule by its ID.
     pub fn find_rule_by_id(&self, id: i32) -> Option<&Rule> {
         self.rules.find_by_id(id)
-    }
-
-    /// Sets default actions for a specific phase.
-    ///
-    /// Default actions are applied to all rules in the phase that don't have
-    /// explicit actions defined.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::waf::Waf;
-    /// use coraza::config::WafConfig;
-    /// use coraza::RulePhase;
-    /// use coraza::rules::RuleAction;
-    ///
-    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
-    ///
-    /// let actions = vec![]; // Would contain actual actions
-    /// waf.set_default_actions(RulePhase::RequestHeaders, actions);
-    /// ```
-    pub fn set_default_actions(&mut self, phase: RulePhase, actions: Vec<RuleAction>) {
-        self.default_actions.insert(phase, actions);
     }
 
     /// Gets default actions for a specific phase.
     ///
     /// Returns an empty slice if no default actions are set for the phase.
-    pub fn get_default_actions(&self, phase: RulePhase) -> &[RuleAction] {
+    pub fn get_default_actions(&self, phase: RulePhase) -> &[Action] {
         self.default_actions
             .get(&phase)
             .map(|v| v.as_slice())
             .unwrap_or(&[])
-    }
-
-    /// Updates the variables (targets) for a rule by ID.
-    ///
-    /// # Errors
-    ///
-    /// Returns `WafError::RuleError` if the rule is not found.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::waf::Waf;
-    /// use coraza::config::WafConfig;
-    /// use coraza::rules::{Rule, VariableSpec};
-    /// use coraza::RuleVariable;
-    ///
-    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
-    /// waf.add_rule(Rule::new().with_id(1)).unwrap();
-    ///
-    /// let new_vars = vec![VariableSpec::new(RuleVariable::Args)];
-    /// waf.update_rule_variables_by_id(1, new_vars).unwrap();
-    /// ```
-    pub fn update_rule_variables_by_id(
-        &mut self,
-        id: i32,
-        variables: Vec<VariableSpec>,
-    ) -> Result<(), WafError> {
-        let rules = Arc::get_mut(&mut self.rules)
-            .expect("Cannot modify rules after sharing with transactions");
-
-        let rule = rules
-            .find_by_id_mut(id)
-            .ok_or_else(|| WafError::RuleError(format!("Rule {} not found", id)))?;
-
-        rule.set_variables(variables);
-        Ok(())
-    }
-
-    /// Updates the actions for a rule by ID.
-    ///
-    /// # Errors
-    ///
-    /// Returns `WafError::RuleError` if the rule is not found.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::waf::Waf;
-    /// use coraza::config::WafConfig;
-    /// use coraza::rules::Rule;
-    ///
-    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
-    /// waf.add_rule(Rule::new().with_id(1)).unwrap();
-    ///
-    /// // In practice, you would create actual RuleAction instances:
-    /// // let new_actions = vec![...];
-    /// // waf.update_rule_actions_by_id(1, new_actions).unwrap();
-    /// ```
-    pub fn update_rule_actions_by_id(
-        &mut self,
-        id: i32,
-        actions: Vec<RuleAction>,
-    ) -> Result<(), WafError> {
-        let rules = Arc::get_mut(&mut self.rules)
-            .expect("Cannot modify rules after sharing with transactions");
-
-        let rule = rules
-            .find_by_id_mut(id)
-            .ok_or_else(|| WafError::RuleError(format!("Rule {} not found", id)))?;
-
-        rule.set_actions(actions);
-        Ok(())
-    }
-
-    /// Updates the variables (targets) for all rules matching a tag.
-    ///
-    /// Returns the number of rules updated.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::waf::Waf;
-    /// use coraza::config::WafConfig;
-    /// use coraza::rules::{Rule, VariableSpec};
-    /// use coraza::RuleVariable;
-    ///
-    /// let mut waf = Waf::new(WafConfig::new()).unwrap();
-    ///
-    /// let mut rule = Rule::new().with_id(1);
-    /// rule.metadata_mut().tags.push("attack".to_string());
-    /// waf.add_rule(rule).unwrap();
-    ///
-    /// let new_vars = vec![VariableSpec::new(RuleVariable::Args)];
-    /// // let count = waf.update_rule_variables_by_tag("attack", new_vars).unwrap();
-    /// // assert_eq!(count, 1);
-    /// ```
-    pub fn update_rule_variables_by_tag(
-        &mut self,
-        tag: &str,
-        variables: Vec<VariableSpec>,
-    ) -> Result<usize, WafError> {
-        let rules = Arc::get_mut(&mut self.rules)
-            .expect("Cannot modify rules after sharing with transactions");
-
-        // Clone variables outside the closure to avoid lifetime issues
-        let vars_clone = variables.clone();
-        let count = rules.update_by_tag(tag, move |rule| {
-            rule.set_variables(vars_clone.clone());
-        });
-        Ok(count)
-    }
-
-    /// Validates the WAF configuration.
-    ///
-    /// Checks for:
-    /// - Valid body limits (positive, within reasonable bounds)
-    /// - Valid timeout values
-    /// - Valid log levels
-    fn validate_config(config: &WafConfig) -> Result<(), ConfigError> {
-        // Validate body limits
-        if config.request_body_limit() < 0 {
-            return Err(ConfigError::new("Request body limit must be non-negative"));
-        }
-
-        if config.response_body_limit() < 0 {
-            return Err(ConfigError::new("Response body limit must be non-negative"));
-        }
-
-        if config.request_body_in_memory_limit() < 0 {
-            return Err(ConfigError::new(
-                "Request body in-memory limit must be non-negative",
-            ));
-        }
-
-        // Validate collection timeout
-        if config.collection_timeout() < 0 {
-            return Err(ConfigError::new("Collection timeout must be non-negative"));
-        }
-
-        // Validate debug log level
-        if !(0..=9).contains(&config.debug_log_level()) {
-            return Err(ConfigError::new("Debug log level must be between 0 and 9"));
-        }
-
-        // Validate argument limit
-        if config.argument_limit() == 0 {
-            return Err(ConfigError::new("Argument limit must be greater than 0"));
-        }
-
-        Ok(())
     }
 }
 
@@ -580,6 +219,300 @@ impl Default for Waf {
     fn default() -> Self {
         Self::new(WafConfig::default()).expect("Default config should be valid")
     }
+}
+
+/// Assembles the configuration and rules of a [`Waf`].
+///
+/// Rules are kept in the order they are added; a rule added after one with the
+/// `chain` action joins that rule's chain (see [`RuleGroup::add`]).
+///
+/// # Examples
+///
+/// ```
+/// use coraza::waf::WafBuilder;
+/// use coraza::config::WafConfig;
+/// use coraza::rules::Rule;
+///
+/// let mut builder = WafBuilder::new(WafConfig::new());
+/// builder.add_rule(Rule::new().with_id(1)).unwrap();
+///
+/// let waf = builder.build().unwrap();
+/// assert_eq!(waf.rule_count(), 1);
+/// ```
+#[derive(Debug, Default)]
+pub struct WafBuilder {
+    config: WafConfig,
+    rules: RuleGroup,
+    default_actions: HashMap<RulePhase, Vec<Action>>,
+}
+
+impl WafBuilder {
+    /// Creates a builder with the given configuration and no rules.
+    pub fn new(config: WafConfig) -> Self {
+        Self::with_rules(config, RuleGroup::new())
+    }
+
+    /// Creates a builder with the given configuration and rules, listed in file order.
+    pub(crate) fn with_rules(config: WafConfig, rules: RuleGroup) -> Self {
+        Self {
+            config,
+            rules,
+            default_actions: HashMap::new(),
+        }
+    }
+
+    /// Returns the configuration the WAF will be built with.
+    pub fn config(&self) -> &WafConfig {
+        &self.config
+    }
+
+    /// Returns the configuration the WAF will be built with, for changing it.
+    pub fn config_mut(&mut self) -> &mut WafConfig {
+        &mut self.config
+    }
+
+    /// Validates the configuration and creates the WAF.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConfigError` if the configuration is invalid (see [`Waf::new`]).
+    pub fn build(self) -> Result<Waf, ConfigError> {
+        validate_config(&self.config)?;
+
+        Ok(Waf {
+            config: self.config,
+            rules: Arc::new(self.rules),
+            default_actions: self.default_actions,
+        })
+    }
+
+    /// Returns the number of rules added so far.
+    pub fn rule_count(&self) -> usize {
+        self.rules.count()
+    }
+
+    /// Adds a single rule.
+    ///
+    /// # Errors
+    ///
+    /// Returns `WafError::RuleError` if a rule with the same non-zero ID already exists.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::WafBuilder;
+    /// use coraza::rules::Rule;
+    ///
+    /// let mut builder = WafBuilder::default();
+    /// builder.add_rule(Rule::new().with_id(1)).unwrap();
+    /// assert_eq!(builder.rule_count(), 1);
+    /// ```
+    pub fn add_rule(&mut self, rule: Rule) -> Result<(), WafError> {
+        self.rules.add(rule).map_err(WafError::RuleError)
+    }
+
+    /// Removes a rule by its ID.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::WafBuilder;
+    /// use coraza::rules::Rule;
+    ///
+    /// let mut builder = WafBuilder::default();
+    /// builder.add_rule(Rule::new().with_id(1)).unwrap();
+    /// builder.add_rule(Rule::new().with_id(2)).unwrap();
+    ///
+    /// builder.remove_rule_by_id(1);
+    /// assert_eq!(builder.rule_count(), 1);
+    /// ```
+    pub fn remove_rule_by_id(&mut self, id: i32) {
+        self.rules.delete_by_id(id);
+    }
+
+    /// Removes rules within an ID range (inclusive).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::WafBuilder;
+    /// use coraza::rules::Rule;
+    ///
+    /// let mut builder = WafBuilder::default();
+    /// for id in [100, 101, 102, 200] {
+    ///     builder.add_rule(Rule::new().with_id(id)).unwrap();
+    /// }
+    ///
+    /// builder.remove_rules_by_id_range(100, 102);
+    /// assert_eq!(builder.rule_count(), 1); // Only 200 remains
+    /// ```
+    pub fn remove_rules_by_id_range(&mut self, start: i32, end: i32) {
+        self.rules.delete_by_range(start, end);
+    }
+
+    /// Removes rules by tag.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::WafBuilder;
+    /// use coraza::rules::Rule;
+    ///
+    /// let mut builder = WafBuilder::default();
+    ///
+    /// let mut rule1 = Rule::new().with_id(1);
+    /// rule1.metadata_mut().tags.push("attack".to_string());
+    /// builder.add_rule(rule1).unwrap();
+    ///
+    /// let mut rule2 = Rule::new().with_id(2);
+    /// rule2.metadata_mut().tags.push("sqli".to_string());
+    /// builder.add_rule(rule2).unwrap();
+    ///
+    /// builder.remove_rules_by_tag("attack");
+    /// assert_eq!(builder.rule_count(), 1); // Only rule 2 remains
+    /// ```
+    pub fn remove_rules_by_tag(&mut self, tag: &str) {
+        self.rules.delete_by_tag(tag);
+    }
+
+    /// Removes rules by message.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::WafBuilder;
+    /// use coraza::rules::Rule;
+    /// use coraza::operators::Macro;
+    ///
+    /// let mut builder = WafBuilder::default();
+    ///
+    /// let mut rule1 = Rule::new().with_id(1);
+    /// rule1.metadata_mut().msg = Some(Macro::new("SQL Injection").unwrap());
+    /// builder.add_rule(rule1).unwrap();
+    ///
+    /// let mut rule2 = Rule::new().with_id(2);
+    /// rule2.metadata_mut().msg = Some(Macro::new("XSS Attack").unwrap());
+    /// builder.add_rule(rule2).unwrap();
+    ///
+    /// builder.remove_rules_by_msg("SQL Injection");
+    /// assert_eq!(builder.rule_count(), 1); // Only rule 2 remains
+    /// ```
+    pub fn remove_rules_by_msg(&mut self, msg: &str) {
+        self.rules.delete_by_msg(msg);
+    }
+
+    /// Finds a rule by its ID.
+    pub fn find_rule_by_id(&self, id: i32) -> Option<&Rule> {
+        self.rules.find_by_id(id)
+    }
+
+    /// Sets default actions for a specific phase.
+    ///
+    /// Default actions are applied to all rules in the phase that don't have
+    /// explicit actions defined.
+    pub fn set_default_actions(&mut self, phase: RulePhase, actions: Vec<Action>) {
+        self.default_actions.insert(phase, actions);
+    }
+
+    /// Replaces the variables (targets) of the rule with the given ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `WafError::RuleError` if the rule is not found.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::waf::WafBuilder;
+    /// use coraza::rules::{Rule, VariableSpec};
+    /// use coraza::RuleVariable;
+    ///
+    /// let mut builder = WafBuilder::default();
+    /// builder.add_rule(Rule::new().with_id(1)).unwrap();
+    ///
+    /// let new_vars = vec![VariableSpec::new(RuleVariable::Args)];
+    /// builder.update_rule_variables_by_id(1, new_vars).unwrap();
+    /// ```
+    pub fn update_rule_variables_by_id(
+        &mut self,
+        id: i32,
+        variables: Vec<VariableSpec>,
+    ) -> Result<(), WafError> {
+        self.rule_mut(id)?.set_variables(variables);
+        Ok(())
+    }
+
+    /// Replaces the actions of the rule with the given ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `WafError::RuleError` if the rule is not found.
+    pub fn update_rule_actions_by_id(
+        &mut self,
+        id: i32,
+        actions: Vec<Action>,
+    ) -> Result<(), WafError> {
+        self.rule_mut(id)?.set_actions(actions);
+        Ok(())
+    }
+
+    /// Replaces the variables (targets) of every rule with the given tag.
+    ///
+    /// Returns the number of rules updated.
+    pub fn update_rule_variables_by_tag(
+        &mut self,
+        tag: &str,
+        variables: Vec<VariableSpec>,
+    ) -> usize {
+        self.rules
+            .update_by_tag(tag, |rule| rule.set_variables(variables.clone()))
+    }
+
+    fn rule_mut(&mut self, id: i32) -> Result<&mut Rule, WafError> {
+        self.rules
+            .find_by_id_mut(id)
+            .ok_or_else(|| WafError::RuleError(format!("Rule {} not found", id)))
+    }
+}
+
+/// Validates the WAF configuration.
+///
+/// Checks for:
+/// - Valid body limits (positive, within reasonable bounds)
+/// - Valid timeout values
+/// - Valid log levels
+fn validate_config(config: &WafConfig) -> Result<(), ConfigError> {
+    // Validate body limits
+    if config.request_body_limit < 0 {
+        return Err(ConfigError::new("Request body limit must be non-negative"));
+    }
+
+    if config.response_body_limit < 0 {
+        return Err(ConfigError::new("Response body limit must be non-negative"));
+    }
+
+    if config.request_body_in_memory_limit < 0 {
+        return Err(ConfigError::new(
+            "Request body in-memory limit must be non-negative",
+        ));
+    }
+
+    // Validate collection timeout
+    if config.collection_timeout < 0 {
+        return Err(ConfigError::new("Collection timeout must be non-negative"));
+    }
+
+    // Validate debug log level
+    if config.debug_log_level > 9 {
+        return Err(ConfigError::new("Debug log level must be between 0 and 9"));
+    }
+
+    // Validate argument limit
+    if config.argument_limit == 0 {
+        return Err(ConfigError::new("Argument limit must be greater than 0"));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -597,19 +530,21 @@ mod tests {
     #[test]
     fn test_waf_default() {
         let waf = Waf::default();
-        assert_eq!(waf.config().rule_engine(), RuleEngineStatus::On);
+        assert_eq!(waf.config().rule_engine, RuleEngineStatus::On);
     }
 
     #[test]
     fn test_waf_config_access() {
-        let config = WafConfig::new()
-            .with_rule_engine(RuleEngineStatus::DetectionOnly)
-            .with_request_body_limit(2097152);
+        let config = WafConfig {
+            rule_engine: RuleEngineStatus::DetectionOnly,
+            request_body_limit: 2097152,
+            ..WafConfig::default()
+        };
 
         let waf = Waf::new(config).unwrap();
 
-        assert_eq!(waf.config().rule_engine(), RuleEngineStatus::DetectionOnly);
-        assert_eq!(waf.config().request_body_limit(), 2097152);
+        assert_eq!(waf.config().rule_engine, RuleEngineStatus::DetectionOnly);
+        assert_eq!(waf.config().request_body_limit, 2097152);
     }
 
     #[test]
@@ -618,7 +553,7 @@ mod tests {
         let tx = waf.new_transaction();
 
         // Transaction should inherit WAF config
-        assert_eq!(tx.rule_engine(), waf.config().rule_engine());
+        assert_eq!(tx.rule_engine(), waf.config().rule_engine);
     }
 
     #[test]
@@ -631,12 +566,14 @@ mod tests {
 
     #[test]
     fn test_waf_transaction_inherits_config() {
-        let config = WafConfig::new()
-            .with_rule_engine(RuleEngineStatus::DetectionOnly)
-            .with_request_body_access(true)
-            .with_request_body_limit(1048576)
-            .with_response_body_access(true)
-            .with_response_body_limit(2097152);
+        let config = WafConfig {
+            rule_engine: RuleEngineStatus::DetectionOnly,
+            request_body_access: true,
+            request_body_limit: 1048576,
+            response_body_access: true,
+            response_body_limit: 2097152,
+            ..WafConfig::default()
+        };
 
         let waf = Waf::new(config).unwrap();
         let tx = waf.new_transaction();
@@ -656,7 +593,10 @@ mod tests {
 
     #[test]
     fn test_waf_validate_negative_request_body_limit() {
-        let config = WafConfig::new().with_request_body_limit(-1);
+        let config = WafConfig {
+            request_body_limit: -1,
+            ..WafConfig::default()
+        };
         let result = Waf::new(config);
 
         assert!(result.is_err());
@@ -668,7 +608,10 @@ mod tests {
 
     #[test]
     fn test_waf_validate_negative_response_body_limit() {
-        let config = WafConfig::new().with_response_body_limit(-1);
+        let config = WafConfig {
+            response_body_limit: -1,
+            ..WafConfig::default()
+        };
         let result = Waf::new(config);
 
         assert!(result.is_err());
@@ -680,7 +623,10 @@ mod tests {
 
     #[test]
     fn test_waf_validate_negative_collection_timeout() {
-        let config = WafConfig::new().with_collection_timeout(-1);
+        let config = WafConfig {
+            collection_timeout: -1,
+            ..WafConfig::default()
+        };
         let result = Waf::new(config);
 
         assert!(result.is_err());
@@ -692,7 +638,10 @@ mod tests {
 
     #[test]
     fn test_waf_validate_invalid_debug_log_level() {
-        let config = WafConfig::new().with_debug_log_level(10);
+        let config = WafConfig {
+            debug_log_level: 10,
+            ..WafConfig::default()
+        };
         let result = Waf::new(config);
 
         assert!(result.is_err());
@@ -704,7 +653,10 @@ mod tests {
 
     #[test]
     fn test_waf_validate_zero_argument_limit() {
-        let config = WafConfig::new().with_argument_limit(0);
+        let config = WafConfig {
+            argument_limit: 0,
+            ..WafConfig::default()
+        };
         let result = Waf::new(config);
 
         assert!(result.is_err());
@@ -716,12 +668,14 @@ mod tests {
 
     #[test]
     fn test_waf_validate_valid_config() {
-        let config = WafConfig::new()
-            .with_request_body_limit(1048576)
-            .with_response_body_limit(524288)
-            .with_collection_timeout(3600)
-            .with_debug_log_level(5)
-            .with_argument_limit(500);
+        let config = WafConfig {
+            request_body_limit: 1048576,
+            response_body_limit: 524288,
+            collection_timeout: 3600,
+            debug_log_level: 5,
+            argument_limit: 500,
+            ..WafConfig::default()
+        };
 
         let result = Waf::new(config);
         assert!(result.is_ok());
@@ -760,20 +714,20 @@ mod tests {
 
     #[test]
     fn test_waf_add_rule() {
-        let mut waf = Waf::default();
+        let mut builder = WafBuilder::default();
 
         let rule = Rule::new().with_id(1);
-        waf.add_rule(rule).unwrap();
+        builder.add_rule(rule).unwrap();
 
-        assert_eq!(waf.rule_count(), 1);
+        assert_eq!(builder.rule_count(), 1);
     }
 
     #[test]
     fn test_waf_add_rule_duplicate_id() {
-        let mut waf = Waf::default();
+        let mut builder = WafBuilder::default();
 
-        waf.add_rule(Rule::new().with_id(1)).unwrap();
-        let result = waf.add_rule(Rule::new().with_id(1));
+        builder.add_rule(Rule::new().with_id(1)).unwrap();
+        let result = builder.add_rule(Rule::new().with_id(1));
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("duplicated"));
@@ -781,118 +735,118 @@ mod tests {
 
     #[test]
     fn test_waf_remove_rule_by_id() {
-        let mut waf = Waf::default();
+        let mut builder = WafBuilder::default();
 
-        waf.add_rule(Rule::new().with_id(1)).unwrap();
-        waf.add_rule(Rule::new().with_id(2)).unwrap();
-        waf.add_rule(Rule::new().with_id(3)).unwrap();
+        builder.add_rule(Rule::new().with_id(1)).unwrap();
+        builder.add_rule(Rule::new().with_id(2)).unwrap();
+        builder.add_rule(Rule::new().with_id(3)).unwrap();
 
-        waf.remove_rule_by_id(2);
+        builder.remove_rule_by_id(2);
 
-        assert_eq!(waf.rule_count(), 2);
-        assert!(waf.find_rule_by_id(1).is_some());
-        assert!(waf.find_rule_by_id(2).is_none());
-        assert!(waf.find_rule_by_id(3).is_some());
+        assert_eq!(builder.rule_count(), 2);
+        assert!(builder.find_rule_by_id(1).is_some());
+        assert!(builder.find_rule_by_id(2).is_none());
+        assert!(builder.find_rule_by_id(3).is_some());
     }
 
     #[test]
     fn test_waf_remove_rules_by_id_range() {
-        let mut waf = Waf::default();
+        let mut builder = WafBuilder::default();
 
         for id in 1..=10 {
-            waf.add_rule(Rule::new().with_id(id)).unwrap();
+            builder.add_rule(Rule::new().with_id(id)).unwrap();
         }
 
-        waf.remove_rules_by_id_range(3, 7);
+        builder.remove_rules_by_id_range(3, 7);
 
-        assert_eq!(waf.rule_count(), 5); // 1, 2, 8, 9, 10 remain
-        assert!(waf.find_rule_by_id(1).is_some());
-        assert!(waf.find_rule_by_id(3).is_none());
-        assert!(waf.find_rule_by_id(5).is_none());
-        assert!(waf.find_rule_by_id(7).is_none());
-        assert!(waf.find_rule_by_id(8).is_some());
+        assert_eq!(builder.rule_count(), 5); // 1, 2, 8, 9, 10 remain
+        assert!(builder.find_rule_by_id(1).is_some());
+        assert!(builder.find_rule_by_id(3).is_none());
+        assert!(builder.find_rule_by_id(5).is_none());
+        assert!(builder.find_rule_by_id(7).is_none());
+        assert!(builder.find_rule_by_id(8).is_some());
     }
 
     #[test]
     fn test_waf_remove_rules_by_tag() {
-        let mut waf = Waf::default();
+        let mut builder = WafBuilder::default();
 
         let mut rule1 = Rule::new().with_id(1);
         rule1.metadata_mut().tags.push("attack-sqli".to_string());
-        waf.add_rule(rule1).unwrap();
+        builder.add_rule(rule1).unwrap();
 
         let mut rule2 = Rule::new().with_id(2);
         rule2.metadata_mut().tags.push("attack-xss".to_string());
-        waf.add_rule(rule2).unwrap();
+        builder.add_rule(rule2).unwrap();
 
         let mut rule3 = Rule::new().with_id(3);
         rule3.metadata_mut().tags.push("attack-sqli".to_string());
-        waf.add_rule(rule3).unwrap();
+        builder.add_rule(rule3).unwrap();
 
-        waf.remove_rules_by_tag("attack-sqli");
+        builder.remove_rules_by_tag("attack-sqli");
 
-        assert_eq!(waf.rule_count(), 1);
-        assert!(waf.find_rule_by_id(2).is_some());
+        assert_eq!(builder.rule_count(), 1);
+        assert!(builder.find_rule_by_id(2).is_some());
     }
 
     #[test]
     fn test_waf_remove_rules_by_msg() {
         use crate::operators::Macro;
 
-        let mut waf = Waf::default();
+        let mut builder = WafBuilder::default();
 
         let mut rule1 = Rule::new().with_id(1);
         rule1.metadata_mut().msg = Some(Macro::new("SQL Injection detected").unwrap());
-        waf.add_rule(rule1).unwrap();
+        builder.add_rule(rule1).unwrap();
 
         let mut rule2 = Rule::new().with_id(2);
         rule2.metadata_mut().msg = Some(Macro::new("XSS Attack detected").unwrap());
-        waf.add_rule(rule2).unwrap();
+        builder.add_rule(rule2).unwrap();
 
         let mut rule3 = Rule::new().with_id(3);
         rule3.metadata_mut().msg = Some(Macro::new("SQL Injection detected").unwrap());
-        waf.add_rule(rule3).unwrap();
+        builder.add_rule(rule3).unwrap();
 
-        waf.remove_rules_by_msg("SQL Injection detected");
+        builder.remove_rules_by_msg("SQL Injection detected");
 
-        assert_eq!(waf.rule_count(), 1);
-        assert!(waf.find_rule_by_id(2).is_some());
+        assert_eq!(builder.rule_count(), 1);
+        assert!(builder.find_rule_by_id(2).is_some());
     }
 
     #[test]
     fn test_waf_find_rule_by_id() {
-        let mut waf = Waf::default();
+        let mut builder = WafBuilder::default();
 
-        waf.add_rule(Rule::new().with_id(100)).unwrap();
-        waf.add_rule(Rule::new().with_id(200)).unwrap();
+        builder.add_rule(Rule::new().with_id(100)).unwrap();
+        builder.add_rule(Rule::new().with_id(200)).unwrap();
 
-        assert!(waf.find_rule_by_id(100).is_some());
-        assert!(waf.find_rule_by_id(200).is_some());
-        assert!(waf.find_rule_by_id(300).is_none());
+        assert!(builder.find_rule_by_id(100).is_some());
+        assert!(builder.find_rule_by_id(200).is_some());
+        assert!(builder.find_rule_by_id(300).is_none());
 
-        let rule = waf.find_rule_by_id(100).unwrap();
+        let rule = builder.find_rule_by_id(100).unwrap();
         assert_eq!(rule.metadata().id, 100);
     }
 
     #[test]
     fn test_waf_rule_count() {
-        let mut waf = Waf::default();
+        let mut builder = WafBuilder::default();
 
-        assert_eq!(waf.rule_count(), 0);
+        assert_eq!(builder.rule_count(), 0);
 
-        waf.add_rule(Rule::new().with_id(1)).unwrap();
-        assert_eq!(waf.rule_count(), 1);
+        builder.add_rule(Rule::new().with_id(1)).unwrap();
+        assert_eq!(builder.rule_count(), 1);
 
-        waf.add_rule(Rule::new().with_id(2)).unwrap();
-        assert_eq!(waf.rule_count(), 2);
+        builder.add_rule(Rule::new().with_id(2)).unwrap();
+        assert_eq!(builder.rule_count(), 2);
 
-        waf.remove_rule_by_id(1);
-        assert_eq!(waf.rule_count(), 1);
+        builder.remove_rule_by_id(1);
+        assert_eq!(builder.rule_count(), 1);
     }
 
     #[test]
     fn test_waf_multiple_rule_operations() {
-        let mut waf = Waf::default();
+        let mut builder = WafBuilder::default();
 
         // Add several rules with different metadata
         for id in 1..=5 {
@@ -900,43 +854,38 @@ mod tests {
             if id % 2 == 0 {
                 rule.metadata_mut().tags.push("even".to_string());
             }
-            waf.add_rule(rule).unwrap();
+            builder.add_rule(rule).unwrap();
         }
 
-        assert_eq!(waf.rule_count(), 5);
+        assert_eq!(builder.rule_count(), 5);
 
         // Remove even-tagged rules
-        waf.remove_rules_by_tag("even");
-        assert_eq!(waf.rule_count(), 3); // 1, 3, 5 remain
+        builder.remove_rules_by_tag("even");
+        assert_eq!(builder.rule_count(), 3); // 1, 3, 5 remain
 
         // Remove by ID
-        waf.remove_rule_by_id(3);
-        assert_eq!(waf.rule_count(), 2); // 1, 5 remain
+        builder.remove_rule_by_id(3);
+        assert_eq!(builder.rule_count(), 2); // 1, 5 remain
 
         // Verify remaining rules
-        assert!(waf.find_rule_by_id(1).is_some());
-        assert!(waf.find_rule_by_id(5).is_some());
-        assert!(waf.find_rule_by_id(2).is_none());
-        assert!(waf.find_rule_by_id(3).is_none());
-        assert!(waf.find_rule_by_id(4).is_none());
+        assert!(builder.find_rule_by_id(1).is_some());
+        assert!(builder.find_rule_by_id(5).is_some());
+        assert!(builder.find_rule_by_id(2).is_none());
+        assert!(builder.find_rule_by_id(3).is_none());
+        assert!(builder.find_rule_by_id(4).is_none());
     }
 
     #[test]
     fn test_waf_default_actions() {
         use crate::RulePhase;
 
-        let mut waf = Waf::default();
+        let mut builder = WafBuilder::default();
 
-        // Initially no default actions
+        builder.set_default_actions(RulePhase::RequestHeaders, vec![]);
+        let waf = builder.build().unwrap();
+
+        // Verify they're stored; other phases still empty
         assert_eq!(waf.get_default_actions(RulePhase::RequestHeaders).len(), 0);
-
-        // Set default actions for phase 1 (empty for now since RuleAction can't be easily constructed in tests)
-        waf.set_default_actions(RulePhase::RequestHeaders, vec![]);
-
-        // Verify they're stored
-        assert_eq!(waf.get_default_actions(RulePhase::RequestHeaders).len(), 0);
-
-        // Other phases still empty
         assert_eq!(waf.get_default_actions(RulePhase::RequestBody).len(), 0);
     }
 
@@ -945,44 +894,44 @@ mod tests {
         use crate::RuleVariable;
         use crate::rules::VariableSpec;
 
-        let mut waf = Waf::default();
+        let mut builder = WafBuilder::default();
 
         // Add rule with no variables
-        waf.add_rule(Rule::new().with_id(1)).unwrap();
+        builder.add_rule(Rule::new().with_id(1)).unwrap();
 
         // Update its variables
         let new_vars = vec![
             VariableSpec::new(RuleVariable::Args),
             VariableSpec::new(RuleVariable::RequestHeaders),
         ];
-        waf.update_rule_variables_by_id(1, new_vars).unwrap();
+        builder.update_rule_variables_by_id(1, new_vars).unwrap();
 
         // Verify rule was found and updated (we can't directly inspect variables,
         // but we can verify the operation succeeded)
-        assert!(waf.find_rule_by_id(1).is_some());
+        assert!(builder.find_rule_by_id(1).is_some());
 
         // Try updating non-existent rule
-        let result = waf.update_rule_variables_by_id(999, vec![]);
+        let result = builder.update_rule_variables_by_id(999, vec![]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
     #[test]
     fn test_waf_update_rule_actions_by_id() {
-        let mut waf = Waf::default();
+        let mut builder = WafBuilder::default();
 
         // Add rule with no actions
-        waf.add_rule(Rule::new().with_id(1)).unwrap();
+        builder.add_rule(Rule::new().with_id(1)).unwrap();
 
         // Update its actions
         let new_actions = vec![]; // Would contain actual actions in practice
-        waf.update_rule_actions_by_id(1, new_actions).unwrap();
+        builder.update_rule_actions_by_id(1, new_actions).unwrap();
 
         // Verify rule was found and updated
-        assert!(waf.find_rule_by_id(1).is_some());
+        assert!(builder.find_rule_by_id(1).is_some());
 
         // Try updating non-existent rule
-        let result = waf.update_rule_actions_by_id(999, vec![]);
+        let result = builder.update_rule_actions_by_id(999, vec![]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
@@ -992,34 +941,43 @@ mod tests {
         use crate::RuleVariable;
         use crate::rules::VariableSpec;
 
-        let mut waf = Waf::default();
+        let mut builder = WafBuilder::default();
 
         // Add multiple rules with the same tag
         let mut rule1 = Rule::new().with_id(1);
         rule1.metadata_mut().tags.push("attack".to_string());
-        waf.add_rule(rule1).unwrap();
+        builder.add_rule(rule1).unwrap();
 
         let mut rule2 = Rule::new().with_id(2);
         rule2.metadata_mut().tags.push("attack".to_string());
-        waf.add_rule(rule2).unwrap();
+        builder.add_rule(rule2).unwrap();
 
         let mut rule3 = Rule::new().with_id(3);
         rule3.metadata_mut().tags.push("other".to_string());
-        waf.add_rule(rule3).unwrap();
+        builder.add_rule(rule3).unwrap();
 
         // Update variables for all "attack" tagged rules
         let new_vars = vec![VariableSpec::new(RuleVariable::Args)];
-        let count = waf
-            .update_rule_variables_by_tag("attack", new_vars)
-            .unwrap();
+        let count = builder.update_rule_variables_by_tag("attack", new_vars);
 
         // Should have updated 2 rules
         assert_eq!(count, 2);
 
         // Update non-existent tag
-        let count = waf
-            .update_rule_variables_by_tag("nonexistent", vec![])
-            .unwrap();
+        let count = builder.update_rule_variables_by_tag("nonexistent", vec![]);
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_rule_after_chain_action_joins_the_chain() {
+        let mut builder = WafBuilder::default();
+        let mut parent = Rule::new().with_id(1);
+        parent.metadata_mut().has_chain = true;
+        builder.add_rule(parent).unwrap();
+        builder.add_rule(Rule::new()).unwrap();
+
+        let waf = builder.build().unwrap();
+        assert_eq!(waf.rule_count(), 1);
+        assert_eq!(waf.find_rule_by_id(1).unwrap().chain().len(), 1);
     }
 }

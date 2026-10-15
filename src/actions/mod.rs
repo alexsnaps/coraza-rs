@@ -9,44 +9,15 @@
 //!
 //! # Action Categories
 //!
-//! Actions are categorized into five types:
+//! Most actions only describe the rule (`id`, `msg`, `tag`, `severity`, `phase`, `t`,
+//! `chain`, `status`, `log`, ...): they are applied to its [`RuleMetadata`] when the rule
+//! is compiled. The others are [`Action`]s, run when the rule matches, at a point set by
+//! their [`ActionType`]:
 //!
-//! ## 1. Disruptive Actions
-//!
-//! Trigger WAF operations such as blocking or allowing transactions.
-//! Only one disruptive action per rule applies; if multiple are specified,
-//! the last one takes precedence. Disruptive actions will NOT be executed
-//! if SecRuleEngine is set to DetectionOnly.
-//!
-//! Examples: deny, drop, redirect, allow, block, pass
-//!
-//! ## 2. Non-disruptive Actions
-//!
-//! Perform operations without affecting rule flow, such as variable modifications,
-//! logging, or setting metadata. These actions execute regardless of SecRuleEngine mode.
-//!
-//! Examples: log, nolog, setvar, msg, logdata, severity, tag
-//!
-//! ## 3. Flow Actions
-//!
-//! Control rule processing and execution flow. These actions determine which rules
-//! are evaluated and in what order.
-//!
-//! Examples: chain, skip, skipAfter
-//!
-//! ## 4. Meta-data Actions
-//!
-//! Provide information about rules, such as identification, versioning, and classification.
-//! These actions do not affect transaction processing.
-//!
-//! Examples: id, rev, msg, tag, severity, maturity, ver
-//!
-//! ## 5. Data Actions
-//!
-//! Containers that hold data for use by other actions, such as status codes
-//! for blocking responses.
-//!
-//! Examples: status (used with deny/redirect)
+//! - **Non-disruptive** (`setvar`, `ctl`, `setenv`): for every value the rule matches.
+//! - **Flow** (`skip`, `skipAfter`): once the rule's whole chain matched.
+//! - **Disruptive** (`deny`, `drop`, `block`, `allow`, `redirect`, `pass`): once the whole
+//!   chain matched, and only if SecRuleEngine is `On`. Only the last one a rule lists applies.
 //!
 //! # Usage
 //!
@@ -65,24 +36,19 @@ mod metadata;
 mod special;
 mod variables;
 
-use std::collections::HashMap;
 use std::fmt;
-use std::sync::OnceLock;
 
 use crate::operators::Macro;
+use crate::rules::TransformationChain;
+use crate::transaction::Transaction;
 use crate::{RulePhase, RuleSeverity};
 
 pub use ctl::CtlAction;
+pub use deferred::SetenvAction;
 pub use disruptive::{
     AllowAction, AllowType, BlockAction, DenyAction, DropAction, PassAction, RedirectAction,
 };
-pub use flow::{ChainAction, SkipAction, SkipAfterAction};
-pub use logging::{AuditlogAction, LogAction, LogdataAction, NoauditlogAction, NologAction};
-pub use metadata::{
-    IdAction, MaturityAction, MsgAction, PhaseAction, RevAction, SeverityAction, TagAction,
-    VerAction,
-};
-pub use special::{CaptureAction, MultimatchAction, StatusAction, TAction};
+pub use flow::{SkipAction, SkipAfterAction};
 pub use variables::SetvarAction;
 
 /// Action execution errors.
@@ -120,51 +86,30 @@ impl From<crate::operators::MacroError> for ActionError {
     }
 }
 
-/// Action type categories.
-///
-/// Actions are categorized into five types that define when and how they execute.
+/// When an [`Action`] runs, relative to its rule's chain and the rule engine mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ActionType {
-    /// Metadata actions provide information about rules.
-    ///
-    /// Examples: id, rev, msg, tag, severity, maturity, ver
-    Metadata,
-
-    /// Disruptive actions trigger WAF operations like blocking.
-    ///
-    /// Only one disruptive action per rule applies. These actions are NOT
-    /// executed if SecRuleEngine is set to DetectionOnly.
-    ///
-    /// Examples: deny, drop, redirect, allow, block, pass
-    Disruptive,
-
-    /// Data actions are containers that hold data for use by other actions.
-    ///
-    /// Examples: status (used with deny/redirect)
-    Data,
-
-    /// Non-disruptive actions perform operations without affecting rule flow.
-    ///
-    /// Examples: log, nolog, setvar, msg, logdata, severity, tag
+    /// Runs for every value the rule matches, even if a later chain link fails
+    /// (setvar, ctl, setenv).
     Nondisruptive,
 
-    /// Flow actions control rule processing and execution flow.
-    ///
-    /// Examples: chain, skip, skipAfter
+    /// Runs once the whole chain matched (skip, skipAfter).
     Flow,
+
+    /// Runs once the whole chain matched, and only if the rule engine is `On`
+    /// (deny, drop, block, allow, redirect, pass). A rule has at most one.
+    Disruptive,
 }
 
-/// Rule configuration and metadata.
+/// Metadata and flags of one rule (ID, message, severity, logging flags, ...).
 ///
-/// Stores all metadata and configuration for a single rule. Actions modify
-/// this struct during initialization to set rule properties like ID, message,
-/// severity, and logging flags.
+/// Actions fill this in when the rule is compiled ([`Action::init`]) and read it
+/// when the rule matches ([`Action::evaluate`]). The evaluated rule itself is
+/// [`crate::rules::Rule`].
 #[derive(Debug, Clone)]
-pub struct Rule {
+pub struct RuleMetadata {
     /// Rule ID (mandatory, set by id action)
     pub id: i32,
-    /// Parent rule ID (for chained rules)
-    pub parent_id: i32,
     /// Rule message with macro expansion support
     pub msg: Option<Macro>,
     /// Severity level (0-7)
@@ -185,26 +130,26 @@ pub struct Rule {
     pub log: bool,
     /// Whether to audit log matches
     pub audit_log: bool,
-    /// Whether this rule chains to the next
+    /// Whether the rule has the `chain` action: the next rule added to a
+    /// [`crate::rules::RuleGroup`] joins this rule's chain
     pub has_chain: bool,
     /// Whether to capture regex groups into TX variables
     pub capture: bool,
     /// Whether to check variables before/after each transformation
     pub multi_match: bool,
-    /// Transformation pipeline (name, function)
-    pub transformations: Vec<String>,
+    /// Transformations applied to each variable value before the operator (`t:`)
+    pub transformations: TransformationChain,
     /// SecMarker label (for flow control markers)
     pub sec_mark: Option<String>,
     /// Processing phase (1-5)
     pub phase: RulePhase,
 }
 
-impl Rule {
+impl RuleMetadata {
     /// Create a new rule with default values.
     pub fn new() -> Self {
         Self {
             id: 0,
-            parent_id: 0,
             msg: None,
             severity: None,
             tags: Vec::new(),
@@ -218,360 +163,172 @@ impl Rule {
             has_chain: false,
             capture: false,
             multi_match: false,
-            transformations: Vec::new(),
+            transformations: TransformationChain::new(),
             sec_mark: None,
             phase: RulePhase::RequestBody, // Default phase is 2 (request body)
         }
     }
 }
 
-impl Default for Rule {
+impl Default for RuleMetadata {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Transaction state interface for action evaluation.
+/// What a rule does at runtime when it matches.
 ///
-/// Re-exported from operators module to avoid duplication.
-pub use crate::operators::TransactionState;
+/// Actions that only describe the rule (`id`, `msg`, `phase`, `t`, `chain`, `status`, ...)
+/// are applied to its [`RuleMetadata`] when the rule is compiled and have no runtime part;
+/// see [`Action::parse`].
+#[derive(Debug, Clone)]
+pub enum Action {
+    Deny(DenyAction),
+    Drop(DropAction),
+    Block(BlockAction),
+    Pass(PassAction),
+    Allow(AllowAction),
+    Redirect(RedirectAction),
+    Skip(SkipAction),
+    SkipAfter(SkipAfterAction),
+    Setvar(SetvarAction),
+    Ctl(CtlAction),
+    Setenv(SetenvAction),
+}
 
-/// Rule action trait.
-///
-/// Actions define what happens when a rule matches. Each action implements this trait
-/// with two key methods: `init()` for parsing parameters during rule compilation, and
-/// `evaluate()` for executing the action during transaction processing.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::actions::{Action, ActionType, ActionError, Rule, TransactionState};
-///
-/// // Simple action that requires no parameters
-/// struct DenyAction;
-///
-/// impl Action for DenyAction {
-///     fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
-///         if !data.is_empty() {
-///             return Err(ActionError::UnexpectedArguments);
-///         }
-///         Ok(())
-///     }
-///
-///     fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
-///         // Execute action logic (e.g., interrupt transaction)
-///     }
-///
-///     fn action_type(&self) -> ActionType {
-///         ActionType::Disruptive
-///     }
-/// }
-/// ```
-pub trait Action: Send + Sync {
-    /// Initialize the action with parameters from the rule.
+impl Action {
+    /// Parses the SecLang action `name` (case-insensitive) with its `argument`
+    /// (empty if none).
     ///
-    /// This method is called during rule compilation to parse and validate
-    /// action parameters. Actions can modify the rule metadata during initialization
-    /// (e.g., storing the rule ID, message, or severity).
+    /// Actions that only describe the rule update `rule` and return `None`; the others
+    /// return the action to run when the rule matches.
     ///
-    /// # Arguments
+    /// # Errors
     ///
-    /// * `rule` - Mutable reference to rule for storing action configuration
-    /// * `data` - Parameter string for the action (may be empty for parameterless actions)
+    /// Returns `ActionError::UnknownAction` for an unknown name, or another
+    /// `ActionError` if the argument is invalid for that action.
     ///
-    /// # Returns
+    /// # Examples
     ///
-    /// * `Ok(())` if initialization succeeded
-    /// * `Err(ActionError)` if parameters are invalid
-    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError>;
-
-    /// Evaluate the action during transaction processing.
+    /// ```
+    /// use coraza::actions::{Action, RuleMetadata};
     ///
-    /// This method is called when a rule matches and the action should execute.
-    /// Actions can modify transaction state, log messages, interrupt processing, etc.
+    /// let mut rule = RuleMetadata::new();
+    /// assert!(Action::parse("id", "1", &mut rule).unwrap().is_none());
+    /// assert_eq!(rule.id, 1);
     ///
-    /// # Arguments
-    ///
-    /// * `rule` - Immutable reference to rule
-    /// * `tx` - Mutable reference to transaction state
-    fn evaluate(&self, rule: &Rule, tx: &mut dyn TransactionState);
+    /// let deny = Action::parse("deny", "", &mut rule).unwrap().unwrap();
+    /// assert_eq!(deny.name(), "deny");
+    /// ```
+    pub fn parse(
+        name: &str,
+        argument: &str,
+        rule: &mut RuleMetadata,
+    ) -> Result<Option<Self>, ActionError> {
+        let lowercase = name.to_ascii_lowercase();
 
-    /// Return the action type category.
-    fn action_type(&self) -> ActionType;
-}
+        type ApplyToRule = fn(&mut RuleMetadata, &str) -> Result<(), ActionError>;
+        let apply: Option<ApplyToRule> = match lowercase.as_str() {
+            "id" => Some(metadata::id),
+            "msg" => Some(metadata::msg),
+            "tag" => Some(metadata::tag),
+            "severity" => Some(metadata::severity),
+            "rev" => Some(metadata::rev),
+            "ver" => Some(metadata::ver),
+            "maturity" => Some(metadata::maturity),
+            "phase" => Some(metadata::phase),
+            "log" => Some(logging::log),
+            "nolog" => Some(logging::nolog),
+            "auditlog" => Some(logging::auditlog),
+            "noauditlog" => Some(logging::noauditlog),
+            "logdata" => Some(logging::logdata),
+            "capture" => Some(special::capture),
+            "multimatch" => Some(special::multimatch),
+            "status" => Some(special::status),
+            "t" => Some(special::t),
+            "chain" => Some(flow::chain),
+            "exec" => Some(deferred::exec),
+            "expirevar" => Some(deferred::expirevar),
+            "initcol" => Some(deferred::initcol),
+            _ => None,
+        };
+        if let Some(apply) = apply {
+            apply(rule, argument)?;
+            return Ok(None);
+        }
 
-/// Action factory function type.
-///
-/// The registry stores factory functions that create new action instances.
-type ActionFactory = fn() -> Box<dyn Action>;
+        let action = match lowercase.as_str() {
+            "deny" => Self::Deny(DenyAction::parse(argument)?),
+            "drop" => Self::Drop(DropAction::parse(argument)?),
+            "block" => Self::Block(BlockAction::parse(argument)?),
+            "pass" => Self::Pass(PassAction::parse(argument)?),
+            "allow" => Self::Allow(AllowAction::parse(argument)?),
+            "redirect" => Self::Redirect(RedirectAction::parse(argument)?),
+            "skip" => Self::Skip(SkipAction::parse(argument)?),
+            "skipafter" => Self::SkipAfter(SkipAfterAction::parse(argument)?),
+            "setvar" => Self::Setvar(SetvarAction::parse(argument)?),
+            "ctl" => Self::Ctl(CtlAction::parse(argument)?),
+            "setenv" => Self::Setenv(SetenvAction::parse(argument)?),
+            _ => return Err(ActionError::UnknownAction(name.to_string())),
+        };
+        Ok(Some(action))
+    }
 
-/// Global action registry.
-static ACTION_REGISTRY: OnceLock<HashMap<String, ActionFactory>> = OnceLock::new();
+    /// The SecLang name of the action, e.g. `"skipAfter"`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Deny(_) => "deny",
+            Self::Drop(_) => "drop",
+            Self::Block(_) => "block",
+            Self::Pass(_) => "pass",
+            Self::Allow(_) => "allow",
+            Self::Redirect(_) => "redirect",
+            Self::Skip(_) => "skip",
+            Self::SkipAfter(_) => "skipAfter",
+            Self::Setvar(_) => "setvar",
+            Self::Ctl(_) => "ctl",
+            Self::Setenv(_) => "setenv",
+        }
+    }
 
-/// Helper functions to create action instances (for registry)
-fn create_id() -> Box<dyn Action> {
-    Box::new(IdAction)
-}
-fn create_msg() -> Box<dyn Action> {
-    Box::new(MsgAction)
-}
-fn create_tag() -> Box<dyn Action> {
-    Box::new(TagAction)
-}
-fn create_severity() -> Box<dyn Action> {
-    Box::new(SeverityAction)
-}
-fn create_rev() -> Box<dyn Action> {
-    Box::new(RevAction)
-}
-fn create_ver() -> Box<dyn Action> {
-    Box::new(VerAction)
-}
-fn create_maturity() -> Box<dyn Action> {
-    Box::new(MaturityAction)
-}
-fn create_phase() -> Box<dyn Action> {
-    Box::new(PhaseAction)
-}
-fn create_log() -> Box<dyn Action> {
-    Box::new(LogAction)
-}
-fn create_nolog() -> Box<dyn Action> {
-    Box::new(NologAction)
-}
-fn create_auditlog() -> Box<dyn Action> {
-    Box::new(AuditlogAction)
-}
-fn create_noauditlog() -> Box<dyn Action> {
-    Box::new(NoauditlogAction)
-}
-fn create_logdata() -> Box<dyn Action> {
-    Box::new(LogdataAction)
-}
-fn create_deny() -> Box<dyn Action> {
-    Box::new(DenyAction)
-}
-fn create_drop() -> Box<dyn Action> {
-    Box::new(DropAction)
-}
-fn create_allow() -> Box<dyn Action> {
-    Box::new(AllowAction::new())
-}
-fn create_block() -> Box<dyn Action> {
-    Box::new(BlockAction)
-}
-fn create_redirect() -> Box<dyn Action> {
-    Box::new(RedirectAction::new())
-}
-fn create_pass() -> Box<dyn Action> {
-    Box::new(PassAction)
-}
-fn create_setvar() -> Box<dyn Action> {
-    Box::new(SetvarAction::new())
-}
-fn create_chain() -> Box<dyn Action> {
-    Box::new(ChainAction)
-}
-fn create_skip() -> Box<dyn Action> {
-    Box::new(SkipAction::new())
-}
-fn create_skipafter() -> Box<dyn Action> {
-    Box::new(SkipAfterAction::new())
-}
-fn create_capture() -> Box<dyn Action> {
-    Box::new(CaptureAction)
-}
-fn create_multimatch() -> Box<dyn Action> {
-    Box::new(MultimatchAction)
-}
-fn create_status() -> Box<dyn Action> {
-    Box::new(StatusAction)
-}
-fn create_t() -> Box<dyn Action> {
-    Box::new(TAction)
-}
-fn create_ctl() -> Box<dyn Action> {
-    Box::new(CtlAction::new())
-}
+    /// When the action runs; see [`ActionType`].
+    pub fn action_type(&self) -> ActionType {
+        match self {
+            Self::Deny(_)
+            | Self::Drop(_)
+            | Self::Block(_)
+            | Self::Pass(_)
+            | Self::Allow(_)
+            | Self::Redirect(_) => ActionType::Disruptive,
+            Self::Skip(_) | Self::SkipAfter(_) => ActionType::Flow,
+            Self::Setvar(_) | Self::Ctl(_) | Self::Setenv(_) => ActionType::Nondisruptive,
+        }
+    }
 
-// Deferred action factories (from Phase 6, Step 10)
-
-fn create_exec() -> Box<dyn Action> {
-    Box::new(deferred::ExecAction::new())
-}
-
-fn create_expirevar() -> Box<dyn Action> {
-    Box::new(deferred::ExpirevarAction::new())
-}
-
-fn create_setenv() -> Box<dyn Action> {
-    Box::new(deferred::SetenvAction::new())
-}
-
-fn create_initcol() -> Box<dyn Action> {
-    Box::new(deferred::InitcolAction::new())
-}
-
-/// Initialize the action registry with built-in actions.
-fn init_registry() -> HashMap<String, ActionFactory> {
-    let mut registry = HashMap::new();
-
-    // Metadata actions
-    registry.insert("id".to_string(), create_id as ActionFactory);
-    registry.insert("msg".to_string(), create_msg as ActionFactory);
-    registry.insert("tag".to_string(), create_tag as ActionFactory);
-    registry.insert("severity".to_string(), create_severity as ActionFactory);
-    registry.insert("rev".to_string(), create_rev as ActionFactory);
-    registry.insert("ver".to_string(), create_ver as ActionFactory);
-    registry.insert("maturity".to_string(), create_maturity as ActionFactory);
-    registry.insert("phase".to_string(), create_phase as ActionFactory);
-
-    // Logging actions
-    registry.insert("log".to_string(), create_log as ActionFactory);
-    registry.insert("nolog".to_string(), create_nolog as ActionFactory);
-    registry.insert("auditlog".to_string(), create_auditlog as ActionFactory);
-    registry.insert("noauditlog".to_string(), create_noauditlog as ActionFactory);
-    registry.insert("logdata".to_string(), create_logdata as ActionFactory);
-
-    // Disruptive actions
-    registry.insert("deny".to_string(), create_deny as ActionFactory);
-    registry.insert("drop".to_string(), create_drop as ActionFactory);
-    registry.insert("allow".to_string(), create_allow as ActionFactory);
-    registry.insert("block".to_string(), create_block as ActionFactory);
-    registry.insert("redirect".to_string(), create_redirect as ActionFactory);
-    registry.insert("pass".to_string(), create_pass as ActionFactory);
-
-    // Variable manipulation actions
-    registry.insert("setvar".to_string(), create_setvar as ActionFactory);
-
-    // Flow control actions
-    registry.insert("chain".to_string(), create_chain as ActionFactory);
-    registry.insert("skip".to_string(), create_skip as ActionFactory);
-    registry.insert("skipafter".to_string(), create_skipafter as ActionFactory);
-
-    // Special actions
-    registry.insert("capture".to_string(), create_capture as ActionFactory);
-    registry.insert("multimatch".to_string(), create_multimatch as ActionFactory);
-    registry.insert("status".to_string(), create_status as ActionFactory);
-    registry.insert("t".to_string(), create_t as ActionFactory);
-    registry.insert("ctl".to_string(), create_ctl as ActionFactory);
-
-    // Deferred actions (from Phase 6)
-    registry.insert("exec".to_string(), create_exec as ActionFactory);
-    registry.insert("expirevar".to_string(), create_expirevar as ActionFactory);
-    registry.insert("setenv".to_string(), create_setenv as ActionFactory);
-    registry.insert("initcol".to_string(), create_initcol as ActionFactory);
-
-    registry
-}
-
-/// Register a new action in the global registry.
-///
-/// This function can be used to register both built-in and plugin actions.
-/// If an action with the same name already exists, it will be overwritten.
-///
-/// # Arguments
-///
-/// * `name` - Action name (case-insensitive)
-/// * `factory` - Factory function that creates new action instances
-///
-/// # Examples
-///
-/// ```no_run
-/// use coraza::actions::{register, Action, ActionType, ActionError, Rule, TransactionState};
-///
-/// struct CustomAction;
-///
-/// impl Action for CustomAction {
-///     fn init(&mut self, _rule: &mut Rule, _data: &str) -> Result<(), ActionError> {
-///         Ok(())
-///     }
-///
-///     fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
-///         // Custom action logic
-///     }
-///
-///     fn action_type(&self) -> ActionType {
-///         ActionType::Nondisruptive
-///     }
-/// }
-///
-/// // Register the custom action
-/// register("mycustom", || Box::new(CustomAction));
-/// ```
-pub fn register(_name: &str, _factory: ActionFactory) {
-    // Note: Runtime registration is not currently supported with OnceLock.
-    // The registry is initialized once with built-in actions.
-    // For plugin actions, consider using a different registration mechanism
-    // or compile-time registration via feature flags.
-    todo!(
-        "Runtime action registration not yet implemented - registry is read-only after initialization"
-    )
-}
-
-/// Get an action by name from the registry.
-///
-/// Returns a new instance of the requested action, or an error if the action
-/// is not registered.
-///
-/// # Arguments
-///
-/// * `name` - Action name (case-insensitive)
-///
-/// # Returns
-///
-/// * `Ok(Box<dyn Action>)` - New action instance
-/// * `Err(ActionError::UnknownAction)` - Action not found in registry
-///
-/// # Examples
-///
-/// ```no_run
-/// use coraza::actions::get;
-///
-/// // Get a built-in action (when implemented)
-/// let action = get("deny").unwrap();
-/// ```
-pub fn get(name: &str) -> Result<Box<dyn Action>, ActionError> {
-    let registry = ACTION_REGISTRY.get_or_init(init_registry);
-    let name_lower = name.to_lowercase();
-
-    registry
-        .get(&name_lower)
-        .map(|factory| factory())
-        .ok_or_else(|| ActionError::UnknownAction(name.to_string()))
+    /// Runs the action for a match of the rule described by `rule`.
+    pub fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
+        match self {
+            Self::Deny(action) => action.evaluate(rule, tx),
+            Self::Drop(action) => action.evaluate(rule, tx),
+            Self::Block(action) => action.evaluate(rule, tx),
+            Self::Pass(_) => {}
+            Self::Allow(action) => action.evaluate(tx),
+            Self::Redirect(action) => action.evaluate(rule, tx),
+            Self::Skip(action) => action.evaluate(tx),
+            Self::SkipAfter(action) => action.evaluate(tx),
+            Self::Setvar(action) => action.evaluate(tx),
+            Self::Ctl(action) => action.evaluate(tx),
+            Self::Setenv(action) => action.evaluate(tx),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // Mock action for testing
-    struct MockAction {
-        initialized: bool,
-    }
-
-    impl Action for MockAction {
-        fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
-            if !data.is_empty() {
-                return Err(ActionError::UnexpectedArguments);
-            }
-            self.initialized = true;
-            Ok(())
-        }
-
-        fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
-            // Mock evaluation
-        }
-
-        fn action_type(&self) -> ActionType {
-            ActionType::Nondisruptive
-        }
-    }
-
-    #[test]
-    fn test_action_type_categories() {
-        assert_eq!(ActionType::Metadata, ActionType::Metadata);
-        assert_ne!(ActionType::Metadata, ActionType::Disruptive);
+    fn parse(name: &str, argument: &str) -> Result<Option<Action>, ActionError> {
+        Action::parse(name, argument, &mut RuleMetadata::new())
     }
 
     #[test]
@@ -595,232 +352,72 @@ mod tests {
     }
 
     #[test]
-    fn test_mock_action_init() {
-        let mut action = MockAction { initialized: false };
-        let mut rule = Rule::new();
-
-        // Should succeed with empty data
-        assert!(action.init(&mut rule, "").is_ok());
-        assert!(action.initialized);
-
-        // Should fail with non-empty data
-        let mut action2 = MockAction { initialized: false };
-        let result = action2.init(&mut rule, "unexpected");
-        assert_eq!(result, Err(ActionError::UnexpectedArguments));
+    fn test_parse_unknown_action() {
+        assert_eq!(
+            parse("nonexistent_action", "").unwrap_err(),
+            ActionError::UnknownAction("nonexistent_action".to_string())
+        );
     }
 
     #[test]
-    fn test_get_unknown_action() {
-        let result = get("nonexistent_action");
-        assert!(matches!(result, Err(ActionError::UnknownAction(_))));
+    fn test_parse_is_case_insensitive() {
+        let mut rule = RuleMetadata::new();
+        assert!(Action::parse("ID", "7", &mut rule).unwrap().is_none());
+        assert_eq!(rule.id, 7);
+        assert!(parse("DeNy", "").unwrap().is_some());
     }
 
     #[test]
-    fn test_get_id_action() {
-        let action = get("id");
-        assert!(action.is_ok());
-        assert_eq!(action.unwrap().action_type(), ActionType::Metadata);
-    }
-
-    #[test]
-    fn test_get_msg_action() {
-        let action = get("msg");
-        assert!(action.is_ok());
-        assert_eq!(action.unwrap().action_type(), ActionType::Metadata);
-    }
-
-    #[test]
-    fn test_get_severity_action() {
-        let action = get("severity");
-        assert!(action.is_ok());
-        assert_eq!(action.unwrap().action_type(), ActionType::Metadata);
-    }
-
-    #[test]
-    fn test_get_case_insensitive() {
-        // Registry should be case-insensitive
-        assert!(get("ID").is_ok());
-        assert!(get("Id").is_ok());
-        assert!(get("MSG").is_ok());
-        assert!(get("Msg").is_ok());
-    }
-
-    #[test]
-    fn test_all_metadata_actions_registered() {
-        // Ensure all 7 metadata actions are registered
-        let actions = vec!["id", "msg", "tag", "severity", "rev", "ver", "maturity"];
-        for name in actions {
-            assert!(get(name).is_ok(), "Action '{}' not registered", name);
-        }
-    }
-
-    #[test]
-    fn test_all_logging_actions_registered() {
-        // Ensure all 5 logging actions are registered
-        let actions = vec!["log", "nolog", "auditlog", "noauditlog", "logdata"];
-        for name in actions {
-            assert!(get(name).is_ok(), "Action '{}' not registered", name);
-        }
-    }
-
-    #[test]
-    fn test_logging_action_types() {
-        // Verify all logging actions have Nondisruptive type
-        let actions = vec!["log", "nolog", "auditlog", "noauditlog", "logdata"];
-        for name in actions {
-            let action = get(name).unwrap();
-            assert_eq!(
-                action.action_type(),
-                ActionType::Nondisruptive,
-                "Action '{}' should be Nondisruptive",
+    fn test_metadata_actions_have_no_runtime_part() {
+        for (name, argument) in [
+            ("id", "1"),
+            ("msg", "m"),
+            ("tag", "t"),
+            ("severity", "2"),
+            ("rev", "1"),
+            ("ver", "1"),
+            ("maturity", "1"),
+            ("phase", "2"),
+            ("log", ""),
+            ("nolog", ""),
+            ("auditlog", ""),
+            ("noauditlog", ""),
+            ("logdata", "d"),
+            ("capture", ""),
+            ("multimatch", ""),
+            ("status", "403"),
+            ("t", "lowercase"),
+            ("chain", ""),
+            ("exec", "/bin/true"),
+            ("expirevar", "tx.a=60"),
+            ("initcol", "ip=%{REMOTE_ADDR}"),
+        ] {
+            assert!(
+                parse(name, argument).unwrap().is_none(),
+                "{} should only update metadata",
                 name
             );
         }
     }
 
     #[test]
-    fn test_all_disruptive_actions_registered() {
-        // Ensure all 6 disruptive actions are registered
-        let actions = vec!["deny", "drop", "allow", "block", "redirect", "pass"];
-        for name in actions {
-            assert!(get(name).is_ok(), "Action '{}' not registered", name);
+    fn test_runtime_actions_and_their_types() {
+        for (name, argument, expected) in [
+            ("deny", "", ActionType::Disruptive),
+            ("drop", "", ActionType::Disruptive),
+            ("block", "", ActionType::Disruptive),
+            ("pass", "", ActionType::Disruptive),
+            ("allow", "phase", ActionType::Disruptive),
+            ("redirect", "http://example.com", ActionType::Disruptive),
+            ("skip", "2", ActionType::Flow),
+            ("skipafter", "END", ActionType::Flow),
+            ("setvar", "tx.a=1", ActionType::Nondisruptive),
+            ("ctl", "ruleEngine=Off", ActionType::Nondisruptive),
+            ("setenv", "A=b", ActionType::Nondisruptive),
+        ] {
+            let action = parse(name, argument).unwrap().expect(name);
+            assert_eq!(action.action_type(), expected, "{}", name);
+            assert!(action.name().eq_ignore_ascii_case(name), "{}", name);
         }
-    }
-
-    #[test]
-    fn test_disruptive_action_types() {
-        // Verify all disruptive actions have Disruptive type
-        let actions = vec!["deny", "drop", "allow", "block", "redirect", "pass"];
-        for name in actions {
-            let action = get(name).unwrap();
-            assert_eq!(
-                action.action_type(),
-                ActionType::Disruptive,
-                "Action '{}' should be Disruptive",
-                name
-            );
-        }
-    }
-
-    #[test]
-    fn test_setvar_registered() {
-        // Ensure setvar action is registered
-        assert!(get("setvar").is_ok(), "Action 'setvar' not registered");
-    }
-
-    #[test]
-    fn test_all_flow_actions_registered() {
-        // Ensure all 3 flow actions are registered
-        let actions = vec!["chain", "skip", "skipafter"];
-        for name in actions {
-            assert!(get(name).is_ok(), "Action '{}' not registered", name);
-        }
-    }
-
-    #[test]
-    fn test_flow_action_types() {
-        // Verify all flow actions have Flow type
-        let actions = vec!["chain", "skip", "skipafter"];
-        for name in actions {
-            let action = get(name).unwrap();
-            assert_eq!(
-                action.action_type(),
-                ActionType::Flow,
-                "Action '{}' should be Flow",
-                name
-            );
-        }
-    }
-
-    #[test]
-    fn test_all_special_actions_registered() {
-        // Ensure all 5 special actions are registered (4 + ctl)
-        let actions = vec!["capture", "multimatch", "status", "t", "ctl"];
-        for name in actions {
-            assert!(get(name).is_ok(), "Action '{}' not registered", name);
-        }
-    }
-
-    #[test]
-    fn test_special_action_types() {
-        // Verify special action types
-        assert_eq!(
-            get("capture").unwrap().action_type(),
-            ActionType::Nondisruptive,
-            "capture should be Nondisruptive"
-        );
-        assert_eq!(
-            get("multimatch").unwrap().action_type(),
-            ActionType::Nondisruptive,
-            "multimatch should be Nondisruptive"
-        );
-        assert_eq!(
-            get("status").unwrap().action_type(),
-            ActionType::Data,
-            "status should be Data"
-        );
-        assert_eq!(
-            get("t").unwrap().action_type(),
-            ActionType::Nondisruptive,
-            "t should be Nondisruptive"
-        );
-        assert_eq!(
-            get("ctl").unwrap().action_type(),
-            ActionType::Nondisruptive,
-            "ctl should be Nondisruptive"
-        );
-    }
-
-    #[test]
-    fn test_setvar_action_type() {
-        // Verify setvar has Nondisruptive type
-        let action = get("setvar").unwrap();
-        assert_eq!(
-            action.action_type(),
-            ActionType::Nondisruptive,
-            "Action 'setvar' should be Nondisruptive"
-        );
-    }
-
-    // ===== Deferred Actions Registration Tests (Step 10) =====
-
-    #[test]
-    fn test_deferred_actions_registered() {
-        // Verify all 4 deferred actions are registered in the global registry
-        assert!(get("exec").is_ok(), "exec action should be registered");
-        assert!(
-            get("expirevar").is_ok(),
-            "expirevar action should be registered"
-        );
-        assert!(get("setenv").is_ok(), "setenv action should be registered");
-        assert!(
-            get("initcol").is_ok(),
-            "initcol action should be registered"
-        );
-    }
-
-    #[test]
-    fn test_deferred_actions_types() {
-        // Verify all deferred actions are Nondisruptive
-        assert_eq!(
-            get("exec").unwrap().action_type(),
-            ActionType::Nondisruptive,
-            "exec should be Nondisruptive"
-        );
-        assert_eq!(
-            get("expirevar").unwrap().action_type(),
-            ActionType::Nondisruptive,
-            "expirevar should be Nondisruptive"
-        );
-        assert_eq!(
-            get("setenv").unwrap().action_type(),
-            ActionType::Nondisruptive,
-            "setenv should be Nondisruptive"
-        );
-        assert_eq!(
-            get("initcol").unwrap().action_type(),
-            ActionType::Nondisruptive,
-            "initcol should be Nondisruptive"
-        );
     }
 }

@@ -12,12 +12,15 @@
 //! 4. Extract directive name and options
 //! 5. Dispatch to directive handler
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 
-use crate::seclang::WafConfig;
-use crate::types::{BodyLimitAction, RuleEngineStatus};
+use crate::config::WafConfig;
+use crate::rules::{Rule, RuleGroup};
+use crate::seclang::CompileError;
+use crate::seclang::rule_compiler::{compile_sec_action, compile_sec_marker, compile_sec_rule};
+use crate::types::{AuditEngineStatus, BodyLimitAction, RuleEngineStatus};
+use crate::waf::{ConfigError, Waf, WafBuilder};
 
 /// Maximum include recursion depth to prevent DoS attacks
 const MAX_INCLUDE_RECURSION: usize = 100;
@@ -50,27 +53,20 @@ impl ParseError {
 
 type ParseResult<T> = Result<T, ParseError>;
 
-/// Directive handler function type
-///
-/// Each directive is implemented as a function that takes DirectiveOptions
-/// and modifies WAF state accordingly.
-type DirectiveFn = fn(&mut DirectiveOptions<'_>) -> ParseResult<()>;
+/// Directive handler: applies the directive, or returns why it can't; the parser adds
+/// the location to the message.
+type DirectiveFn = fn(&mut DirectiveOptions<'_>) -> Result<(), String>;
 
-/// Options passed to directive handlers
-///
-/// Contains parser state and the directive's arguments.
-pub struct DirectiveOptions<'a> {
-    /// Raw directive line (for error reporting)
-    pub raw: String,
-
+/// What a directive handler works on: its (non-empty) argument and the parser's output.
+struct DirectiveOptions<'a> {
     /// Directive options/arguments (everything after directive name)
-    pub opts: String,
-
-    /// Current parser state
-    pub parser_state: ParserState,
+    opts: String,
 
     /// Mutable reference to WAF configuration
-    pub waf_config: &'a mut WafConfig,
+    waf_config: &'a mut WafConfig,
+
+    /// Rules compiled so far, in file order
+    rules: &'a mut RuleGroup,
 }
 
 /// Parser configuration and state
@@ -88,7 +84,8 @@ pub struct ParserState {
 
 /// SecLang parser
 ///
-/// Parses ModSecurity SecLang directives and compiles them into executable rules.
+/// Parses ModSecurity SecLang directives into a WAF configuration and a set of
+/// compiled rules, then turns both into a [`Waf`] with [`Parser::into_waf`].
 ///
 /// # Example
 ///
@@ -96,15 +93,13 @@ pub struct ParserState {
 /// use coraza::seclang::Parser;
 ///
 /// let mut parser = Parser::new();
+/// parser.from_string(r#"
+///     SecRuleEngine On
+///     SecRule ARGS "@contains attack" "id:1,phase:1,deny,status:403"
+/// "#)?;
 ///
-/// // Parse directives from string
-/// parser.from_string("SecRuleEngine On")?;
-///
-/// // Get the resulting WAF configuration
-/// let config = parser.config();
-///
-/// // Parse from file (when implemented)
-/// // parser.from_file("rules.conf")?;
+/// let waf = parser.into_waf()?;
+/// assert_eq!(waf.rule_count(), 1);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct Parser {
@@ -114,27 +109,30 @@ pub struct Parser {
     /// Include recursion counter (prevents DoS)
     include_count: usize,
 
-    /// Directive registry (directive name -> handler function)
-    directives: HashMap<String, DirectiveFn>,
-
     /// WAF configuration (populated by directives)
     waf_config: WafConfig,
+
+    /// Rules compiled from SecRule, SecAction and SecMarker, in file order
+    rules: RuleGroup,
+
+    /// Whether a failing directive is recorded in `skipped` instead of returned
+    skip_failed: bool,
+
+    /// Directives skipped because they failed, in parse order
+    skipped: Vec<ParseError>,
 }
 
 impl Parser {
     /// Create a new parser
     pub fn new() -> Self {
-        let mut parser = Self {
+        Self {
             state: ParserState::default(),
             include_count: 0,
-            directives: HashMap::new(),
             waf_config: WafConfig::new(),
-        };
-
-        // Register built-in directives
-        parser.register_directives();
-
-        parser
+            rules: RuleGroup::new(),
+            skip_failed: false,
+            skipped: Vec::new(),
+        }
     }
 
     /// Get reference to the WAF configuration
@@ -147,89 +145,28 @@ impl Parser {
         &mut self.waf_config
     }
 
-    /// Register all built-in directives
-    fn register_directives(&mut self) {
-        // Engine configuration directives
-        self.directives
-            .insert("secruleengine".to_string(), directive_sec_rule_engine);
-        self.directives.insert(
-            "secrequestbodyaccess".to_string(),
-            directive_sec_request_body_access,
-        );
-        self.directives.insert(
-            "secresponsebodyaccess".to_string(),
-            directive_sec_response_body_access,
-        );
-        self.directives.insert(
-            "secrequestbodylimit".to_string(),
-            directive_sec_request_body_limit,
-        );
-        self.directives.insert(
-            "secrequestbodylimitaction".to_string(),
-            directive_sec_request_body_limit_action,
-        );
-        self.directives.insert(
-            "secdebugloglevel".to_string(),
-            directive_sec_debug_log_level,
-        );
-        self.directives
-            .insert("secwebappid".to_string(), directive_sec_web_app_id);
-        self.directives.insert(
-            "seccomponentsignature".to_string(),
-            directive_sec_component_signature,
-        );
+    /// Makes later parsing skip directives that fail, instead of stopping at the first one.
+    ///
+    /// Use this to load a rule set the engine only partly supports. Each skipped
+    /// directive's error is kept, in order, and returned by [`Parser::skipped`].
+    /// A chain with a skipped link is dropped whole.
+    pub fn skip_failed_directives(&mut self) {
+        self.skip_failed = true;
+    }
 
-        // Additional configuration directives
-        self.directives.insert(
-            "secserversignature".to_string(),
-            directive_sec_server_signature,
-        );
-        self.directives
-            .insert("secsensorid".to_string(), directive_sec_sensor_id);
-        self.directives.insert(
-            "secresponsebodylimit".to_string(),
-            directive_sec_response_body_limit,
-        );
-        self.directives.insert(
-            "secresponsebodylimitaction".to_string(),
-            directive_sec_response_body_limit_action,
-        );
-        self.directives.insert(
-            "secrequestbodyinmemorylimit".to_string(),
-            directive_sec_request_body_in_memory_limit,
-        );
-        self.directives.insert(
-            "secrequestbodynofileslimit".to_string(),
-            directive_sec_request_body_no_files_limit,
-        );
-        self.directives.insert(
-            "secargumentslimit".to_string(),
-            directive_sec_arguments_limit,
-        );
-        self.directives
-            .insert("secuploaddir".to_string(), directive_sec_upload_dir);
-        self.directives.insert(
-            "secuploadfilelimit".to_string(),
-            directive_sec_upload_file_limit,
-        );
-        self.directives.insert(
-            "secuploadfilemode".to_string(),
-            directive_sec_upload_file_mode,
-        );
-        self.directives.insert(
-            "secuploadkeepfiles".to_string(),
-            directive_sec_upload_keep_files,
-        );
-        self.directives
-            .insert("secauditengine".to_string(), directive_sec_audit_engine);
-        self.directives
-            .insert("secauditlog".to_string(), directive_sec_audit_log);
-        self.directives
-            .insert("secdatadir".to_string(), directive_sec_data_dir);
-        self.directives.insert(
-            "seccollectiontimeout".to_string(),
-            directive_sec_collection_timeout,
-        );
+    /// Errors of the directives skipped so far; empty unless
+    /// [`Parser::skip_failed_directives`] was called.
+    pub fn skipped(&self) -> &[ParseError] {
+        &self.skipped
+    }
+
+    /// Creates a WAF from the parsed configuration and rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] if the parsed configuration is invalid (see [`Waf::new`]).
+    pub fn into_waf(self) -> Result<Waf, ConfigError> {
+        WafBuilder::with_rules(self.waf_config, self.rules).build()
     }
 
     /// Parse directives from a string
@@ -293,13 +230,7 @@ impl Parser {
         // Expand glob patterns if present
         let files = if path_str.contains('*') {
             glob::glob(&path_str)
-                .map_err(|e| {
-                    ParseError::new(
-                        format!("failed to glob pattern '{}': {}", path_str, e),
-                        self.state.current_line,
-                        self.state.current_file.clone(),
-                    )
-                })?
+                .map_err(|e| self.error(format!("failed to glob pattern '{}': {}", path_str, e)))?
                 .filter_map(Result::ok)
                 .map(|p| p.to_string_lossy().to_string())
                 .collect()
@@ -331,11 +262,7 @@ impl Parser {
 
             // Read file
             let content = std::fs::read_to_string(&resolved_path).map_err(|e| {
-                ParseError::new(
-                    format!("failed to read file '{}': {}", resolved_path, e),
-                    self.state.current_line,
-                    self.state.current_file.clone(),
-                )
+                self.error(format!("failed to read file '{}': {}", resolved_path, e))
             })?;
 
             // Parse file content
@@ -401,18 +328,21 @@ impl Parser {
             } else {
                 // Complete line - process it
                 line_buffer.push_str(trimmed);
-                self.evaluate_line(&line_buffer)?;
+                let result = self.evaluate_line(&line_buffer);
                 line_buffer.clear();
+                match result {
+                    Err(e) if self.skip_failed => {
+                        self.rules.discard_open_chain();
+                        self.skipped.push(e);
+                    }
+                    result => result?,
+                }
             }
         }
 
         // Check for unclosed backtick blocks
         if in_backticks {
-            return Err(ParseError::new(
-                "backticks left open".to_string(),
-                self.state.current_line,
-                self.state.current_file.clone(),
-            ));
+            return Err(self.error("backticks left open".to_string()));
         }
 
         Ok(())
@@ -445,46 +375,43 @@ impl Parser {
         // Special case: Include directive (handled separately due to recursion)
         if directive_lower == "include" {
             if self.include_count >= MAX_INCLUDE_RECURSION {
-                return Err(ParseError::new(
-                    format!("cannot include more than {} files", MAX_INCLUDE_RECURSION),
-                    self.state.current_line,
-                    self.state.current_file.clone(),
-                ));
+                return Err(self.error(format!(
+                    "cannot include more than {} files",
+                    MAX_INCLUDE_RECURSION
+                )));
             }
             self.include_count += 1;
             return self.from_file(&opts);
         }
 
-        // Look up directive handler
-        let handler = self.directives.get(&directive_lower).copied();
+        let Some(handler) = directive_handler(&directive_lower) else {
+            return Err(self.error(format!("unknown directive \"{}\"", directive_name)));
+        };
 
-        match handler {
-            Some(func) => {
-                // Call directive handler
-                let mut options = DirectiveOptions {
-                    raw: line.to_string(),
-                    opts,
-                    parser_state: self.state.clone(),
-                    waf_config: &mut self.waf_config,
-                };
+        let result = if opts.is_empty() {
+            Err("requires an argument".to_string())
+        } else {
+            handler(&mut DirectiveOptions {
+                opts,
+                waf_config: &mut self.waf_config,
+                rules: &mut self.rules,
+            })
+        };
+        result.map_err(|message| {
+            self.error(format!(
+                "failed to compile directive \"{}\": {}",
+                directive_name, message
+            ))
+        })
+    }
 
-                func(&mut options).map_err(|e| {
-                    ParseError::new(
-                        format!(
-                            "failed to compile directive \"{}\": {}",
-                            directive_name, e.message
-                        ),
-                        self.state.current_line,
-                        self.state.current_file.clone(),
-                    )
-                })
-            }
-            None => Err(ParseError::new(
-                format!("unknown directive \"{}\"", directive_name),
-                self.state.current_line,
-                self.state.current_file.clone(),
-            )),
-        }
+    /// An error at the current position.
+    fn error(&self, message: String) -> ParseError {
+        ParseError::new(
+            message,
+            self.state.current_line,
+            self.state.current_file.clone(),
+        )
     }
 }
 
@@ -492,6 +419,42 @@ impl Default for Parser {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Handler of the directive with the given lowercase name; `None` if unknown.
+///
+/// `Include` is handled by the parser itself.
+fn directive_handler(name: &str) -> Option<DirectiveFn> {
+    let handler: DirectiveFn = match name {
+        "secrule" => directive_sec_rule,
+        "secaction" => directive_sec_action,
+        "secmarker" => directive_sec_marker,
+        "secruleengine" => directive_sec_rule_engine,
+        "secrequestbodyaccess" => directive_sec_request_body_access,
+        "secresponsebodyaccess" => directive_sec_response_body_access,
+        "secrequestbodylimit" => directive_sec_request_body_limit,
+        "secrequestbodylimitaction" => directive_sec_request_body_limit_action,
+        "secdebugloglevel" => directive_sec_debug_log_level,
+        "secwebappid" => directive_sec_web_app_id,
+        "seccomponentsignature" => directive_sec_component_signature,
+        "secserversignature" => directive_sec_server_signature,
+        "secsensorid" => directive_sec_sensor_id,
+        "secresponsebodylimit" => directive_sec_response_body_limit,
+        "secresponsebodylimitaction" => directive_sec_response_body_limit_action,
+        "secrequestbodyinmemorylimit" => directive_sec_request_body_in_memory_limit,
+        "secrequestbodynofileslimit" => directive_sec_request_body_no_files_limit,
+        "secargumentslimit" => directive_sec_arguments_limit,
+        "secuploaddir" => directive_sec_upload_dir,
+        "secuploadfilelimit" => directive_sec_upload_file_limit,
+        "secuploadfilemode" => directive_sec_upload_file_mode,
+        "secuploadkeepfiles" => directive_sec_upload_keep_files,
+        "secauditengine" => directive_sec_audit_engine,
+        "secauditlog" => directive_sec_audit_log,
+        "secdatadir" => directive_sec_data_dir,
+        "seccollectiontimeout" => directive_sec_collection_timeout,
+        _ => return None,
+    };
+    Some(handler)
 }
 
 // ============================================================================
@@ -507,25 +470,38 @@ fn parse_boolean(value: &str) -> Result<bool, String> {
     }
 }
 
+/// Adds a compiled rule; fails on compile errors and duplicate ids.
+fn add_rule(
+    options: &mut DirectiveOptions,
+    rule: Result<Rule, CompileError>,
+) -> Result<(), String> {
+    rule.map_err(|e| e.message)
+        .and_then(|rule| options.rules.add(rule))
+}
+
+/// SecRule VARIABLES "OPERATOR" "ACTIONS"
+fn directive_sec_rule(options: &mut DirectiveOptions) -> Result<(), String> {
+    let rule = compile_sec_rule(&options.opts);
+    add_rule(options, rule)
+}
+
+/// SecAction "ACTIONS"
+fn directive_sec_action(options: &mut DirectiveOptions) -> Result<(), String> {
+    let rule = compile_sec_action(&options.opts);
+    add_rule(options, rule)
+}
+
+/// SecMarker LABEL
+fn directive_sec_marker(options: &mut DirectiveOptions) -> Result<(), String> {
+    let rule = compile_sec_marker(&options.opts);
+    add_rule(options, rule)
+}
+
 /// SecRuleEngine On|Off|DetectionOnly
 ///
 /// Configures the rules engine.
-fn directive_sec_rule_engine(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecRuleEngine requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
-    let status = RuleEngineStatus::from_str(&options.opts).map_err(|e| {
-        ParseError::new(
-            e.to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        )
-    })?;
+fn directive_sec_rule_engine(options: &mut DirectiveOptions) -> Result<(), String> {
+    let status = RuleEngineStatus::from_str(&options.opts).map_err(|e| e.to_string())?;
 
     options.waf_config.rule_engine = status;
     Ok(())
@@ -534,22 +510,8 @@ fn directive_sec_rule_engine(options: &mut DirectiveOptions) -> ParseResult<()> 
 /// SecRequestBodyAccess On|Off
 ///
 /// Configures whether request bodies will be buffered and processed.
-fn directive_sec_request_body_access(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecRequestBodyAccess requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
-    let value = parse_boolean(&options.opts.to_lowercase()).map_err(|e| {
-        ParseError::new(
-            e,
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        )
-    })?;
+fn directive_sec_request_body_access(options: &mut DirectiveOptions) -> Result<(), String> {
+    let value = parse_boolean(&options.opts.to_lowercase())?;
 
     options.waf_config.request_body_access = value;
     Ok(())
@@ -558,22 +520,8 @@ fn directive_sec_request_body_access(options: &mut DirectiveOptions) -> ParseRes
 /// SecResponseBodyAccess On|Off
 ///
 /// Configures whether response bodies will be buffered and processed.
-fn directive_sec_response_body_access(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecResponseBodyAccess requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
-    let value = parse_boolean(&options.opts.to_lowercase()).map_err(|e| {
-        ParseError::new(
-            e,
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        )
-    })?;
+fn directive_sec_response_body_access(options: &mut DirectiveOptions) -> Result<(), String> {
+    let value = parse_boolean(&options.opts.to_lowercase())?;
 
     options.waf_config.response_body_access = value;
     Ok(())
@@ -582,22 +530,11 @@ fn directive_sec_response_body_access(options: &mut DirectiveOptions) -> ParseRe
 /// SecRequestBodyLimit [LIMIT_IN_BYTES]
 ///
 /// Configures the maximum request body size.
-fn directive_sec_request_body_limit(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecRequestBodyLimit requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
-    let limit = options.opts.parse::<i64>().map_err(|e| {
-        ParseError::new(
-            format!("invalid limit value: {}", e),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        )
-    })?;
+fn directive_sec_request_body_limit(options: &mut DirectiveOptions) -> Result<(), String> {
+    let limit = options
+        .opts
+        .parse::<i64>()
+        .map_err(|e| format!("invalid limit value: {}", e))?;
 
     options.waf_config.request_body_limit = limit;
     Ok(())
@@ -606,26 +543,14 @@ fn directive_sec_request_body_limit(options: &mut DirectiveOptions) -> ParseResu
 /// SecRequestBodyLimitAction Reject|ProcessPartial
 ///
 /// Controls what happens when request body limit is reached.
-fn directive_sec_request_body_limit_action(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecRequestBodyLimitAction requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
+fn directive_sec_request_body_limit_action(options: &mut DirectiveOptions) -> Result<(), String> {
     let action = match options.opts.to_lowercase().as_str() {
         "reject" => BodyLimitAction::Reject,
         "processpartial" => BodyLimitAction::ProcessPartial,
         _ => {
-            return Err(ParseError::new(
-                format!(
-                    "invalid SecRequestBodyLimitAction value: {} (expected Reject or ProcessPartial)",
-                    options.opts
-                ),
-                options.parser_state.current_line,
-                options.parser_state.current_file.clone(),
+            return Err(format!(
+                "invalid SecRequestBodyLimitAction value: {} (expected Reject or ProcessPartial)",
+                options.opts
             ));
         }
     };
@@ -637,46 +562,24 @@ fn directive_sec_request_body_limit_action(options: &mut DirectiveOptions) -> Pa
 /// SecDebugLogLevel [0-9]
 ///
 /// Configures the verboseness of the debug log.
-fn directive_sec_debug_log_level(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecDebugLogLevel requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
+fn directive_sec_debug_log_level(options: &mut DirectiveOptions) -> Result<(), String> {
+    let level = options
+        .opts
+        .parse::<u8>()
+        .map_err(|e| format!("invalid debug log level: {}", e))?;
+
+    if level > 9 {
+        return Err(format!("debug log level must be 0-9, got {}", level));
     }
 
-    let level = options.opts.parse::<u8>().map_err(|e| {
-        ParseError::new(
-            format!("invalid debug log level: {}", e),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        )
-    })?;
-
-    options.waf_config.set_debug_log_level(level).map_err(|e| {
-        ParseError::new(
-            e,
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        )
-    })?;
-
+    options.waf_config.debug_log_level = level;
     Ok(())
 }
 
 /// SecWebAppId [ID]
 ///
 /// Configures the web application ID.
-fn directive_sec_web_app_id(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecWebAppId requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
+fn directive_sec_web_app_id(options: &mut DirectiveOptions) -> Result<(), String> {
     options.waf_config.web_app_id = options.opts.clone();
     Ok(())
 }
@@ -684,15 +587,7 @@ fn directive_sec_web_app_id(options: &mut DirectiveOptions) -> ParseResult<()> {
 /// SecComponentSignature "COMPONENT_NAME/X.Y.Z (COMMENT)"
 ///
 /// Appends component signature to the Coraza signature.
-fn directive_sec_component_signature(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecComponentSignature requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
+fn directive_sec_component_signature(options: &mut DirectiveOptions) -> Result<(), String> {
     options
         .waf_config
         .component_names
@@ -703,15 +598,7 @@ fn directive_sec_component_signature(options: &mut DirectiveOptions) -> ParseRes
 /// SecServerSignature [signature]
 ///
 /// Sets the server signature that will be sent in the Server response header.
-fn directive_sec_server_signature(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecServerSignature requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
+fn directive_sec_server_signature(options: &mut DirectiveOptions) -> Result<(), String> {
     options.waf_config.server_signature = options.opts.clone();
     Ok(())
 }
@@ -719,15 +606,7 @@ fn directive_sec_server_signature(options: &mut DirectiveOptions) -> ParseResult
 /// SecSensorID [id]
 ///
 /// Sets the sensor ID that will identify this WAF instance in a cluster.
-fn directive_sec_sensor_id(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecSensorID requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
+fn directive_sec_sensor_id(options: &mut DirectiveOptions) -> Result<(), String> {
     options.waf_config.sensor_id = options.opts.clone();
     Ok(())
 }
@@ -735,22 +614,11 @@ fn directive_sec_sensor_id(options: &mut DirectiveOptions) -> ParseResult<()> {
 /// SecResponseBodyLimit [limit_in_bytes]
 ///
 /// Sets the maximum response body size that will be buffered.
-fn directive_sec_response_body_limit(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecResponseBodyLimit requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
-    let limit = options.opts.parse::<i64>().map_err(|e| {
-        ParseError::new(
-            format!("invalid response body limit: {}", e),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        )
-    })?;
+fn directive_sec_response_body_limit(options: &mut DirectiveOptions) -> Result<(), String> {
+    let limit = options
+        .opts
+        .parse::<i64>()
+        .map_err(|e| format!("invalid response body limit: {}", e))?;
 
     options.waf_config.response_body_limit = limit;
     Ok(())
@@ -759,23 +627,14 @@ fn directive_sec_response_body_limit(options: &mut DirectiveOptions) -> ParseRes
 /// SecResponseBodyLimitAction [Reject|ProcessPartial]
 ///
 /// Controls what happens when response body limit is reached.
-fn directive_sec_response_body_limit_action(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecResponseBodyLimitAction requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
+fn directive_sec_response_body_limit_action(options: &mut DirectiveOptions) -> Result<(), String> {
     let action = match options.opts.to_lowercase().as_str() {
         "reject" => BodyLimitAction::Reject,
         "processpartial" => BodyLimitAction::ProcessPartial,
         _ => {
-            return Err(ParseError::new(
-                format!("invalid SecResponseBodyLimitAction value: {}", options.opts),
-                options.parser_state.current_line,
-                options.parser_state.current_file.clone(),
+            return Err(format!(
+                "invalid SecResponseBodyLimitAction value: {}",
+                options.opts
             ));
         }
     };
@@ -787,22 +646,13 @@ fn directive_sec_response_body_limit_action(options: &mut DirectiveOptions) -> P
 /// SecRequestBodyInMemoryLimit [limit_in_bytes]
 ///
 /// Sets the limit for request body data stored in memory before writing to disk.
-fn directive_sec_request_body_in_memory_limit(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecRequestBodyInMemoryLimit requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
-    let limit = options.opts.parse::<i64>().map_err(|e| {
-        ParseError::new(
-            format!("invalid in-memory limit: {}", e),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        )
-    })?;
+fn directive_sec_request_body_in_memory_limit(
+    options: &mut DirectiveOptions,
+) -> Result<(), String> {
+    let limit = options
+        .opts
+        .parse::<i64>()
+        .map_err(|e| format!("invalid in-memory limit: {}", e))?;
 
     options.waf_config.request_body_in_memory_limit = limit;
     Ok(())
@@ -811,22 +661,11 @@ fn directive_sec_request_body_in_memory_limit(options: &mut DirectiveOptions) ->
 /// SecRequestBodyNoFilesLimit [limit_in_bytes]
 ///
 /// Sets the limit for request body excluding files.
-fn directive_sec_request_body_no_files_limit(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecRequestBodyNoFilesLimit requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
-    let limit = options.opts.parse::<i64>().map_err(|e| {
-        ParseError::new(
-            format!("invalid no-files limit: {}", e),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        )
-    })?;
+fn directive_sec_request_body_no_files_limit(options: &mut DirectiveOptions) -> Result<(), String> {
+    let limit = options
+        .opts
+        .parse::<i64>()
+        .map_err(|e| format!("invalid no-files limit: {}", e))?;
 
     options.waf_config.request_body_no_files_limit = limit;
     Ok(())
@@ -835,30 +674,15 @@ fn directive_sec_request_body_no_files_limit(options: &mut DirectiveOptions) -> 
 /// SecArgumentsLimit [limit]
 ///
 /// Sets the maximum number of ARGS that will be accepted.
-fn directive_sec_arguments_limit(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecArgumentsLimit requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
-    let limit = options.opts.parse::<usize>().map_err(|e| {
-        ParseError::new(
-            format!("invalid arguments limit: {}", e),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        )
-    })?;
+fn directive_sec_arguments_limit(options: &mut DirectiveOptions) -> Result<(), String> {
+    let limit = options
+        .opts
+        .parse::<usize>()
+        .map_err(|e| format!("invalid arguments limit: {}", e))?;
 
     // Validate limit is > 0
     if limit == 0 {
-        return Err(ParseError::new(
-            "arguments limit must be greater than 0".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
+        return Err("arguments limit must be greater than 0".to_string());
     }
 
     options.waf_config.argument_limit = limit;
@@ -868,23 +692,11 @@ fn directive_sec_arguments_limit(options: &mut DirectiveOptions) -> ParseResult<
 /// SecUploadDir [directory]
 ///
 /// Sets the directory where uploaded files will be stored.
-fn directive_sec_upload_dir(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecUploadDir requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
+fn directive_sec_upload_dir(options: &mut DirectiveOptions) -> Result<(), String> {
     // Validate directory exists
     let dir_path = Path::new(&options.opts);
     if !dir_path.is_dir() {
-        return Err(ParseError::new(
-            format!("upload directory does not exist: {}", options.opts),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
+        return Err(format!("upload directory does not exist: {}", options.opts));
     }
 
     options.waf_config.upload_dir = options.opts.clone();
@@ -894,22 +706,11 @@ fn directive_sec_upload_dir(options: &mut DirectiveOptions) -> ParseResult<()> {
 /// SecUploadFileLimit [limit]
 ///
 /// Sets the maximum number of files that will be processed in a multipart request.
-fn directive_sec_upload_file_limit(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecUploadFileLimit requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
-    let limit = options.opts.parse::<usize>().map_err(|e| {
-        ParseError::new(
-            format!("invalid upload file limit: {}", e),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        )
-    })?;
+fn directive_sec_upload_file_limit(options: &mut DirectiveOptions) -> Result<(), String> {
+    let limit = options
+        .opts
+        .parse::<usize>()
+        .map_err(|e| format!("invalid upload file limit: {}", e))?;
 
     options.waf_config.upload_file_limit = limit;
     Ok(())
@@ -918,22 +719,9 @@ fn directive_sec_upload_file_limit(options: &mut DirectiveOptions) -> ParseResul
 /// SecUploadFileMode [mode]
 ///
 /// Sets the file mode (permissions) for uploaded files.
-fn directive_sec_upload_file_mode(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecUploadFileMode requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
-    let mode = u32::from_str_radix(&options.opts, 8).map_err(|e| {
-        ParseError::new(
-            format!("invalid file mode (expected octal): {}", e),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        )
-    })?;
+fn directive_sec_upload_file_mode(options: &mut DirectiveOptions) -> Result<(), String> {
+    let mode = u32::from_str_radix(&options.opts, 8)
+        .map_err(|e| format!("invalid file mode (expected octal): {}", e))?;
 
     options.waf_config.upload_file_mode = mode;
     Ok(())
@@ -942,22 +730,8 @@ fn directive_sec_upload_file_mode(options: &mut DirectiveOptions) -> ParseResult
 /// SecUploadKeepFiles [On|Off]
 ///
 /// Controls whether uploaded files are kept after transaction.
-fn directive_sec_upload_keep_files(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecUploadKeepFiles requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
-    let keep = parse_boolean(&options.opts).map_err(|e| {
-        ParseError::new(
-            e,
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        )
-    })?;
+fn directive_sec_upload_keep_files(options: &mut DirectiveOptions) -> Result<(), String> {
+    let keep = parse_boolean(&options.opts)?;
     options.waf_config.upload_keep_files = keep;
     Ok(())
 }
@@ -965,32 +739,13 @@ fn directive_sec_upload_keep_files(options: &mut DirectiveOptions) -> ParseResul
 /// SecAuditEngine [On|Off|RelevantOnly]
 ///
 /// Configures the audit logging engine.
-fn directive_sec_audit_engine(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecAuditEngine requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
-    use crate::seclang::waf_config::AuditEngineStatus;
-
-    let status = match options.opts.to_lowercase().as_str() {
-        "on" => AuditEngineStatus::On,
-        "off" => AuditEngineStatus::Off,
-        "relevantonly" => AuditEngineStatus::RelevantOnly,
-        _ => {
-            return Err(ParseError::new(
-                format!(
-                    "invalid SecAuditEngine value: {} (expected On, Off, or RelevantOnly)",
-                    options.opts
-                ),
-                options.parser_state.current_line,
-                options.parser_state.current_file.clone(),
-            ));
-        }
-    };
+fn directive_sec_audit_engine(options: &mut DirectiveOptions) -> Result<(), String> {
+    let status = AuditEngineStatus::from_str(&options.opts).map_err(|_| {
+        format!(
+            "invalid SecAuditEngine value: {} (expected On, Off, or RelevantOnly)",
+            options.opts
+        )
+    })?;
 
     options.waf_config.audit_engine = status;
     Ok(())
@@ -999,15 +754,7 @@ fn directive_sec_audit_engine(options: &mut DirectiveOptions) -> ParseResult<()>
 /// SecAuditLog [path]
 ///
 /// Sets the path to the audit log file.
-fn directive_sec_audit_log(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecAuditLog requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
+fn directive_sec_audit_log(options: &mut DirectiveOptions) -> Result<(), String> {
     options.waf_config.audit_log = options.opts.clone();
     Ok(())
 }
@@ -1015,15 +762,7 @@ fn directive_sec_audit_log(options: &mut DirectiveOptions) -> ParseResult<()> {
 /// SecDataDir [directory]
 ///
 /// Sets the directory for storing data files.
-fn directive_sec_data_dir(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecDataDir requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
+fn directive_sec_data_dir(options: &mut DirectiveOptions) -> Result<(), String> {
     options.waf_config.data_dir = options.opts.clone();
     Ok(())
 }
@@ -1031,22 +770,11 @@ fn directive_sec_data_dir(options: &mut DirectiveOptions) -> ParseResult<()> {
 /// SecCollectionTimeout [seconds]
 ///
 /// Sets the timeout for IP/SESSION/USER collections.
-fn directive_sec_collection_timeout(options: &mut DirectiveOptions) -> ParseResult<()> {
-    if options.opts.is_empty() {
-        return Err(ParseError::new(
-            "SecCollectionTimeout requires an argument".to_string(),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        ));
-    }
-
-    let timeout = options.opts.parse::<i64>().map_err(|e| {
-        ParseError::new(
-            format!("invalid collection timeout: {}", e),
-            options.parser_state.current_line,
-            options.parser_state.current_file.clone(),
-        )
-    })?;
+fn directive_sec_collection_timeout(options: &mut DirectiveOptions) -> Result<(), String> {
+    let timeout = options
+        .opts
+        .parse::<i64>()
+        .map_err(|e| format!("invalid collection timeout: {}", e))?;
 
     options.waf_config.collection_timeout = timeout;
     Ok(())
@@ -1555,7 +1283,7 @@ SecWebAppId production
 
     #[test]
     fn test_sec_audit_engine() {
-        use crate::seclang::AuditEngineStatus;
+        use crate::types::AuditEngineStatus;
 
         let mut parser = Parser::new();
         assert!(parser.from_string("SecAuditEngine On").is_ok());
@@ -1759,5 +1487,117 @@ SecWebAppId production
         if let Err(e) = result {
             assert!(e.message.contains("failed to read file"));
         }
+    }
+
+    // ===== Rule directives =====
+
+    #[test]
+    fn test_rule_directives_compile_into_waf() {
+        let mut parser = Parser::new();
+        parser
+            .from_string(
+                r#"
+                SecRule ARGS "@contains attack" "id:1,phase:1,deny"
+                SecAction "id:2,phase:1,pass"
+                SecMarker END
+                "#,
+            )
+            .unwrap();
+
+        let waf = parser.into_waf().unwrap();
+        assert_eq!(waf.rule_count(), 3);
+        assert!(waf.find_rule_by_id(1).unwrap().operator().is_some());
+        assert!(waf.find_rule_by_id(2).unwrap().operator().is_none());
+    }
+
+    #[test]
+    fn test_rule_compile_error_reports_location() {
+        let mut parser = Parser::new();
+        let err = parser
+            .from_string("SecRuleEngine On\nSecRule ARGS \"@nosuchop x\" \"id:1\"")
+            .unwrap_err();
+
+        assert_eq!(err.line, 2);
+        assert!(err.message.contains("unknown operator"), "{}", err.message);
+    }
+
+    #[test]
+    fn test_duplicate_rule_id_rejected() {
+        let mut parser = Parser::new();
+        let err = parser
+            .from_string("SecAction \"id:1,pass\"\nSecAction \"id:1,pass\"")
+            .unwrap_err();
+
+        assert_eq!(err.line, 2);
+        assert!(
+            err.message.contains("duplicated rule id 1"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_chained_rules_join_their_parent() {
+        let mut parser = Parser::new();
+        parser
+            .from_string(
+                r#"
+                SecRule ARGS "@contains a" "id:1,phase:1,deny,chain"
+                    SecRule ARGS "@contains b" ""
+                "#,
+            )
+            .unwrap();
+
+        let waf = parser.into_waf().unwrap();
+        assert_eq!(waf.rule_count(), 1);
+        assert_eq!(waf.find_rule_by_id(1).unwrap().chain().len(), 1);
+    }
+
+    #[test]
+    fn test_skip_failed_directives() {
+        let mut parser = Parser::new();
+        parser.skip_failed_directives();
+        parser
+            .from_string(
+                r#"
+                SecDefaultAction "phase:1,log,pass"
+                SecRule ARGS "@nosuchop x" "id:1"
+                SecRule ARGS "@contains attack" "id:2,phase:1,deny"
+                "#,
+            )
+            .unwrap();
+
+        let lines: Vec<usize> = parser.skipped().iter().map(|e| e.line).collect();
+        assert_eq!(lines, vec![2, 3]);
+        assert_eq!(parser.into_waf().unwrap().rule_count(), 1);
+    }
+
+    #[test]
+    fn test_failed_directive_stops_parsing_by_default() {
+        let mut parser = Parser::new();
+        let result = parser.from_string("SecDefaultAction \"phase:1\"\nSecAction \"id:2,pass\"");
+
+        assert!(result.is_err());
+        assert!(parser.skipped().is_empty());
+        assert_eq!(parser.into_waf().unwrap().rule_count(), 0);
+    }
+
+    #[test]
+    fn test_skip_failed_directives_drops_a_chain_with_a_failed_link() {
+        let mut parser = Parser::new();
+        parser.skip_failed_directives();
+        parser
+            .from_string(
+                r#"
+                SecRule ARGS "@contains a" "id:1,phase:1,deny,chain"
+                    SecRule ARGS "@nosuchop b" ""
+                SecRule ARGS "@contains c" "id:2,phase:1,deny"
+                "#,
+            )
+            .unwrap();
+
+        let waf = parser.into_waf().unwrap();
+        assert!(waf.find_rule_by_id(1).is_none());
+        assert!(waf.find_rule_by_id(2).unwrap().chain().is_empty());
     }
 }

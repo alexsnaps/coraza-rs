@@ -36,6 +36,9 @@ pub use simple::{
 /// - `Option<TransformationError>`: Optional error (for logging only)
 pub type TransformationResult = (String, bool, Option<TransformationError>);
 
+/// A transformation function, as used in a [`crate::rules::TransformationChain`].
+pub type Transformation = fn(&str) -> TransformationResult;
+
 /// Error type for transformation operations.
 ///
 /// Transformation errors are for logging only and don't stop rule execution.
@@ -65,3 +68,62 @@ impl std::fmt::Display for TransformationError {
 }
 
 impl std::error::Error for TransformationError {}
+
+/// Looks up a transformation by its SecLang name (case-insensitive), e.g. `urlDecode`.
+///
+/// Returns `None` for unknown names. `none` is a real (identity) transformation here;
+/// clearing a rule's transformations with `t:none` is up to the caller.
+pub fn by_name(name: &str) -> Option<Transformation> {
+    let function: Transformation = match name.to_ascii_lowercase().as_str() {
+        "base64decode" => base64_decode,
+        "base64decodeext" => base64_decode_ext,
+        "base64encode" => base64_encode,
+        "cmdline" => cmd_line,
+        "compresswhitespace" => compress_whitespace,
+        "cssdecode" => css_decode,
+        "escapeseqdecode" => escape_seq_decode,
+        "hexdecode" => hex_decode,
+        "hexencode" => hex_encode,
+        "htmlentitydecode" => html_entity_decode,
+        "jsdecode" => js_decode,
+        "length" => length,
+        "lowercase" => lowercase,
+        "md5" => md5_hash,
+        "none" => none,
+        "normalisepath" | "normalizepath" => normalise_path,
+        "normalisepathwin" | "normalizepathwin" => normalise_path_win,
+        "removecomments" => remove_comments,
+        "removenulls" => remove_nulls,
+        "removewhitespace" => remove_whitespace,
+        "replacecomments" => replace_comments,
+        "replacenulls" => replace_nulls,
+        "sha1" => sha1_hash,
+        "trim" => trim,
+        "trimleft" => trim_left,
+        "trimright" => trim_right,
+        "uppercase" => uppercase,
+        "urldecode" => url_decode,
+        "urldecodeuni" => url_decode_uni,
+        "urlencode" => url_encode,
+        "utf8tounicode" => utf8_to_unicode,
+        _ => return None,
+    };
+    Some(function)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn by_name_is_case_insensitive() {
+        let f = by_name("urlDecode").unwrap();
+        assert_eq!(f("a%20b").0, "a b");
+        assert!(by_name("URLDECODE").is_some());
+    }
+
+    #[test]
+    fn by_name_rejects_unknown() {
+        assert!(by_name("noSuchThing").is_none());
+    }
+}

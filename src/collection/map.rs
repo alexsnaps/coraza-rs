@@ -6,7 +6,7 @@
 //! Provides key-value storage with optional case-insensitive keys.
 //! Multiple values per key are supported.
 
-use super::{Collection, Keyed, MapCollection, MatchData};
+use super::MatchData;
 use crate::RuleVariable;
 use regex::Regex;
 use std::collections::HashMap;
@@ -26,7 +26,7 @@ use std::collections::HashMap;
 /// # Examples
 ///
 /// ```
-/// use coraza::collection::{Map, MapCollection, Keyed};
+/// use coraza::collection::Map;
 /// use coraza::RuleVariable;
 ///
 /// let mut map = Map::new(RuleVariable::RequestHeaders);
@@ -91,8 +91,9 @@ impl Map {
     }
 }
 
-impl Collection for Map {
-    fn find_all(&self) -> Vec<MatchData> {
+impl Map {
+    /// All key-value pairs, in no particular order.
+    pub fn find_all(&self) -> Vec<MatchData> {
         let mut result = Vec::new();
         for values in self.data.values() {
             for kv in values {
@@ -106,17 +107,13 @@ impl Collection for Map {
         result
     }
 
-    fn name(&self) -> &str {
+    /// Name of the variable this map holds (e.g. `ARGS`).
+    pub fn name(&self) -> &str {
         self.variable.name()
     }
 
-    fn as_keyed(&self) -> Option<&dyn Keyed> {
-        Some(self)
-    }
-}
-
-impl Keyed for Map {
-    fn get(&self, key: &str) -> Vec<String> {
+    /// All values for `key`; empty if the key is absent.
+    pub fn get(&self, key: &str) -> Vec<String> {
         let lookup = self.lookup_key(key);
         self.data
             .get(&lookup)
@@ -124,7 +121,8 @@ impl Keyed for Map {
             .unwrap_or_default()
     }
 
-    fn find_regex(&self, regex: &Regex) -> Vec<MatchData> {
+    /// All key-value pairs whose (lookup) key matches `regex`.
+    pub fn find_regex(&self, regex: &Regex) -> Vec<MatchData> {
         let mut result = Vec::new();
         for (lookup_key, values) in &self.data {
             if regex.is_match(lookup_key) {
@@ -140,7 +138,8 @@ impl Keyed for Map {
         result
     }
 
-    fn find_string(&self, key: &str) -> Vec<MatchData> {
+    /// All key-value pairs for `key`; every pair if `key` is empty.
+    pub fn find_string(&self, key: &str) -> Vec<MatchData> {
         if key.is_empty() {
             return self.find_all();
         }
@@ -156,10 +155,9 @@ impl Keyed for Map {
             })
             .unwrap_or_default()
     }
-}
 
-impl MapCollection for Map {
-    fn add(&mut self, key: &str, value: &str) {
+    /// Appends `value` to the values of `key`.
+    pub fn add(&mut self, key: &str, value: &str) {
         let lookup = self.lookup_key(key);
         let kv = KeyValue {
             key: key.to_string(),
@@ -168,7 +166,8 @@ impl MapCollection for Map {
         self.data.entry(lookup).or_default().push(kv);
     }
 
-    fn set(&mut self, key: &str, values: Vec<String>) {
+    /// Replaces the values of `key`.
+    pub fn set(&mut self, key: &str, values: Vec<String>) {
         let lookup = self.lookup_key(key);
         let key_values: Vec<KeyValue> = values
             .into_iter()
@@ -180,7 +179,8 @@ impl MapCollection for Map {
         self.data.insert(lookup, key_values);
     }
 
-    fn set_index(&mut self, key: &str, index: usize, value: &str) {
+    /// Replaces the value at `index` of `key`, or appends it if `index` is past the end.
+    pub fn set_index(&mut self, key: &str, index: usize, value: &str) {
         let lookup = self.lookup_key(key);
         let kv = KeyValue {
             key: key.to_string(),
@@ -200,17 +200,25 @@ impl MapCollection for Map {
         }
     }
 
-    fn remove(&mut self, key: &str) {
+    /// Removes `key` and all its values.
+    pub fn remove(&mut self, key: &str) {
         let lookup = self.lookup_key(key);
         self.data.remove(&lookup);
     }
 
-    fn reset(&mut self) {
+    /// Removes every key.
+    pub fn reset(&mut self) {
         self.data.clear();
     }
 
-    fn len(&self) -> usize {
+    /// Number of distinct keys.
+    pub fn len(&self) -> usize {
         self.data.len()
+    }
+
+    /// Whether the map has no keys.
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
     }
 }
 

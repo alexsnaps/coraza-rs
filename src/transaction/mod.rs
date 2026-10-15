@@ -8,8 +8,9 @@ pub mod variables;
 use std::sync::Arc;
 
 use crate::RuleVariable;
-use crate::collection::{Keyed, Map, MapCollection, Single, SingleCollection};
-use crate::operators::TransactionState;
+use crate::actions::AllowType;
+use crate::body_processors::{BodyProcessorKind, BodyProcessorOptions};
+use crate::collection::{Map, Single};
 use crate::rules::RuleGroup;
 use crate::types::{RuleEngineStatus, RulePhase};
 
@@ -70,6 +71,135 @@ pub struct Interruption {
     pub data: String,
 }
 
+/// The data behind one rule variable in a transaction: a single value or a key-value map.
+///
+/// `S` and `M` are `&Single`/`&Map` or their `&mut` forms.
+#[derive(Debug)]
+pub enum VariableCollection<S, M> {
+    /// A variable with one value, such as `REQUEST_URI`
+    Single(S),
+    /// A variable with values selected by key, such as `ARGS`
+    Map(M),
+}
+
+/// Maps each rule variable to the transaction field that holds it; `$borrow` is `&` or
+/// `&mut`. This is the only such mapping: adding a [`RuleVariable`] variant fails to
+/// compile here until it is mapped to a field or listed as not populated.
+macro_rules! variable_storage {
+    ($tx:expr, $variable:expr, $($borrow:tt)+) => {{
+        use VariableCollection::{Map, Single};
+        match $variable {
+            RuleVariable::Args => Some(Map($($borrow)+ $tx.args)),
+            RuleVariable::ArgsGet => Some(Map($($borrow)+ $tx.args_get)),
+            RuleVariable::ArgsPost => Some(Map($($borrow)+ $tx.args_post)),
+            RuleVariable::RequestHeaders => Some(Map($($borrow)+ $tx.request_headers)),
+            RuleVariable::RequestCookies => Some(Map($($borrow)+ $tx.request_cookies)),
+            RuleVariable::ResponseHeaders => Some(Map($($borrow)+ $tx.response_headers)),
+            RuleVariable::Files => Some(Map($($borrow)+ $tx.files)),
+            RuleVariable::FilesTmpNames => Some(Map($($borrow)+ $tx.files_tmp_names)),
+            RuleVariable::FilesSizes => Some(Map($($borrow)+ $tx.files_sizes)),
+            RuleVariable::FilesNames => Some(Map($($borrow)+ $tx.files_names)),
+            RuleVariable::MultipartPartHeaders => Some(Map($($borrow)+ $tx.multipart_part_headers)),
+            RuleVariable::RequestXML => Some(Map($($borrow)+ $tx.request_xml)),
+            RuleVariable::ResponseArgs => Some(Map($($borrow)+ $tx.response_args)),
+            RuleVariable::ResponseXML => Some(Map($($borrow)+ $tx.response_xml)),
+            RuleVariable::TX => Some(Map($($borrow)+ $tx.tx)),
+            RuleVariable::RequestURI => Some(Single($($borrow)+ $tx.request_uri)),
+            RuleVariable::RequestMethod => Some(Single($($borrow)+ $tx.request_method)),
+            RuleVariable::RemoteAddr => Some(Single($($borrow)+ $tx.remote_addr)),
+            RuleVariable::RemotePort => Some(Single($($borrow)+ $tx.remote_port)),
+            RuleVariable::ServerAddr => Some(Single($($borrow)+ $tx.server_addr)),
+            RuleVariable::ServerPort => Some(Single($($borrow)+ $tx.server_port)),
+            RuleVariable::ServerName => Some(Single($($borrow)+ $tx.server_name)),
+            RuleVariable::RequestProtocol => Some(Single($($borrow)+ $tx.request_protocol)),
+            RuleVariable::RequestURIRaw => Some(Single($($borrow)+ $tx.request_uri_raw)),
+            RuleVariable::RequestBasename => Some(Single($($borrow)+ $tx.request_basename)),
+            RuleVariable::RequestFilename => Some(Single($($borrow)+ $tx.request_filename)),
+            RuleVariable::RequestLine => Some(Single($($borrow)+ $tx.request_line)),
+            RuleVariable::QueryString => Some(Single($($borrow)+ $tx.query_string)),
+            RuleVariable::RequestBody => Some(Single($($borrow)+ $tx.request_body)),
+            RuleVariable::RequestBodyLength => Some(Single($($borrow)+ $tx.request_body_length)),
+            RuleVariable::ReqbodyError => Some(Single($($borrow)+ $tx.reqbody_error)),
+            RuleVariable::ReqbodyErrorMsg => Some(Single($($borrow)+ $tx.reqbody_error_msg)),
+            RuleVariable::FilesCombinedSize => Some(Single($($borrow)+ $tx.files_combined_size)),
+            RuleVariable::MultipartStrictError => Some(Single($($borrow)+ $tx.multipart_strict_error)),
+            RuleVariable::ResponseStatus => Some(Single($($borrow)+ $tx.response_status)),
+            RuleVariable::ResponseProtocol => Some(Single($($borrow)+ $tx.response_protocol)),
+            RuleVariable::ResponseContentType => Some(Single($($borrow)+ $tx.response_content_type)),
+            RuleVariable::ResponseContentLength => Some(Single($($borrow)+ $tx.response_content_length)),
+            RuleVariable::ResponseBody => Some(Single($($borrow)+ $tx.response_body)),
+
+            // Not populated by this engine yet
+            RuleVariable::Unknown
+            | RuleVariable::UniqueID
+            | RuleVariable::ArgsCombinedSize
+            | RuleVariable::FullRequestLength
+            | RuleVariable::InboundDataError
+            | RuleVariable::MatchedVar
+            | RuleVariable::MatchedVarName
+            | RuleVariable::MultipartDataAfter
+            | RuleVariable::OutboundDataError
+            | RuleVariable::RemoteHost
+            | RuleVariable::ReqbodyProcessorError
+            | RuleVariable::ReqbodyProcessorErrorMsg
+            | RuleVariable::ReqbodyProcessor
+            | RuleVariable::HighestSeverity
+            | RuleVariable::StatusLine
+            | RuleVariable::Duration
+            | RuleVariable::ResponseHeadersNames
+            | RuleVariable::RequestHeadersNames
+            | RuleVariable::ArgsPath
+            | RuleVariable::FilesTmpContent
+            | RuleVariable::MultipartFilename
+            | RuleVariable::MultipartName
+            | RuleVariable::MatchedVarsNames
+            | RuleVariable::MatchedVars
+            | RuleVariable::ResBodyProcessor
+            | RuleVariable::Geo
+            | RuleVariable::RequestCookiesNames
+            | RuleVariable::ArgsNames
+            | RuleVariable::ArgsGetNames
+            | RuleVariable::ArgsPostNames
+            | RuleVariable::Rule
+            | RuleVariable::JSON
+            | RuleVariable::Env
+            | RuleVariable::UrlencodedError
+            | RuleVariable::XML
+            | RuleVariable::AuthType
+            | RuleVariable::FullRequest
+            | RuleVariable::MultipartBoundaryQuoted
+            | RuleVariable::MultipartBoundaryWhitespace
+            | RuleVariable::MultipartCrlfLfLines
+            | RuleVariable::MultipartDataBefore
+            | RuleVariable::MultipartFileLimitExceeded
+            | RuleVariable::MultipartHeaderFolding
+            | RuleVariable::MultipartInvalidHeaderFolding
+            | RuleVariable::MultipartInvalidPart
+            | RuleVariable::MultipartInvalidQuoting
+            | RuleVariable::MultipartLfLine
+            | RuleVariable::MultipartMissingSemicolon
+            | RuleVariable::MultipartUnmatchedBoundary
+            | RuleVariable::PathInfo
+            | RuleVariable::Sessionid
+            | RuleVariable::Userid
+            | RuleVariable::IP
+            | RuleVariable::ResBodyError
+            | RuleVariable::ResBodyErrorMsg
+            | RuleVariable::ResBodyProcessorError
+            | RuleVariable::ResBodyProcessorErrorMsg
+            | RuleVariable::Time
+            | RuleVariable::TimeDay
+            | RuleVariable::TimeEpoch
+            | RuleVariable::TimeHour
+            | RuleVariable::TimeMin
+            | RuleVariable::TimeMon
+            | RuleVariable::TimeSec
+            | RuleVariable::TimeWday
+            | RuleVariable::TimeYear => None,
+        }
+    }};
+}
+
 /// A transaction represents a single HTTP request/response being processed.
 ///
 /// Transactions store all request and response data in collections that
@@ -79,7 +209,6 @@ pub struct Interruption {
 ///
 /// ```
 /// use coraza::transaction::Transaction;
-/// use coraza::collection::{Keyed, MapCollection};
 ///
 /// let mut tx = Transaction::new("tx-001");
 ///
@@ -157,6 +286,12 @@ pub struct Transaction {
 
     /// REQUEST_BODY_LENGTH
     pub(crate) request_body_length: Single,
+
+    /// REQBODY_ERROR - "1" when the request body processor failed
+    reqbody_error: Single,
+
+    /// REQBODY_ERROR_MSG - Why the request body processor failed
+    reqbody_error_msg: Single,
 
     /// FILES - Original file names from multipart/form-data
     pub(crate) files: Map,
@@ -240,10 +375,7 @@ pub struct Transaction {
     /// Marker ID to skip to (controlled by skipAfter action)
     pub(crate) skip_after: String,
 
-    /// Captured values from operators (rx, pm)
-    captures: Vec<Option<String>>,
-
-    /// Whether capturing is enabled
+    /// Whether operators of the rule being evaluated store their captures in TX.0-TX.9
     capturing: bool,
 
     // ===== CTL Runtime Exclusions =====
@@ -262,6 +394,9 @@ pub struct Transaction {
     /// Reference to WAF's rule group for CTL tag/msg-based exclusions
     /// Optional because transactions created via Transaction::new() don't have a WAF reference
     rules: Option<Arc<RuleGroup>>,
+
+    /// Rules skipped because of an `allow` action
+    allow_type: AllowType,
 }
 
 impl Default for Transaction {
@@ -296,6 +431,8 @@ impl Transaction {
             query_string: Single::new(RuleVariable::QueryString),
             request_body: Single::new(RuleVariable::RequestBody),
             request_body_length: Single::new(RuleVariable::RequestBodyLength),
+            reqbody_error: Single::new(RuleVariable::ReqbodyError),
+            reqbody_error_msg: Single::new(RuleVariable::ReqbodyErrorMsg),
             files: Map::new_case_sensitive(RuleVariable::Files),
             files_tmp_names: Map::new_case_sensitive(RuleVariable::FilesTmpNames),
             files_sizes: Map::new_case_sensitive(RuleVariable::FilesSizes),
@@ -323,12 +460,12 @@ impl Transaction {
             interruption: None,
             skip: 0,
             skip_after: String::new(),
-            captures: Vec::new(),
             capturing: false,
             rule_remove_by_id: std::collections::BTreeSet::new(),
             rule_remove_target_by_id: std::collections::BTreeMap::new(),
             matched_rules: Vec::new(),
             rules: None, // No WAF reference for standalone transactions
+            allow_type: AllowType::Unset,
         }
     }
 
@@ -371,45 +508,18 @@ impl Transaction {
         self.matched_rules.push(matched);
     }
 
-    /// Get a collection by variable type.
-    ///
-    /// Returns a reference to the collection trait object for the given variable.
-    /// This is used by rule variable extraction to get the collection to query.
-    ///
-    /// # Arguments
-    ///
-    /// * `variable` - The variable type to get the collection for
-    ///
-    /// # Returns
-    ///
-    /// Option containing a reference to the Collection trait object, or None if
-    /// the variable is not supported or not yet populated.
-    pub fn get_collection(
-        &self,
-        variable: RuleVariable,
-    ) -> Option<&dyn crate::collection::Collection> {
-        use crate::collection::Collection;
+    /// The data a rule variable reads in this transaction, or `None` for a variable
+    /// this engine doesn't populate.
+    pub fn collection(&self, variable: RuleVariable) -> Option<VariableCollection<&Single, &Map>> {
+        variable_storage!(self, variable, &)
+    }
 
-        match variable {
-            RuleVariable::Args => Some(&self.args as &dyn Collection),
-            RuleVariable::ArgsGet => Some(&self.args_get as &dyn Collection),
-            RuleVariable::ArgsPost => Some(&self.args_post as &dyn Collection),
-            RuleVariable::RequestHeaders => Some(&self.request_headers as &dyn Collection),
-            RuleVariable::RequestCookies => Some(&self.request_cookies as &dyn Collection),
-            RuleVariable::ResponseHeaders => Some(&self.response_headers as &dyn Collection),
-            RuleVariable::RequestURI => Some(&self.request_uri as &dyn Collection),
-            RuleVariable::RequestMethod => Some(&self.request_method as &dyn Collection),
-            RuleVariable::RemoteAddr => Some(&self.remote_addr as &dyn Collection),
-            RuleVariable::RemotePort => Some(&self.remote_port as &dyn Collection),
-            RuleVariable::RequestLine => Some(&self.request_line as &dyn Collection),
-            RuleVariable::RequestProtocol => Some(&self.request_protocol as &dyn Collection),
-            RuleVariable::RequestURIRaw => Some(&self.request_uri_raw as &dyn Collection),
-            RuleVariable::RequestBasename => Some(&self.request_basename as &dyn Collection),
-            RuleVariable::RequestFilename => Some(&self.request_filename as &dyn Collection),
-            RuleVariable::QueryString => Some(&self.query_string as &dyn Collection),
-            RuleVariable::TX => Some(&self.tx as &dyn Collection),
-            _ => None, // Not yet implemented or not available
-        }
+    /// Like [`Transaction::collection`], for changing the data (e.g. by `setvar`).
+    pub fn collection_mut(
+        &mut self,
+        variable: RuleVariable,
+    ) -> Option<VariableCollection<&mut Single, &mut Map>> {
+        variable_storage!(self, variable, &mut)
     }
 
     /// Get ARGS (combined GET + POST) collection.
@@ -602,12 +712,10 @@ impl Transaction {
         &self.request_xml
     }
 
-    /// Enable or disable capturing for operators.
+    /// Sets whether operators store their captures in `TX.0`..`TX.9`; follows the `capture`
+    /// action of the rule being evaluated.
     pub fn set_capturing(&mut self, enabled: bool) {
         self.capturing = enabled;
-        if !enabled {
-            self.captures.clear();
-        }
     }
 
     // ===== CTL Action Setters =====
@@ -781,7 +889,6 @@ impl Transaction {
     ///
     /// ```
     /// use coraza::transaction::Transaction;
-    /// use coraza::collection::Keyed;
     ///
     /// let mut tx = Transaction::new("tx-1");
     /// tx.process_uri("/api/users?id=123&name=admin", "GET", "HTTP/1.1");
@@ -833,62 +940,12 @@ impl Transaction {
         }
     }
 
-    /// Extract GET arguments from a query string.
-    ///
-    /// Parses URL-encoded query string like "key1=value1&key2=value2"
-    /// and adds to ARGS_GET collection.
+    /// Adds the arguments of a query string to ARGS_GET and ARGS.
     fn extract_get_arguments(&mut self, query: &str) {
-        for pair in query.split('&') {
-            if pair.is_empty() {
-                continue;
-            }
-
-            if let Some(eq_pos) = pair.find('=') {
-                let key = &pair[..eq_pos];
-                let value = &pair[eq_pos + 1..];
-
-                // URL decode key and value
-                let key = Self::url_decode(key);
-                let value = Self::url_decode(value);
-
-                self.args_get_mut().add(&key, &value);
-                self.args_mut().add(&key, &value);
-            } else {
-                // Key without value (e.g., "?flag")
-                let key = Self::url_decode(pair);
-                self.args_get_mut().add(&key, "");
-                self.args_mut().add(&key, "");
-            }
+        for (key, value) in crate::body_processors::urlencoded::parse_query(query) {
+            self.args_get.add(&key, &value);
+            self.args.add(&key, &value);
         }
-    }
-
-    /// Simple URL decoder (decodes %XX sequences).
-    fn url_decode(s: &str) -> String {
-        let mut result = String::with_capacity(s.len());
-        let mut chars = s.chars();
-
-        while let Some(ch) = chars.next() {
-            if ch == '%' {
-                // Try to decode %XX sequence
-                let hex: String = chars.by_ref().take(2).collect();
-                if hex.len() == 2
-                    && let Ok(byte) = u8::from_str_radix(&hex, 16)
-                {
-                    result.push(byte as char);
-                    continue;
-                }
-                // If decoding failed, just keep the %
-                result.push('%');
-                result.push_str(&hex);
-            } else if ch == '+' {
-                // '+' decodes to space in query strings
-                result.push(' ');
-            } else {
-                result.push(ch);
-            }
-        }
-
-        result
     }
 
     /// Add a request header.
@@ -901,7 +958,6 @@ impl Transaction {
     ///
     /// ```
     /// use coraza::transaction::Transaction;
-    /// use coraza::collection::Keyed;
     ///
     /// let mut tx = Transaction::new("tx-1");
     /// tx.add_request_header("User-Agent", "Mozilla/5.0");
@@ -951,7 +1007,6 @@ impl Transaction {
     ///
     /// ```
     /// use coraza::transaction::Transaction;
-    /// use coraza::collection::SingleCollection;
     ///
     /// let mut tx = Transaction::new("tx-1");
     /// tx.add_response_header("Content-Type", "application/json; charset=utf-8");
@@ -1034,7 +1089,6 @@ impl Transaction {
     ///
     /// ```
     /// use coraza::transaction::Transaction;
-    /// use coraza::collection::Keyed;
     ///
     /// let mut tx = Transaction::new("tx-1");
     /// tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
@@ -1066,40 +1120,16 @@ impl Transaction {
             .map(|s| s.as_str())
             .unwrap_or("");
 
-        // Determine body processor
-        let processor_name = if content_type.starts_with("application/x-www-form-urlencoded") {
-            Some("urlencoded")
-        } else if content_type.starts_with("multipart/form-data") {
-            Some("multipart")
-        } else if content_type.starts_with("application/json") {
-            Some("json")
-        } else if content_type.starts_with("application/xml")
-            || content_type.starts_with("text/xml")
-        {
-            Some("xml")
-        } else {
-            None
-        };
+        if let Some(processor) = BodyProcessorKind::for_content_type(content_type) {
+            let options = BodyProcessorOptions {
+                mime: content_type.to_string(),
+                ..Default::default()
+            };
 
-        // Process body if we have a processor
-        if let Some(processor_name) = processor_name {
-            use crate::body_processors::{BodyProcessorOptions, get_body_processor};
-
-            match get_body_processor(processor_name) {
-                Ok(processor) => {
-                    let options = BodyProcessorOptions {
-                        mime: content_type.to_string(),
-                        ..Default::default()
-                    };
-
-                    if let Err(e) = processor.process_request(body, self, &options) {
-                        // Log error but don't fail the transaction
-                        eprintln!("Body processor error: {}", e);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to get body processor: {}", e);
-                }
+            // A malformed body doesn't stop the transaction: rules see it in REQBODY_ERROR
+            if let Err(e) = processor.process_request(body, self, &options) {
+                self.reqbody_error.set("1");
+                self.reqbody_error_msg.set(e.to_string());
             }
         }
 
@@ -1121,7 +1151,6 @@ impl Transaction {
     ///
     /// ```
     /// use coraza::transaction::Transaction;
-    /// use coraza::collection::SingleCollection;
     ///
     /// let mut tx = Transaction::new("tx-1");
     /// tx.add_response_header("Content-Type", "application/json");
@@ -1333,55 +1362,33 @@ impl Transaction {
     }
 }
 
-impl TransactionState for Transaction {
-    fn get_variable(&self, variable: RuleVariable, key: Option<&str>) -> Option<String> {
-        match (variable, key) {
-            // Single-value variables
-            (RuleVariable::RequestURI, None) => Some(self.request_uri.get().to_string()),
-            (RuleVariable::RequestMethod, None) => Some(self.request_method.get().to_string()),
-            (RuleVariable::RemoteAddr, None) => Some(self.remote_addr.get().to_string()),
-            (RuleVariable::RemotePort, None) => Some(self.remote_port.get().to_string()),
-            (RuleVariable::RequestLine, None) => Some(self.request_line.get().to_string()),
-            (RuleVariable::RequestProtocol, None) => Some(self.request_protocol.get().to_string()),
-            (RuleVariable::RequestURIRaw, None) => Some(self.request_uri_raw.get().to_string()),
-            (RuleVariable::RequestBasename, None) => Some(self.request_basename.get().to_string()),
-            (RuleVariable::RequestFilename, None) => Some(self.request_filename.get().to_string()),
-            (RuleVariable::QueryString, None) => Some(self.query_string.get().to_string()),
-
-            // Keyed variables - return first value if key specified
-            (RuleVariable::Args, Some(k)) => self.args.get(k).first().cloned(),
-            (RuleVariable::ArgsGet, Some(k)) => self.args_get.get(k).first().cloned(),
-            (RuleVariable::ArgsPost, Some(k)) => self.args_post.get(k).first().cloned(),
-            (RuleVariable::RequestHeaders, Some(k)) => self.request_headers.get(k).first().cloned(),
-            (RuleVariable::RequestCookies, Some(k)) => self.request_cookies.get(k).first().cloned(),
-            (RuleVariable::ResponseHeaders, Some(k)) => {
-                self.response_headers.get(k).first().cloned()
-            }
-            (RuleVariable::TX, Some(k)) => self.tx.get(k).first().cloned(),
-
-            // Unsupported combinations
+/// State that operators and actions read and change while a rule is evaluated.
+impl Transaction {
+    /// Value of a variable, as macros (`%{VAR.key}`) expand it: the value of a
+    /// single-value variable (with `key` `None`), or the first value of `key` in a
+    /// collection. `None` if the variable isn't set or not available.
+    pub fn get_variable(&self, variable: RuleVariable, key: Option<&str>) -> Option<String> {
+        match (self.collection(variable)?, key) {
+            (VariableCollection::Single(single), None) => Some(single.get().to_string()),
+            (VariableCollection::Map(map), Some(key)) => map.get(key).first().cloned(),
             _ => None,
         }
     }
 
-    fn capturing(&self) -> bool {
+    /// Whether operators currently store their captures (see [`Transaction::set_capturing`]).
+    pub fn capturing(&self) -> bool {
         self.capturing
     }
 
-    fn capture_field(&mut self, index: usize, value: &str) {
-        if !self.capturing {
-            return;
+    /// Stores capture `index` (0-9) in `TX.<index>` if capturing is on; otherwise does nothing.
+    pub fn capture_field(&mut self, index: usize, value: &str) {
+        if self.capturing {
+            self.tx.set(&index.to_string(), vec![value.to_string()]);
         }
-
-        // Extend captures array if needed
-        if index >= self.captures.len() {
-            self.captures.resize(index + 1, None);
-        }
-
-        self.captures[index] = Some(value.to_string());
     }
 
-    fn interrupt(&mut self, rule_id: i32, action: &str, status: i32, data: &str) {
+    /// Interrupts the transaction on behalf of a disruptive action of `rule_id`.
+    pub(crate) fn interrupt(&mut self, rule_id: i32, action: &str, status: i32, data: &str) {
         self.interruption = Some(Interruption {
             rule_id: rule_id as usize,
             action: action.to_string(),
@@ -1390,84 +1397,39 @@ impl TransactionState for Transaction {
         });
     }
 
-    // ===== CTL Action Methods =====
-
-    fn ctl_set_rule_engine(&mut self, status: RuleEngineStatus) {
-        self.set_rule_engine(status);
+    /// Records an `allow` action; see [`AllowType`] for which rules it skips.
+    pub(crate) fn set_allow_type(&mut self, allow_type: AllowType) {
+        self.allow_type = allow_type;
     }
 
-    fn ctl_set_request_body_access(&mut self, enabled: bool) {
-        self.set_request_body_access(enabled);
-    }
-
-    fn ctl_set_request_body_limit(&mut self, limit: i64) {
-        self.set_request_body_limit(limit);
-    }
-
-    fn ctl_set_force_request_body_variable(&mut self, enabled: bool) {
-        self.set_force_request_body_variable(enabled);
-    }
-
-    fn ctl_set_response_body_access(&mut self, enabled: bool) {
-        self.set_response_body_access(enabled);
-    }
-
-    fn ctl_set_response_body_limit(&mut self, limit: i64) {
-        self.set_response_body_limit(limit);
-    }
-
-    fn ctl_set_force_response_body_variable(&mut self, enabled: bool) {
-        self.set_force_response_body_variable(enabled);
-    }
-
-    fn ctl_last_phase(&self) -> Option<RulePhase> {
-        self.last_phase
-    }
-
-    fn ctl_remove_rule_by_id(&mut self, rule_id: i32) {
-        self.remove_rule_by_id(rule_id);
-    }
-
-    fn ctl_remove_rule_target_by_id(&mut self, rule_id: i32, variable: RuleVariable, key: &str) {
-        self.remove_rule_target_by_id(rule_id, variable, key);
-    }
-
-    fn ctl_get_rules(&self) -> Option<&Arc<RuleGroup>> {
-        self.rules.as_ref()
-    }
-
-    // ===== Flow Control Methods =====
-
-    fn set_skip(&mut self, count: i32) {
-        self.skip = count;
-    }
-
-    fn set_skip_after(&mut self, marker: &str) {
-        self.skip_after = marker.to_string();
-    }
-
-    fn collection_mut(
-        &mut self,
-        variable: RuleVariable,
-    ) -> Option<&mut dyn crate::collection::MapCollection> {
-        match variable {
-            RuleVariable::TX => Some(&mut self.tx),
-            RuleVariable::Args => Some(&mut self.args),
-            RuleVariable::ArgsGet => Some(&mut self.args_get),
-            RuleVariable::ArgsPost => Some(&mut self.args_post),
-            RuleVariable::RequestHeaders => Some(&mut self.request_headers),
-            RuleVariable::RequestCookies => Some(&mut self.request_cookies),
-            RuleVariable::ResponseHeaders => Some(&mut self.response_headers),
-            _ => None,
+    /// Whether an earlier `allow` action skips the rules of `phase` still to be evaluated.
+    pub(crate) fn is_allowed(&self, phase: RulePhase) -> bool {
+        match self.allow_type {
+            AllowType::Unset => false,
+            AllowType::All | AllowType::Phase => phase != RulePhase::Logging,
+            AllowType::Request => {
+                matches!(phase, RulePhase::RequestHeaders | RulePhase::RequestBody)
+            }
         }
+    }
+
+    /// Ends an `allow:phase` once the phase that triggered it has been evaluated.
+    pub(crate) fn end_phase_allow(&mut self) {
+        if self.allow_type == AllowType::Phase {
+            self.allow_type = AllowType::Unset;
+        }
+    }
+
+    /// The WAF's rules, for `ctl` actions that exclude rules by tag or message; `None`
+    /// for a transaction not created by a WAF.
+    pub(crate) fn rules(&self) -> Option<&Arc<RuleGroup>> {
+        self.rules.as_ref()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collection::{Collection, MapCollection};
-
     #[test]
     fn test_transaction_new() {
         let tx = Transaction::new("tx-001");
@@ -1539,17 +1501,16 @@ mod tests {
         assert!(tx.capturing());
 
         tx.capture_field(0, "match1");
-        tx.capture_field(1, "match2");
         tx.capture_field(5, "match6"); // Sparse indexing
 
-        assert_eq!(tx.captures[0], Some("match1".to_string()));
-        assert_eq!(tx.captures[1], Some("match2".to_string()));
-        assert_eq!(tx.captures[2], None);
-        assert_eq!(tx.captures[5], Some("match6".to_string()));
+        assert_eq!(tx.tx.get("0"), vec!["match1"]);
+        assert!(tx.tx.get("1").is_empty());
+        assert_eq!(tx.tx.get("5"), vec!["match6"]);
 
-        // Disabling capturing clears captures
+        // Captures are dropped while capturing is off
         tx.set_capturing(false);
-        assert!(tx.captures.is_empty());
+        tx.capture_field(1, "ignored");
+        assert!(tx.tx.get("1").is_empty());
     }
 
     #[test]
@@ -1923,5 +1884,14 @@ value1\r\n\
         // Process logging
         tx.process_logging();
         assert_eq!(tx.last_phase, Some(RulePhase::Logging));
+    }
+
+    #[test]
+    fn test_query_arguments_decode_utf8() {
+        let mut tx = Transaction::new("utf8");
+        tx.process_uri("/?name=%C3%A9t%C3%A9&q=a+b", "GET", "HTTP/1.1");
+
+        assert_eq!(tx.args_get().get("name"), vec!["été"]);
+        assert_eq!(tx.args().get("q"), vec!["a b"]);
     }
 }

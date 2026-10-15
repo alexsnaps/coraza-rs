@@ -15,22 +15,6 @@ mod e2e;
 
 use e2e::{TestRequest, TestServer};
 
-/// Helper function to convert seclang::WafConfig to config::WafConfig
-fn to_waf_config(seclang_config: &coraza::seclang::WafConfig) -> coraza::config::WafConfig {
-    use coraza::config::WafConfig;
-
-    WafConfig::new()
-        .with_rule_engine(seclang_config.rule_engine)
-        .with_request_body_access(seclang_config.request_body_access)
-        .with_request_body_limit(seclang_config.request_body_limit)
-        .with_request_body_in_memory_limit(seclang_config.request_body_in_memory_limit)
-        .with_response_body_access(seclang_config.response_body_access)
-        .with_response_body_limit(seclang_config.response_body_limit)
-        .with_debug_log_level(seclang_config.debug_log_level as i32)
-        .with_web_app_id(seclang_config.web_app_id.clone())
-        .with_argument_limit(seclang_config.argument_limit)
-}
-
 // ============================================================================
 // Configuration Parsing Tests
 // ============================================================================
@@ -53,7 +37,7 @@ fn test_parse_and_apply_rule_engine_on() {
 
     let parsed = parser.config();
 
-    let waf = Waf::new(to_waf_config(parsed)).expect("Failed to create WAF");
+    let waf = Waf::new(parsed.clone()).expect("Failed to create WAF");
     let server = TestServer::new(waf);
 
     let tx = server.waf().new_transaction();
@@ -76,7 +60,7 @@ fn test_parse_and_apply_rule_engine_detection_only() {
         .from_string(config_str)
         .expect("Failed to parse config");
 
-    let parsed_config = to_waf_config(parser.config());
+    let parsed_config = parser.config().clone();
     let waf = Waf::new(parsed_config).expect("Failed to create WAF");
     let server = TestServer::new(waf);
 
@@ -101,7 +85,7 @@ fn test_parse_and_apply_request_body_config() {
         .from_string(config_str)
         .expect("Failed to parse config");
 
-    let parsed_config = to_waf_config(parser.config());
+    let parsed_config = parser.config().clone();
     let waf = Waf::new(parsed_config).expect("Failed to create WAF");
     let server = TestServer::new(waf);
 
@@ -162,7 +146,7 @@ fn test_parse_comprehensive_config() {
     assert_eq!(parsed_config.argument_limit, 1000);
 
     // Create WAF and verify config is applied
-    let waf = Waf::new(to_waf_config(parsed_config)).expect("Failed to create WAF");
+    let waf = Waf::new(parsed_config.clone()).expect("Failed to create WAF");
     let tx = waf.new_transaction();
 
     assert_eq!(tx.rule_engine(), RuleEngineStatus::On);
@@ -183,7 +167,7 @@ fn test_e2e_basic_request_with_parsed_config() {
         .from_string("SecRuleEngine On")
         .expect("Failed to parse");
 
-    let waf = Waf::new(to_waf_config(parser.config())).expect("Failed to create WAF");
+    let waf = Waf::new(parser.config().clone()).expect("Failed to create WAF");
     let server = TestServer::new(waf);
 
     let response = server.process(TestRequest::get("/search?q=rust&category=web").build());
@@ -206,7 +190,7 @@ fn test_e2e_post_json_with_parsed_config() {
 
     parser.from_string(config).expect("Failed to parse");
 
-    let waf = Waf::new(to_waf_config(parser.config())).expect("Failed to create WAF");
+    let waf = Waf::new(parser.config().clone()).expect("Failed to create WAF");
     let server = TestServer::new(waf);
 
     let response = server.process(
@@ -235,7 +219,7 @@ fn test_e2e_multipart_with_parsed_config() {
 
     parser.from_string(config).expect("Failed to parse");
 
-    let waf = Waf::new(to_waf_config(parser.config())).expect("Failed to create WAF");
+    let waf = Waf::new(parser.config().clone()).expect("Failed to create WAF");
     let server = TestServer::new(waf);
 
     let boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW";
@@ -273,7 +257,7 @@ fn test_e2e_multiple_requests_same_config() {
         .from_string("SecRuleEngine On")
         .expect("Failed to parse");
 
-    let waf = Waf::new(to_waf_config(parser.config())).expect("Failed to create WAF");
+    let waf = Waf::new(parser.config().clone()).expect("Failed to create WAF");
     let server = TestServer::new(waf);
 
     // Process 10 different requests
@@ -298,7 +282,7 @@ fn test_e2e_mixed_request_methods() {
 
     parser.from_string(config).expect("Failed to parse");
 
-    let waf = Waf::new(to_waf_config(parser.config())).expect("Failed to create WAF");
+    let waf = Waf::new(parser.config().clone()).expect("Failed to create WAF");
     let server = TestServer::new(waf);
 
     // GET request
@@ -360,7 +344,7 @@ fn test_parser_incremental_config() {
     assert_eq!(config.request_body_limit, 524288);
 
     // Use config in WAF
-    let waf = Waf::new(to_waf_config(config)).expect("Failed to create WAF");
+    let waf = Waf::new(config.clone()).expect("Failed to create WAF");
     let tx = waf.new_transaction();
 
     assert_eq!(tx.rule_engine(), RuleEngineStatus::On);
@@ -498,7 +482,7 @@ fn test_parser_negative_limit() {
     parser.from_string(config).expect("Parser accepts value");
 
     // WAF should reject invalid config
-    let result = Waf::new(to_waf_config(parser.config()));
+    let result = Waf::new(parser.config().clone());
     assert!(result.is_err(), "WAF should reject negative limits");
 }
 
@@ -563,7 +547,7 @@ fn test_realistic_production_config() {
     assert_eq!(parsed_config.argument_limit, 1000);
 
     // Create WAF and test
-    let waf = Waf::new(to_waf_config(parsed_config)).expect("Failed to create WAF");
+    let waf = Waf::new(parsed_config.clone()).expect("Failed to create WAF");
     let server = TestServer::new(waf);
 
     // Simulate production traffic
@@ -597,7 +581,7 @@ fn test_development_vs_production_configs() {
         )
         .expect("Failed to parse dev config");
 
-    let dev_waf = Waf::new(to_waf_config(dev_parser.config())).expect("Failed to create dev WAF");
+    let dev_waf = Waf::new(dev_parser.config().clone()).expect("Failed to create dev WAF");
     let dev_tx = dev_waf.new_transaction();
 
     assert_eq!(dev_tx.rule_engine(), RuleEngineStatus::DetectionOnly);
@@ -614,8 +598,7 @@ fn test_development_vs_production_configs() {
         )
         .expect("Failed to parse prod config");
 
-    let prod_waf =
-        Waf::new(to_waf_config(prod_parser.config())).expect("Failed to create prod WAF");
+    let prod_waf = Waf::new(prod_parser.config().clone()).expect("Failed to create prod WAF");
     let prod_tx = prod_waf.new_transaction();
 
     assert_eq!(prod_tx.rule_engine(), RuleEngineStatus::On);
@@ -653,7 +636,7 @@ fn test_stress_many_requests_through_waf() {
         .from_string("SecRuleEngine On")
         .expect("Failed to parse");
 
-    let waf = Waf::new(to_waf_config(parser.config())).expect("Failed to create WAF");
+    let waf = Waf::new(parser.config().clone()).expect("Failed to create WAF");
     let server = TestServer::new(waf);
 
     // Process 100 requests

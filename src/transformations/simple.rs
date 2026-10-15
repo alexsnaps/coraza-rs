@@ -7,7 +7,7 @@
 //! require external dependencies beyond stdlib.
 
 use crate::transformations::TransformationResult;
-use crate::utils::strings::{valid_hex, x2c};
+use crate::utils::strings::x2c;
 
 /// Whitespace characters to trim (matching C++ isspace).
 ///
@@ -273,7 +273,7 @@ fn do_url_decode(input: &str, start_pos: usize) -> TransformationResult {
                 let c1 = input_bytes[i + 1];
                 let c2 = input_bytes[i + 2];
 
-                if valid_hex(c1) && valid_hex(c2) {
+                if c1.is_ascii_hexdigit() && c2.is_ascii_hexdigit() {
                     let decoded = x2c(&input[i + 1..i + 3]);
                     result.push(decoded);
                     i += 3;

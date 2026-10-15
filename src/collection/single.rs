@@ -3,7 +3,7 @@
 
 //! Single-value collection implementation.
 
-use super::{Collection, MatchData, SingleCollection};
+use super::MatchData;
 use crate::RuleVariable;
 
 /// A collection that holds a single string value.
@@ -13,7 +13,7 @@ use crate::RuleVariable;
 /// # Examples
 ///
 /// ```
-/// use coraza::collection::{Single, SingleCollection};
+/// use coraza::collection::Single;
 /// use coraza::RuleVariable;
 ///
 /// let mut single = Single::new(RuleVariable::RequestURI);
@@ -43,21 +43,20 @@ impl Single {
     pub fn reset(&mut self) {
         self.data.clear();
     }
-}
 
-impl Collection for Single {
-    fn find_all(&self) -> Vec<MatchData> {
+    /// The value; empty if unset.
+    pub fn get(&self) -> &str {
+        &self.data
+    }
+
+    /// The value as match data, with no key.
+    pub fn find_all(&self) -> Vec<MatchData> {
         vec![MatchData::without_key(self.variable, self.data.clone())]
     }
 
-    fn name(&self) -> &str {
+    /// Name of the variable this value holds (e.g. `REQUEST_URI`).
+    pub fn name(&self) -> &str {
         self.variable.name()
-    }
-}
-
-impl SingleCollection for Single {
-    fn get(&self) -> &str {
-        &self.data
     }
 }
 

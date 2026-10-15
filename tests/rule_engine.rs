@@ -8,7 +8,6 @@
 
 use coraza::RulePhase;
 use coraza::RuleVariable;
-use coraza::collection::MapCollection;
 use coraza::operators::{eq, streq};
 use coraza::rules::{Rule, RuleGroup, RuleOperator, VariableSpec};
 use coraza::transaction::Transaction;
@@ -128,7 +127,8 @@ fn test_rule_with_transformation() {
         ));
 
     // Add lowercase transformation
-    rule.transformations_mut()
+    rule.metadata_mut()
+        .transformations
         .add("lowercase", lowercase)
         .unwrap();
 
@@ -159,10 +159,12 @@ fn test_rule_with_multiple_transformations() {
         ));
 
     // Add transformation chain: lowercase then uppercase
-    rule.transformations_mut()
+    rule.metadata_mut()
+        .transformations
         .add("lowercase", lowercase)
         .unwrap();
-    rule.transformations_mut()
+    rule.metadata_mut()
+        .transformations
         .add("uppercase", uppercase)
         .unwrap();
 
@@ -183,7 +185,7 @@ fn test_rule_with_multiple_transformations() {
 #[test]
 fn test_chained_rules_both_match() {
     // Create chained rule
-    let mut chained_rule = Rule::new()
+    let chained_rule = Rule::new()
         .with_id(2)
         .add_variable(VariableSpec::new_string(
             RuleVariable::ArgsGet,
@@ -194,7 +196,6 @@ fn test_chained_rules_both_match() {
             "@streq",
             "secret",
         ));
-    chained_rule.metadata_mut().parent_id = 1;
 
     // Create parent rule with chain
     let rule = Rule::new()
@@ -223,7 +224,7 @@ fn test_chained_rules_both_match() {
 #[test]
 fn test_chained_rules_first_fails() {
     // Create chained rule
-    let mut chained_rule = Rule::new()
+    let chained_rule = Rule::new()
         .with_id(2)
         .add_variable(VariableSpec::new_string(
             RuleVariable::ArgsGet,
@@ -234,7 +235,6 @@ fn test_chained_rules_first_fails() {
             "@streq",
             "secret",
         ));
-    chained_rule.metadata_mut().parent_id = 1;
 
     // Create parent rule with chain
     let rule = Rule::new()
@@ -263,7 +263,7 @@ fn test_chained_rules_first_fails() {
 #[test]
 fn test_chained_rules_second_fails() {
     // Create chained rule
-    let mut chained_rule = Rule::new()
+    let chained_rule = Rule::new()
         .with_id(2)
         .add_variable(VariableSpec::new_string(
             RuleVariable::ArgsGet,
@@ -274,7 +274,6 @@ fn test_chained_rules_second_fails() {
             "@streq",
             "secret",
         ));
-    chained_rule.metadata_mut().parent_id = 1;
 
     // Create parent rule with chain
     let rule = Rule::new()
@@ -429,9 +428,9 @@ fn test_complex_rule_with_transformations_and_chain() {
             "@streq",
             "bot",
         ));
-    chained_rule.metadata_mut().parent_id = 1;
     chained_rule
-        .transformations_mut()
+        .metadata_mut()
+        .transformations
         .add("lowercase", lowercase)
         .unwrap();
 
@@ -449,7 +448,8 @@ fn test_complex_rule_with_transformations_and_chain() {
         ))
         .with_chain(chained_rule);
 
-    rule.transformations_mut()
+    rule.metadata_mut()
+        .transformations
         .add("lowercase", lowercase)
         .unwrap();
 
@@ -492,7 +492,8 @@ fn test_rule_group_with_mixed_rules() {
             "admin",
         ));
     rule3
-        .transformations_mut()
+        .metadata_mut()
+        .transformations
         .add("lowercase", lowercase)
         .unwrap();
 

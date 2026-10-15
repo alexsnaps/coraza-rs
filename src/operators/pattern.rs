@@ -6,7 +6,8 @@
 //! This module implements operators for regular expression and multi-pattern matching
 //! with macro expansion support.
 
-use crate::operators::{Macro, MacroError, Operator, TransactionState};
+use crate::operators::{Macro, MacroError, Operator};
+use crate::transaction::Transaction;
 use aho_corasick::AhoCorasick;
 use regex::Regex;
 
@@ -41,7 +42,7 @@ pub struct Rx {
 }
 
 impl Operator for Rx {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         // Determine if we're capturing based on transaction state
         let capturing = tx.as_ref().is_some_and(|t| t.capturing());
 
@@ -140,7 +141,7 @@ pub struct Pm {
 }
 
 impl Operator for Pm {
-    fn evaluate<TX: TransactionState>(&self, mut tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, mut tx: Option<&mut Transaction>, input: &str) -> bool {
         // Determine if we're capturing based on transaction state
         let capturing = tx.as_ref().is_some_and(|t| t.capturing());
 
@@ -333,7 +334,7 @@ impl PmFromFile {
 }
 
 impl Operator for PmFromFile {
-    fn evaluate<TX: TransactionState>(&self, mut tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, mut tx: Option<&mut Transaction>, input: &str) -> bool {
         // Determine if we're capturing based on transaction state
         let capturing = tx.as_ref().is_some_and(|t| t.capturing());
 
@@ -404,7 +405,7 @@ pub struct Within {
 }
 
 impl Operator for Within {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         let haystack = self.macro_param.expand(tx.as_deref());
         haystack.contains(input)
     }
@@ -443,7 +444,7 @@ pub struct StrMatch {
 }
 
 impl Operator for StrMatch {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         let needle = self.macro_param.expand(tx.as_deref());
         input.contains(&needle)
     }
@@ -466,19 +467,29 @@ mod tests {
     use crate::transaction::Transaction;
     use crate::types::RuleVariable;
 
-    // Mock transaction state for testing macro expansion
-    struct MockTx;
+    fn mock_tx() -> Transaction {
+        let mut tx = Transaction::new("operator-test");
+        let Some(crate::transaction::VariableCollection::Map(vars)) =
+            tx.collection_mut(RuleVariable::TX)
+        else {
+            unreachable!("TX is a map");
+        };
+        vars.add("pattern", "test.*data");
+        vars.add("keywords", "malware virus trojan");
+        vars.add("methods", "GET,POST,HEAD");
+        vars.add("search", "admin");
+        tx
+    }
 
-    impl TransactionState for MockTx {
-        fn get_variable(&self, variable: RuleVariable, key: Option<&str>) -> Option<String> {
-            match (variable, key) {
-                (RuleVariable::TX, Some("pattern")) => Some("test.*data".to_string()),
-                (RuleVariable::TX, Some("keywords")) => Some("malware virus trojan".to_string()),
-                (RuleVariable::TX, Some("methods")) => Some("GET,POST,HEAD".to_string()),
-                (RuleVariable::TX, Some("search")) => Some("admin".to_string()),
-                _ => None,
-            }
-        }
+    fn capturing_tx() -> Transaction {
+        let mut tx = Transaction::new("capture-test");
+        tx.set_capturing(true);
+        tx
+    }
+
+    /// Capture `index`, as stored in `TX.<index>`.
+    fn capture(tx: &Transaction, index: usize) -> Option<String> {
+        tx.get_variable(RuleVariable::TX, Some(&index.to_string()))
     }
 
     #[test]
@@ -535,7 +546,7 @@ mod tests {
     #[test]
     fn test_rx_with_macro() {
         let op = rx("%{TX.pattern}").unwrap();
-        let mut tx = MockTx;
+        let mut tx = mock_tx();
 
         assert!(op.evaluate(Some(&mut tx), "testXYZdata"));
         assert!(op.evaluate(Some(&mut tx), "test123data"));
@@ -585,7 +596,7 @@ mod tests {
     #[test]
     fn test_pm_with_macro() {
         let op = pm("%{TX.keywords}").unwrap();
-        let mut tx = MockTx;
+        let mut tx = mock_tx();
 
         assert!(op.evaluate(Some(&mut tx), "detected malware here"));
         assert!(op.evaluate(Some(&mut tx), "virus found"));
@@ -635,7 +646,7 @@ mod tests {
     #[test]
     fn test_within_with_macro() {
         let op = within("%{TX.methods}").unwrap();
-        let mut tx = MockTx;
+        let mut tx = mock_tx();
 
         assert!(op.evaluate(Some(&mut tx), "GET"));
         assert!(op.evaluate(Some(&mut tx), "POST"));
@@ -666,7 +677,7 @@ mod tests {
     #[test]
     fn test_strmatch_with_macro() {
         let op = strmatch("%{TX.search}").unwrap();
-        let mut tx = MockTx;
+        let mut tx = mock_tx();
 
         assert!(op.evaluate(Some(&mut tx), "/admin/login"));
         assert!(op.evaluate(Some(&mut tx), "administrator"));
@@ -686,121 +697,72 @@ mod tests {
         assert!(strmatch("%{unknown_var}").is_err());
     }
 
-    // Mock transaction with capturing support
-    struct CapturingTx {
-        captures: std::cell::RefCell<Vec<String>>,
-    }
-
-    impl CapturingTx {
-        fn new() -> Self {
-            Self {
-                captures: std::cell::RefCell::new(Vec::new()),
-            }
-        }
-
-        fn get_capture(&self, index: usize) -> Option<String> {
-            self.captures.borrow().get(index).cloned()
-        }
-    }
-
-    impl TransactionState for CapturingTx {
-        fn get_variable(&self, _variable: RuleVariable, _key: Option<&str>) -> Option<String> {
-            None
-        }
-
-        fn capturing(&self) -> bool {
-            true
-        }
-
-        fn capture_field(&mut self, index: usize, value: &str) {
-            let mut caps = self.captures.borrow_mut();
-            // Extend vector if needed
-            while caps.len() <= index {
-                caps.push(String::new());
-            }
-            caps[index] = value.to_string();
-        }
-    }
-
     #[test]
     fn test_rx_capturing_basic() {
         let op = rx("(\\w+)@(\\w+)\\.com").unwrap();
-        let mut tx = CapturingTx::new();
+        let mut tx = capturing_tx();
 
         assert!(op.evaluate(Some(&mut tx), "user@example.com"));
 
         // Check captured groups
-        assert_eq!(tx.get_capture(0), Some("user@example.com".to_string())); // Full match
-        assert_eq!(tx.get_capture(1), Some("user".to_string())); // Group 1
-        assert_eq!(tx.get_capture(2), Some("example".to_string())); // Group 2
+        assert_eq!(capture(&tx, 0), Some("user@example.com".to_string())); // Full match
+        assert_eq!(capture(&tx, 1), Some("user".to_string())); // Group 1
+        assert_eq!(capture(&tx, 2), Some("example".to_string())); // Group 2
     }
 
     #[test]
     fn test_rx_capturing_multiple_groups() {
         let op = rx("(\\d{3})-(\\d{3})-(\\d{4})").unwrap();
-        let mut tx = CapturingTx::new();
+        let mut tx = capturing_tx();
 
         assert!(op.evaluate(Some(&mut tx), "123-456-7890"));
 
         // Check all groups
-        assert_eq!(tx.get_capture(0), Some("123-456-7890".to_string()));
-        assert_eq!(tx.get_capture(1), Some("123".to_string()));
-        assert_eq!(tx.get_capture(2), Some("456".to_string()));
-        assert_eq!(tx.get_capture(3), Some("7890".to_string()));
+        assert_eq!(capture(&tx, 0), Some("123-456-7890".to_string()));
+        assert_eq!(capture(&tx, 1), Some("123".to_string()));
+        assert_eq!(capture(&tx, 2), Some("456".to_string()));
+        assert_eq!(capture(&tx, 3), Some("7890".to_string()));
     }
 
     #[test]
     fn test_rx_capturing_nine_groups() {
         // Test ModSecurity's 9-group limit
         let op = rx("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)").unwrap();
-        let mut tx = CapturingTx::new();
+        let mut tx = capturing_tx();
 
         assert!(op.evaluate(Some(&mut tx), "abcdefghij"));
 
         // Check full match and first 9 groups
-        assert_eq!(tx.get_capture(0), Some("abcdefghij".to_string()));
-        assert_eq!(tx.get_capture(1), Some("a".to_string()));
-        assert_eq!(tx.get_capture(2), Some("b".to_string()));
-        assert_eq!(tx.get_capture(3), Some("c".to_string()));
-        assert_eq!(tx.get_capture(4), Some("d".to_string()));
-        assert_eq!(tx.get_capture(5), Some("e".to_string()));
-        assert_eq!(tx.get_capture(6), Some("f".to_string()));
-        assert_eq!(tx.get_capture(7), Some("g".to_string()));
-        assert_eq!(tx.get_capture(8), Some("h".to_string()));
-        assert_eq!(tx.get_capture(9), Some("i".to_string()));
+        assert_eq!(capture(&tx, 0), Some("abcdefghij".to_string()));
+        assert_eq!(capture(&tx, 1), Some("a".to_string()));
+        assert_eq!(capture(&tx, 2), Some("b".to_string()));
+        assert_eq!(capture(&tx, 3), Some("c".to_string()));
+        assert_eq!(capture(&tx, 4), Some("d".to_string()));
+        assert_eq!(capture(&tx, 5), Some("e".to_string()));
+        assert_eq!(capture(&tx, 6), Some("f".to_string()));
+        assert_eq!(capture(&tx, 7), Some("g".to_string()));
+        assert_eq!(capture(&tx, 8), Some("h".to_string()));
+        assert_eq!(capture(&tx, 9), Some("i".to_string()));
 
         // 10th group should not be captured (ModSecurity limit)
-        assert_eq!(tx.get_capture(10), None);
+        assert_eq!(capture(&tx, 10), None);
     }
 
     #[test]
     fn test_rx_no_match_with_capturing() {
         let op = rx("test(\\d+)").unwrap();
-        let mut tx = CapturingTx::new();
+        let mut tx = capturing_tx();
 
         assert!(!op.evaluate(Some(&mut tx), "nodigits"));
 
         // No captures should be stored
-        assert_eq!(tx.get_capture(0), None);
+        assert_eq!(capture(&tx, 0), None);
     }
 
     #[test]
     fn test_rx_capturing_disabled() {
-        // Mock transaction that doesn't enable capturing
-        struct NonCapturingTx;
-
-        impl TransactionState for NonCapturingTx {
-            fn get_variable(&self, _variable: RuleVariable, _key: Option<&str>) -> Option<String> {
-                None
-            }
-
-            fn capturing(&self) -> bool {
-                false
-            }
-        }
-
         let op = rx("(test)").unwrap();
-        let mut tx = NonCapturingTx;
+        let mut tx = Transaction::new("no-capture");
 
         // Should still match, but won't capture
         assert!(op.evaluate(Some(&mut tx), "test"));
@@ -809,82 +771,70 @@ mod tests {
     #[test]
     fn test_pm_capturing_basic() {
         let op = pm("admin sql script").unwrap();
-        let mut tx = CapturingTx::new();
+        let mut tx = capturing_tx();
 
         assert!(op.evaluate(Some(&mut tx), "This script contains admin panel"));
 
         // PM captures each matched pattern (not groups within a pattern)
         // Note: order depends on which patterns are found first in the input
-        assert_eq!(tx.get_capture(0), Some("script".to_string())); // First match
-        assert_eq!(tx.get_capture(1), Some("admin".to_string())); // Second match
+        assert_eq!(capture(&tx, 0), Some("script".to_string())); // First match
+        assert_eq!(capture(&tx, 1), Some("admin".to_string())); // Second match
     }
 
     #[test]
     fn test_pm_capturing_single_match() {
         let op = pm("malware virus trojan").unwrap();
-        let mut tx = CapturingTx::new();
+        let mut tx = capturing_tx();
 
         assert!(op.evaluate(Some(&mut tx), "detected malware in file"));
 
         // Only one pattern matched
-        assert_eq!(tx.get_capture(0), Some("malware".to_string()));
-        assert_eq!(tx.get_capture(1), None);
+        assert_eq!(capture(&tx, 0), Some("malware".to_string()));
+        assert_eq!(capture(&tx, 1), None);
     }
 
     #[test]
     fn test_pm_capturing_ten_matches() {
         // Test the 10-match limit
         let op = pm("a b c d e f g h i j k").unwrap();
-        let mut tx = CapturingTx::new();
+        let mut tx = capturing_tx();
 
         assert!(op.evaluate(Some(&mut tx), "a b c d e f g h i j k"));
 
         // Should capture first 10 matches
         for i in 0..10 {
-            assert!(tx.get_capture(i).is_some());
+            assert!(capture(&tx, i).is_some());
         }
         // 11th match should not be captured
-        assert_eq!(tx.get_capture(10), None);
+        assert_eq!(capture(&tx, 10), None);
     }
 
     #[test]
     fn test_pm_capturing_case_insensitive() {
         let op = pm("admin").unwrap();
-        let mut tx = CapturingTx::new();
+        let mut tx = capturing_tx();
 
         assert!(op.evaluate(Some(&mut tx), "ADMIN panel"));
 
         // Should capture the actual matched text (preserving case from input)
-        assert_eq!(tx.get_capture(0), Some("ADMIN".to_string()));
+        assert_eq!(capture(&tx, 0), Some("ADMIN".to_string()));
     }
 
     #[test]
     fn test_pm_no_match_with_capturing() {
         let op = pm("malware virus").unwrap();
-        let mut tx = CapturingTx::new();
+        let mut tx = capturing_tx();
 
         assert!(!op.evaluate(Some(&mut tx), "clean file"));
 
         // No captures should be stored
-        assert_eq!(tx.get_capture(0), None);
+        assert_eq!(capture(&tx, 0), None);
     }
 
     #[test]
     fn test_pm_capturing_disabled() {
-        struct NonCapturingTx;
-
-        impl TransactionState for NonCapturingTx {
-            fn get_variable(&self, _variable: RuleVariable, _key: Option<&str>) -> Option<String> {
-                None
-            }
-
-            fn capturing(&self) -> bool {
-                false
-            }
-        }
-
         let op = pm("admin").unwrap();
-        let mut tx = NonCapturingTx;
+        let mut tx = Transaction::new("no-capture");
 
         // Should still match, but won't capture
         assert!(op.evaluate(Some(&mut tx), "admin panel"));
@@ -921,39 +871,19 @@ mod tests {
     fn test_pm_from_file_capturing() {
         use std::io::Write;
 
-        struct CapturingTx {
-            captures: Vec<String>,
-        }
-
-        impl TransactionState for CapturingTx {
-            fn get_variable(&self, _variable: RuleVariable, _key: Option<&str>) -> Option<String> {
-                None
-            }
-
-            fn capturing(&self) -> bool {
-                true
-            }
-
-            fn capture_field(&mut self, _index: usize, value: &str) {
-                self.captures.push(value.to_string());
-            }
-        }
-
         let mut temp_file = tempfile::NamedTempFile::new().unwrap();
         writeln!(temp_file, "admin").unwrap();
         writeln!(temp_file, "user").unwrap();
         temp_file.flush().unwrap();
 
         let op = pm_from_file(temp_file.path().to_str().unwrap()).unwrap();
-        let mut tx = CapturingTx {
-            captures: Vec::new(),
-        };
+        let mut tx = capturing_tx();
 
         // Should capture matches
         assert!(op.evaluate(Some(&mut tx), "admin and user panel"));
-        assert_eq!(tx.captures.len(), 2);
-        assert_eq!(tx.captures[0], "admin");
-        assert_eq!(tx.captures[1], "user");
+        assert_eq!(capture(&tx, 0).as_deref(), Some("admin"));
+        assert_eq!(capture(&tx, 1).as_deref(), Some("user"));
+        assert_eq!(capture(&tx, 2), None);
     }
 
     #[test]

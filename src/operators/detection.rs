@@ -4,7 +4,7 @@
 //! attacks using the libinjection library.
 
 use crate::operators::Operator;
-use crate::operators::macros::TransactionState;
+use crate::transaction::Transaction;
 
 /// SQL injection detection operator.
 ///
@@ -39,7 +39,7 @@ use crate::operators::macros::TransactionState;
 pub struct DetectSQLi;
 
 impl Operator for DetectSQLi {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         if input.is_empty() {
             return false;
         }
@@ -106,7 +106,7 @@ pub fn detect_sqli() -> DetectSQLi {
 pub struct DetectXSS;
 
 impl Operator for DetectXSS {
-    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, _tx: Option<&mut Transaction>, input: &str) -> bool {
         if input.is_empty() {
             return false;
         }
@@ -162,10 +162,11 @@ mod tests {
         // Detect SQL injection and capture fingerprint
         assert!(op.evaluate(Some(&mut tx), "1' OR '1'='1"));
 
-        // Verify fingerprint was captured (field 0)
-        // The captures field is directly accessible on Transaction
-        // We can access it through the struct but ideally would have a getter
-        // For now, we just verify the SQL injection was detected
+        // The fingerprint is captured into TX.0
+        assert!(
+            tx.get_variable(crate::RuleVariable::TX, Some("0"))
+                .is_some_and(|fingerprint| !fingerprint.is_empty())
+        );
     }
 
     #[test]

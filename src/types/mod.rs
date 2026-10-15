@@ -11,11 +11,38 @@ mod severity;
 mod variables;
 mod waf;
 
-pub use phase::{ParsePhaseError, RulePhase};
-pub use severity::{ParseSeverityError, RuleSeverity};
-pub use variables::{ParseVariableError, RuleVariable};
+use std::fmt;
+
+pub use phase::RulePhase;
+pub use severity::RuleSeverity;
+pub use variables::RuleVariable;
 pub use waf::{
-    AuditEngineStatus, AuditLogPart, AuditLogParts, BodyLimitAction, ParseAuditEngineStatusError,
-    ParseAuditLogPartError, ParseAuditLogPartsError, ParseRuleEngineStatusError, RuleEngineStatus,
-    apply_audit_log_parts, parse_audit_log_parts,
+    AuditEngineStatus, AuditLogPart, AuditLogParts, BodyLimitAction, ParseAuditLogPartsError,
+    RuleEngineStatus, apply_audit_log_parts, parse_audit_log_parts,
 };
+
+/// A string (or character) that names none of a type's values: a phase, severity,
+/// variable, engine status or audit log part.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseValueError {
+    /// What was being parsed, as the message names it (e.g. `"invalid phase"`)
+    expected: &'static str,
+    input: String,
+}
+
+impl ParseValueError {
+    pub(crate) fn new(expected: &'static str, input: impl Into<String>) -> Self {
+        Self {
+            expected,
+            input: input.into(),
+        }
+    }
+}
+
+impl fmt::Display for ParseValueError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.expected, self.input)
+    }
+}
+
+impl std::error::Error for ParseValueError {}

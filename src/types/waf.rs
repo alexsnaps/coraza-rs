@@ -7,6 +7,8 @@
 //! audit logging, and rule processing.
 
 use std::fmt;
+
+use super::ParseValueError;
 use std::str::FromStr;
 
 /// Status of the audit logging engine.
@@ -40,22 +42,8 @@ impl fmt::Display for AuditEngineStatus {
     }
 }
 
-/// Error type for invalid audit engine status parsing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseAuditEngineStatusError {
-    input: String,
-}
-
-impl fmt::Display for ParseAuditEngineStatusError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid audit engine status: {}", self.input)
-    }
-}
-
-impl std::error::Error for ParseAuditEngineStatusError {}
-
 impl FromStr for AuditEngineStatus {
-    type Err = ParseAuditEngineStatusError;
+    type Err = ParseValueError;
 
     /// Parses an audit engine status from a string (case-insensitive).
     ///
@@ -75,9 +63,10 @@ impl FromStr for AuditEngineStatus {
             "on" => Ok(AuditEngineStatus::On),
             "off" => Ok(AuditEngineStatus::Off),
             "relevantonly" => Ok(AuditEngineStatus::RelevantOnly),
-            _ => Err(ParseAuditEngineStatusError {
-                input: s.to_string(),
-            }),
+            _ => Err(ParseValueError::new(
+                "invalid audit engine status",
+                s.to_string(),
+            )),
         }
     }
 }
@@ -113,22 +102,8 @@ impl fmt::Display for RuleEngineStatus {
     }
 }
 
-/// Error type for invalid rule engine status parsing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseRuleEngineStatusError {
-    input: String,
-}
-
-impl fmt::Display for ParseRuleEngineStatusError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid rule engine status: {}", self.input)
-    }
-}
-
-impl std::error::Error for ParseRuleEngineStatusError {}
-
 impl FromStr for RuleEngineStatus {
-    type Err = ParseRuleEngineStatusError;
+    type Err = ParseValueError;
 
     /// Parses a rule engine status from a string (case-insensitive).
     ///
@@ -148,9 +123,10 @@ impl FromStr for RuleEngineStatus {
             "on" => Ok(RuleEngineStatus::On),
             "detectiononly" => Ok(RuleEngineStatus::DetectionOnly),
             "off" => Ok(RuleEngineStatus::Off),
-            _ => Err(ParseRuleEngineStatusError {
-                input: s.to_string(),
-            }),
+            _ => Err(ParseValueError::new(
+                "invalid rule engine status",
+                s.to_string(),
+            )),
         }
     }
 }
@@ -286,25 +262,14 @@ impl fmt::Display for AuditLogPart {
     }
 }
 
-/// Error type for invalid audit log part parsing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseAuditLogPartError {
-    input: char,
-}
-
-impl fmt::Display for ParseAuditLogPartError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid audit log part: {}", self.input)
-    }
-}
-
-impl std::error::Error for ParseAuditLogPartError {}
-
 impl TryFrom<char> for AuditLogPart {
-    type Error = ParseAuditLogPartError;
+    type Error = ParseValueError;
 
     fn try_from(c: char) -> Result<Self, Self::Error> {
-        Self::from_char(c).ok_or(ParseAuditLogPartError { input: c })
+        Self::from_char(c).ok_or(ParseValueError::new(
+            "invalid audit log part",
+            c.to_string(),
+        ))
     }
 }
 
