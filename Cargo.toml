@@ -51,3 +51,7 @@ tempfile = "3.27.0"
 [features]
 default = []
 async-server = ["tokio", "hyper", "http-body-util", "hyper-util"]
+
+[[example]]
+name = "ftw_server_async"
+required-features = ["async-server"]

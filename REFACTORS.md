@@ -139,7 +139,7 @@ probed bugs.
 
 ## Tooling
 
-- [ ] Add `required-features = ["async-server"]` for `ftw_server_async`; `cargo clippy --all-targets` fails without
+- [x] Add `required-features = ["async-server"]` for `ftw_server_async`; `cargo clippy --all-targets` fails without
   it. (`cargo clippy --lib --tests` is clean.)
 - [ ] `cargo fmt`: diffs in `src/rules/group.rs` and `src/seclang/operator_parser.rs`.
 - [ ] Remove `println!`/`eprintln!` from library code (5 sites, in `actions/deferred.rs`, `rules/group.rs`,
