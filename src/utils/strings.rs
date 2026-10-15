@@ -158,29 +158,6 @@ pub fn unescape_quoted_string(s: &str) -> String {
     result
 }
 
-/// Wraps a byte slice as a string without copying or validation.
-///
-/// # Safety
-///
-/// The caller must ensure:
-/// - The byte slice contains valid UTF-8
-/// - The byte slice will not be mutated after calling this function
-///
-/// # Examples
-///
-/// ```
-/// use coraza::utils::strings::wrap_unsafe;
-///
-/// let bytes = b"hello";
-/// let s = unsafe { wrap_unsafe(bytes) };
-/// assert_eq!(s, "hello");
-/// ```
-#[inline]
-pub unsafe fn wrap_unsafe(buf: &[u8]) -> &str {
-    // SAFETY: Caller guarantees buf is valid UTF-8
-    unsafe { std::str::from_utf8_unchecked(buf) }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,20 +305,5 @@ mod tests {
 
         // No escapes
         assert_eq!(unescape_quoted_string("no escapes here"), "no escapes here");
-    }
-
-    #[test]
-    fn test_wrap_unsafe() {
-        let bytes = b"hello world";
-        let s = unsafe { wrap_unsafe(bytes) };
-        assert_eq!(s, "hello world");
-
-        let empty: &[u8] = b"";
-        let s = unsafe { wrap_unsafe(empty) };
-        assert_eq!(s, "");
-
-        let unicode = "Hello 世界".as_bytes();
-        let s = unsafe { wrap_unsafe(unicode) };
-        assert_eq!(s, "Hello 世界");
     }
 }

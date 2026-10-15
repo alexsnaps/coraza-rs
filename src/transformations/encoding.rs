@@ -6,8 +6,8 @@
 //! This module contains transformations for various encoding schemes including
 //! hex, base64, and URL encoding.
 
-use crate::transformations::{TransformationError, TransformationResult};
-use crate::utils::strings::{hex_value, wrap_unsafe};
+use crate::transformations::{TransformationError, TransformationResult, text_from_bytes};
+use crate::utils::strings::hex_value;
 use md5::{Digest, Md5};
 use sha1::Sha1;
 
@@ -144,9 +144,7 @@ pub fn hex_decode(input: &str) -> TransformationResult {
 
     match hex_decode_bytes(input) {
         Ok(bytes) => {
-            // SAFETY: hex_decode_bytes validates that the decoded bytes form valid UTF-8
-            // by using String::from_utf8 which checks UTF-8 validity
-            let decoded = unsafe { wrap_unsafe(&bytes) }.to_string();
+            let decoded = text_from_bytes(bytes);
             (decoded, true, None)
         }
         Err(e) => (String::new(), false, Some(e)),
@@ -294,7 +292,10 @@ fn base64_encode_string(input: &[u8]) -> String {
     result
 }
 
-/// Computes MD5 hash of input (returns raw binary hash, not hex-encoded).
+/// Computes the MD5 digest of the input, as raw bytes rather than hex.
+///
+/// Values are text, so the digest's bytes that aren't UTF-8 are replaced by U+FFFD:
+/// unlike in Go Coraza, `t:md5,t:hexEncode` doesn't give the digest in hex.
 ///
 /// # Examples
 ///
@@ -302,8 +303,7 @@ fn base64_encode_string(input: &[u8]) -> String {
 /// use coraza::transformations::md5_hash;
 ///
 /// let (result, changed, _) = md5_hash("hello");
-/// // Result is raw binary MD5 hash (16 bytes)
-/// assert_eq!(result.len(), 16);
+/// assert!(!result.is_empty());
 /// assert!(changed);
 /// ```
 pub fn md5_hash(input: &str) -> TransformationResult {
@@ -313,8 +313,7 @@ pub fn md5_hash(input: &str) -> TransformationResult {
             0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8,
             0x42, 0x7e,
         ];
-        // SAFETY: EMPTY_MD5 is a valid byte slice representing MD5 output
-        let hash_str = unsafe { wrap_unsafe(EMPTY_MD5) }.to_string();
+        let hash_str = text_from_bytes(EMPTY_MD5.to_vec());
         return (hash_str, true, None);
     }
 
@@ -322,15 +321,16 @@ pub fn md5_hash(input: &str) -> TransformationResult {
     hasher.update(input.as_bytes());
     let hash = hasher.finalize();
 
-    // SAFETY: MD5 hash output is always valid bytes (may not be valid UTF-8)
-    // We're treating it as raw bytes, wrapped as a string
-    let hash_str = unsafe { wrap_unsafe(&hash) }.to_string();
+    let hash_str = text_from_bytes(hash.to_vec());
 
     // Hash transformations are almost always a change (invariant is extremely unlikely)
     (hash_str, true, None)
 }
 
-/// Computes SHA1 hash of input (returns raw binary hash, not hex-encoded).
+/// Computes the SHA1 digest of the input, as raw bytes rather than hex.
+///
+/// Values are text, so the digest's bytes that aren't UTF-8 are replaced by U+FFFD:
+/// unlike in Go Coraza, `t:sha1,t:hexEncode` doesn't give the digest in hex.
 ///
 /// # Examples
 ///
@@ -338,8 +338,7 @@ pub fn md5_hash(input: &str) -> TransformationResult {
 /// use coraza::transformations::sha1_hash;
 ///
 /// let (result, changed, _) = sha1_hash("hello");
-/// // Result is raw binary SHA1 hash (20 bytes)
-/// assert_eq!(result.len(), 20);
+/// assert!(!result.is_empty());
 /// assert!(changed);
 /// ```
 pub fn sha1_hash(input: &str) -> TransformationResult {
@@ -349,8 +348,7 @@ pub fn sha1_hash(input: &str) -> TransformationResult {
             0xda, 0x39, 0xa3, 0xee, 0x5e, 0x6b, 0x4b, 0x0d, 0x32, 0x55, 0xbf, 0xef, 0x95, 0x60,
             0x18, 0x90, 0xaf, 0xd8, 0x07, 0x09,
         ];
-        // SAFETY: EMPTY_SHA1 is a valid byte slice representing SHA1 output
-        let hash_str = unsafe { wrap_unsafe(EMPTY_SHA1) }.to_string();
+        let hash_str = text_from_bytes(EMPTY_SHA1.to_vec());
         return (hash_str, true, None);
     }
 
@@ -358,9 +356,7 @@ pub fn sha1_hash(input: &str) -> TransformationResult {
     hasher.update(input.as_bytes());
     let hash = hasher.finalize();
 
-    // SAFETY: SHA1 hash output is always valid bytes (may not be valid UTF-8)
-    // We're treating it as raw bytes, wrapped as a string
-    let hash_str = unsafe { wrap_unsafe(&hash) }.to_string();
+    let hash_str = text_from_bytes(hash.to_vec());
 
     // Hash transformations are almost always a change (invariant is extremely unlikely)
     (hash_str, true, None)
@@ -498,9 +494,7 @@ fn do_base64_decode(src: &str, ext: bool) -> String {
         _ => {}
     }
 
-    // SAFETY: base64 decoding can produce arbitrary bytes, but we're wrapping
-    // them as a string. The caller is responsible for interpreting the result.
-    unsafe { wrap_unsafe(&result) }.to_string()
+    text_from_bytes(result)
 }
 
 #[cfg(test)]
@@ -678,17 +672,13 @@ mod tests {
 
     #[test]
     fn test_md5_hash() {
-        // Test that MD5 produces 16-byte output
-        let (result, changed, err) = md5_hash("hello");
-        assert!(err.is_none());
-        assert_eq!(result.len(), 16);
-        assert!(changed);
-
-        // Test empty string
-        let (result, changed, err) = md5_hash("");
-        assert!(err.is_none());
-        assert_eq!(result.len(), 16);
-        assert!(changed);
+        // The digest, as text
+        for input in ["hello", ""] {
+            let (result, changed, err) = md5_hash(input);
+            assert!(err.is_none());
+            assert_eq!(result, text_from_bytes(Md5::digest(input).to_vec()));
+            assert!(changed);
+        }
 
         // Test that different inputs produce different hashes
         let (result1, _, _) = md5_hash("test1");
@@ -698,17 +688,13 @@ mod tests {
 
     #[test]
     fn test_sha1_hash() {
-        // Test that SHA1 produces 20-byte output
-        let (result, changed, err) = sha1_hash("hello");
-        assert!(err.is_none());
-        assert_eq!(result.len(), 20);
-        assert!(changed);
-
-        // Test empty string
-        let (result, changed, err) = sha1_hash("");
-        assert!(err.is_none());
-        assert_eq!(result.len(), 20);
-        assert!(changed);
+        // The digest, as text
+        for input in ["hello", ""] {
+            let (result, changed, err) = sha1_hash(input);
+            assert!(err.is_none());
+            assert_eq!(result, text_from_bytes(Sha1::digest(input).to_vec()));
+            assert!(changed);
+        }
 
         // Test that different inputs produce different hashes
         let (result1, _, _) = sha1_hash("test1");
@@ -720,7 +706,7 @@ mod tests {
     fn test_base64_decode() {
         // Helper function to create test expected values from byte arrays
         fn bytes_to_string(bytes: &[u8]) -> String {
-            unsafe { wrap_unsafe(bytes) }.to_string()
+            text_from_bytes(bytes.to_vec())
         }
 
         let tests: Vec<(&str, String)> = vec![

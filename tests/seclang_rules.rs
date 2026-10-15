@@ -1579,3 +1579,22 @@ fn variables_have_go_names() {
         )
         .unwrap();
 }
+
+#[test]
+fn transformations_producing_invalid_utf8_are_safe() {
+    // base64 of [0xff, 0xfe], a hex escape, a SHA-1 digest and a URL escape: each yields
+    // bytes that aren't UTF-8, then a transformation reads them as text
+    let waf = waf(r#"
+        SecRule ARGS:a "@rx x" "id:1,phase:1,pass,t:base64Decode,t:removeWhitespace"
+        SecRule ARGS:b "@rx x" "id:2,phase:1,pass,t:hexDecode,t:lowercase"
+        SecRule ARGS:c "@rx x" "id:3,phase:1,pass,t:sha1,t:trim"
+        SecRule ARGS:d "@rx x" "id:4,phase:1,pass,t:urlDecode,t:compressWhitespace"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.args_mut().add("a", "//4=");
+    tx.args_mut().add("b", "fffe");
+    tx.args_mut().add("c", "anything");
+    tx.args_mut().add("d", "%ff%fe");
+    assert!(tx.process_request_headers().is_none());
+}

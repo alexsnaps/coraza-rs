@@ -39,6 +39,16 @@ pub type TransformationResult = (String, bool, Option<TransformationError>);
 /// A transformation function, as used in a [`crate::rules::TransformationChain`].
 pub type Transformation = fn(&str) -> TransformationResult;
 
+/// `bytes` as a value: as they are if they are UTF-8, or with each invalid sequence
+/// replaced by U+FFFD.
+///
+/// Values are Rust strings, so a transformation producing other bytes (a digest, a
+/// decoded escape) loses them, where Go Coraza keeps them.
+pub(crate) fn text_from_bytes(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes)
+        .unwrap_or_else(|invalid| String::from_utf8_lossy(invalid.as_bytes()).into_owned())
+}
+
 /// Error type for transformation operations.
 ///
 /// Transformation errors are for logging only and don't stop rule execution.

@@ -247,6 +247,17 @@ None of these is used by CRS v4.30.0.
 - [x] **Load CRS with nothing skipped.** Re-run the load check above until `Parser::skipped()` is empty.
   - Done: CRS v4.30.0 with Go's `coraza.conf-recommended` and `crs-setup.conf.example` loads with nothing
     skipped (709 `SecRule`/`SecAction` directives), as of 1.6; checked again at `420abaf`.
+- [x] **Undefined behaviour in transformations.** Found while setting up the FTW run, which it stopped: the FTW
+  server died on a JSON request. `t:urlDecode` (and the argument parsing that uses it), `t:hexDecode`,
+  `t:base64Decode(Ext)`, `t:md5` and `t:sha1` turned bytes that aren't UTF-8 into `&str` without checking, in
+  `unsafe` blocks whose comments said the bytes might not be UTF-8. Plain traffic triggers it (`t:base64Decode` on
+  `bar`).
+  - Done: they now replace invalid sequences with U+FFFD (`transformations::text_from_bytes`), and the unsafe
+    `utils::strings::wrap_unsafe` is removed.
+- [ ] **Values are text, so bytes are lost.** Go Coraza's values are bytes. Here, what a transformation produces
+  that isn't UTF-8 becomes U+FFFD, so `t:sha1,t:hexEncode` (CRS 901320 and 901410) and `t:md5,t:hexEncode` don't
+  give the digest in hex, and `%ff` doesn't stay one byte. A fix would carry bytes through a rule's transformations
+  and turn them into text only for the operator.
 - [ ] **Run CRS v4.30.0's FTW tests and record the pass rate.** Not run yet; `ftw-runner/` drives
   `examples/ftw_server_async.rs`.
   - Go Coraza's CI runs all 5,260 tests (`testing/coreruleset`). It ignores 7 (`.ftw.yml`) and changes the expected

@@ -298,9 +298,8 @@ fn do_url_decode(input: &str, start_pos: usize) -> TransformationResult {
         }
     }
 
-    // SAFETY: We're only decoding percent-encoded bytes and replacing '+' with space.
-    // The input was valid UTF-8, and our transformations preserve UTF-8 validity.
-    let transformed = unsafe { String::from_utf8_unchecked(result) };
+    // An escape such as %ff decodes to a byte that isn't UTF-8
+    let transformed = crate::transformations::text_from_bytes(result);
     (transformed, true, None)
 }
 
