@@ -436,6 +436,7 @@ mod tests {
         );
 
         // Too late once the request body phase started
+        tx.process_request_headers();
         tx.process_request_body(b"");
         CtlAction::parse("requestBodyProcessor=XML")
             .unwrap()
@@ -628,6 +629,7 @@ mod tests {
 
         let mut tx = Transaction::new("test-8");
         // Simulate being in request body phase
+        tx.process_request_headers();
         tx.process_request_body(b"test");
 
         assert!(tx.request_body_access()); // default is true
@@ -645,6 +647,7 @@ mod tests {
 
         let mut tx = Transaction::new("test-9");
         // Simulate being in response body phase
+        tx.process_response_headers(200, "HTTP/1.1");
         tx.process_response_body(b"test");
 
         assert_eq!(tx.response_body_limit(), 524288); // default

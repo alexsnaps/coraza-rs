@@ -49,6 +49,24 @@ impl FlowState {
 }
 
 impl Transaction {
+    /// Whether `phase` runs now, as Go Coraza decides: not once the transaction is
+    /// interrupted, and in order: a body phase only right after its headers phase, the
+    /// others once. A phase that runs becomes the last phase.
+    pub(super) fn begin_phase(&mut self, phase: RulePhase) -> bool {
+        if self.flow.interruption.is_some() {
+            return false;
+        }
+        let in_order = match phase {
+            RulePhase::RequestBody => self.last_phase == Some(RulePhase::RequestHeaders),
+            RulePhase::ResponseBody => self.last_phase == Some(RulePhase::ResponseHeaders),
+            _ => self.last_phase.is_none_or(|last| last < phase),
+        };
+        if in_order {
+            self.last_phase = Some(phase);
+        }
+        in_order
+    }
+
     /// Evaluates the WAF's rules of `phase`, in order, if the transaction has a WAF.
     ///
     /// Evaluation stops at an interruption, but in the logging phase, and at an `allow`;

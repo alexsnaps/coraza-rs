@@ -374,6 +374,62 @@ fn logging_phase_rules_run_after_an_interruption() {
 }
 
 #[test]
+fn body_phases_run_only_right_after_their_headers_phase() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,nolog,setvar:tx.request_headers=1"
+        SecAction "id:2,phase:2,pass,nolog,setvar:tx.request_body=1"
+        SecAction "id:3,phase:3,pass,nolog,setvar:tx.response_headers=1"
+        SecAction "id:4,phase:4,pass,nolog,setvar:tx.response_body=1"
+    "#);
+
+    // As in Go Coraza, a body phase called too early does nothing, and the phases can
+    // still run in order
+    let mut tx = waf.new_transaction();
+    tx.process_request_body(b"");
+    assert_eq!(tx_var(&tx, "request_body"), None);
+    tx.process_request_headers();
+    tx.process_request_body(b"");
+    assert_eq!(tx_var(&tx, "request_headers").as_deref(), Some("1"));
+    assert_eq!(tx_var(&tx, "request_body").as_deref(), Some("1"));
+
+    tx.process_response_body(b"");
+    assert_eq!(tx_var(&tx, "response_body"), None);
+    tx.process_response_headers(200, "HTTP/1.1");
+    tx.process_response_body(b"");
+    assert_eq!(tx_var(&tx, "response_headers").as_deref(), Some("1"));
+    assert_eq!(tx_var(&tx, "response_body").as_deref(), Some("1"));
+}
+
+#[test]
+fn a_phase_called_again_returns_the_interruption() {
+    let waf = waf(r#"SecAction "id:1,phase:1,deny,status:403""#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+}
+
+#[test]
+fn an_interrupted_transaction_is_not_inspected_further() {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecAction "id:1,phase:1,deny,status:403"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+    tx.process_request_headers();
+
+    // As in Go Coraza, the body isn't read, nor the response status recorded
+    assert_eq!(tx.process_request_body(b"a=1").map(|i| i.rule_id), Some(1));
+    assert!(tx.args_post().get("a").is_empty());
+    let response = tx.process_response_headers(200, "HTTP/1.1");
+    assert_eq!(response.map(|i| i.rule_id), Some(1));
+    assert_eq!(tx.response_status(), "");
+}
+
+#[test]
 fn ctl_rule_remove_by_id_skips_rules_for_one_transaction() {
     let waf = waf(r#"
         SecRule REQUEST_HEADERS:X-Quiet "@streq yes" "id:1,phase:1,pass,nolog,ctl:ruleRemoveById=10-19"

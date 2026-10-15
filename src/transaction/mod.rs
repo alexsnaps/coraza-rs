@@ -1689,9 +1689,11 @@ impl Transaction {
     /// Process request headers and evaluate Phase 1 rules.
     ///
     /// Should be called after all request headers have been added via
-    /// `add_request_header()`. This triggers rule evaluation for Phase 1.
+    /// `add_request_header()`. This triggers rule evaluation for Phase 1, once.
     ///
-    /// Returns an interruption if a disruptive action was triggered.
+    /// Returns the transaction's interruption, if any. As in Go Coraza, every phase
+    /// method does, also when its phase doesn't run: it already ran, or the transaction
+    /// was interrupted.
     ///
     /// # Example
     ///
@@ -1711,19 +1713,9 @@ impl Transaction {
     /// assert!(interruption.is_none()); // No rules triggered
     /// ```
     pub fn process_request_headers(&mut self) -> Option<Interruption> {
-        // Check if already processed
-        if let Some(phase) = self.last_phase
-            && phase >= RulePhase::RequestHeaders
-        {
-            return None;
+        if self.begin_phase(RulePhase::RequestHeaders) {
+            self.evaluate_rules(RulePhase::RequestHeaders);
         }
-
-        // Update phase
-        self.last_phase = Some(RulePhase::RequestHeaders);
-
-        // Evaluate rules for Phase 1 (Request Headers)
-        self.evaluate_rules(RulePhase::RequestHeaders);
-
         self.interruption().cloned()
     }
 
@@ -1772,9 +1764,11 @@ impl Transaction {
     ///    by `ctl:requestBodyProcessor`)
     /// 2. Calls it to parse the body; the URLENCODED and RAW processors also keep the
     ///    body in REQUEST_BODY and REQUEST_BODY_LENGTH, as in Go Coraza and ModSecurity
-    /// 3. Updates last_phase to RequestBody
+    /// 3. Evaluates Phase 2 rules
     ///
-    /// Returns an interruption if a disruptive action was triggered.
+    /// As in Go Coraza, it does so only right after
+    /// [`Transaction::process_request_headers`], and not once the transaction is
+    /// interrupted. Returns the transaction's interruption, if any.
     ///
     /// # Example
     ///
@@ -1783,6 +1777,7 @@ impl Transaction {
     ///
     /// let mut tx = Transaction::new("tx-1");
     /// tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+    /// tx.process_request_headers();
     ///
     /// let body = b"username=admin&password=secret";
     /// let result = tx.process_request_body(body);
@@ -1792,11 +1787,8 @@ impl Transaction {
     /// assert_eq!(tx.args_post().get("password"), vec!["secret"]);
     /// ```
     pub fn process_request_body(&mut self, body: &[u8]) -> Option<Interruption> {
-        // Check if already processed
-        if let Some(phase) = self.last_phase
-            && phase >= RulePhase::RequestBody
-        {
-            return None;
+        if !self.begin_phase(RulePhase::RequestBody) {
+            return self.interruption().cloned();
         }
 
         // As in Go Coraza, an empty body or one without access is left alone
@@ -1807,18 +1799,12 @@ impl Transaction {
             if body.len() >= limit {
                 self.inbound_data_error.set("1");
                 match self.config.request_body_limit_action {
-                    BodyLimitAction::Reject => {
-                        self.last_phase = Some(RulePhase::RequestBody);
-                        return Some(self.interrupt_for_body_limit(413));
-                    }
+                    BodyLimitAction::Reject => return Some(self.interrupt_for_body_limit(413)),
                     BodyLimitAction::ProcessPartial => body = &body[..limit],
                 }
             }
             self.inspect_request_body(body);
         }
-
-        // Update phase
-        self.last_phase = Some(RulePhase::RequestBody);
 
         // Evaluate rules for Phase 2 (Request Body)
         self.evaluate_rules(RulePhase::RequestBody);
@@ -1826,7 +1812,10 @@ impl Transaction {
         self.interruption().cloned()
     }
 
-    /// Process response headers and populate response variables.
+    /// Process response headers and populate response variables, then evaluate Phase 3
+    /// rules, once and not once the transaction is interrupted, as in Go Coraza.
+    ///
+    /// Returns the transaction's interruption, if any.
     ///
     /// # Example
     ///
@@ -1846,19 +1835,13 @@ impl Transaction {
         status_code: u16,
         protocol: &str,
     ) -> Option<Interruption> {
-        // Check if already processed
-        if let Some(phase) = self.last_phase
-            && phase >= RulePhase::ResponseHeaders
-        {
-            return None;
+        if !self.begin_phase(RulePhase::ResponseHeaders) {
+            return self.interruption().cloned();
         }
 
         // Populate response variables
         self.response_status.set(status_code.to_string());
         self.response_protocol.set(protocol);
-
-        // Update phase
-        self.last_phase = Some(RulePhase::ResponseHeaders);
 
         // Evaluate rules for Phase 3 (Response Headers)
         self.evaluate_rules(RulePhase::ResponseHeaders);
@@ -1905,7 +1888,11 @@ impl Transaction {
         }
     }
 
-    /// Process response body.
+    /// Process response body, then evaluate Phase 4 rules.
+    ///
+    /// As in Go Coraza, it does so only right after
+    /// [`Transaction::process_response_headers`], and not once the transaction is
+    /// interrupted. Returns the transaction's interruption, if any.
     ///
     /// # Example
     ///
@@ -1920,11 +1907,8 @@ impl Transaction {
     /// let result = tx.process_response_body(body);
     /// ```
     pub fn process_response_body(&mut self, body: &[u8]) -> Option<Interruption> {
-        // Check if already processed
-        if let Some(phase) = self.last_phase
-            && phase >= RulePhase::ResponseBody
-        {
-            return None;
+        if !self.begin_phase(RulePhase::ResponseBody) {
+            return self.interruption().cloned();
         }
 
         if self.response_body_access && self.is_response_body_processable() {
@@ -1934,18 +1918,12 @@ impl Transaction {
             if body.len() >= limit {
                 self.outbound_data_error.set("1");
                 match self.config.response_body_limit_action {
-                    BodyLimitAction::Reject => {
-                        self.last_phase = Some(RulePhase::ResponseBody);
-                        return Some(self.interrupt_for_body_limit(500));
-                    }
+                    BodyLimitAction::Reject => return Some(self.interrupt_for_body_limit(500)),
                     BodyLimitAction::ProcessPartial => body = &body[..limit],
                 }
             }
             self.inspect_response_body(body);
         }
-
-        // Update phase
-        self.last_phase = Some(RulePhase::ResponseBody);
 
         // Evaluate rules for Phase 4 (Response Body)
         self.evaluate_rules(RulePhase::ResponseBody);
@@ -2486,6 +2464,7 @@ mod tests {
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
 
         let body = b"username=admin&password=secret&role=admin";
+        tx.process_request_headers();
         let result = tx.process_request_body(body);
 
         assert!(result.is_none()); // No interruption
@@ -2514,6 +2493,7 @@ mod tests {
         tx.set_request_body_processor(BodyProcessorKind::Json);
 
         let body = br#"{"user": "admin", "id": 123}"#;
+        tx.process_request_headers();
         let result = tx.process_request_body(body);
 
         assert!(result.is_none());
@@ -2531,6 +2511,7 @@ mod tests {
         tx.set_request_body_processor(BodyProcessorKind::Xml);
 
         let body = br#"<user name="admin"><id>123</id></user>"#;
+        tx.process_request_headers();
         let result = tx.process_request_body(body);
 
         assert!(result.is_none());
@@ -2554,6 +2535,7 @@ Content-Disposition: form-data; name=\"field1\"\r\n\
 value1\r\n\
 ------WebKitFormBoundary--\r\n";
 
+        tx.process_request_headers();
         let result = tx.process_request_body(body);
 
         assert!(result.is_none());
@@ -2568,6 +2550,7 @@ value1\r\n\
         // No Content-Type header
 
         let body = b"some data";
+        tx.process_request_headers();
         let result = tx.process_request_body(body);
 
         assert!(result.is_none());
@@ -2604,6 +2587,7 @@ value1\r\n\
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
 
         let body1 = b"key1=value1";
+        tx.process_request_headers();
         tx.process_request_body(body1);
 
         // Try to process again
@@ -2740,8 +2724,10 @@ value1\r\n\
         tx.process_connection("127.0.0.1", 54321, "10.0.0.1", 8080);
         // Connection processing doesn't update phase (it's before phase 1)
 
-        // Process request body
+        // Process request headers, then the request body
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+        tx.process_request_headers();
+        assert_eq!(tx.last_phase, Some(RulePhase::RequestHeaders));
         tx.process_request_body(b"key=value");
         assert_eq!(tx.last_phase, Some(RulePhase::RequestBody));
 

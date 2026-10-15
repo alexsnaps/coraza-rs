@@ -188,6 +188,7 @@ fn test_ctl_phase_restrictions() {
     assert!(!tx.request_body_access());
 
     // Process request body phase
+    tx.process_request_headers();
     let _ = tx.process_request_body(b"test=data");
 
     // Now we're in/past request body phase - verify phase tracking
@@ -257,6 +258,7 @@ fn test_complete_transaction_flow() {
 
     // 3. Request body phase with URL-encoded data
     let body = b"username=admin&password=P%40ssw0rd";
+    tx.process_request_headers();
     let result = tx.process_request_body(body);
     assert!(result.is_none());
 
@@ -310,6 +312,7 @@ fn test_multipart_file_upload_flow() {
     );
 
     // Process multipart body
+    tx.process_request_headers();
     let result = tx.process_request_body(multipart_body.as_bytes());
     assert!(result.is_none());
 
@@ -346,6 +349,7 @@ fn test_json_api_request_with_nested_data() {
         "tags": ["developer", "admin"]
     }"#;
 
+    tx.process_request_headers();
     let result = tx.process_request_body(json_body);
     assert!(result.is_none());
 
