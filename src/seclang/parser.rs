@@ -66,6 +66,15 @@ type ParseResult<T> = Result<T, ParseError>;
 /// the location to the message.
 type DirectiveFn = fn(&mut DirectiveOptions<'_>) -> Result<(), String>;
 
+/// A known directive, by whether it takes an argument.
+#[derive(Clone, Copy)]
+enum Directive {
+    /// Needs a non-empty argument
+    WithArgument(DirectiveFn),
+    /// Takes no argument
+    WithoutArgument(DirectiveFn),
+}
+
 /// What a directive handler works on: its (non-empty) argument and the parser's output.
 struct DirectiveOptions<'a> {
     /// Directive options/arguments (everything after directive name)
@@ -86,6 +95,10 @@ struct DirectiveOptions<'a> {
 
     /// Datasets defined so far
     datasets: &'a mut Datasets,
+
+    /// Whether a directive that fails from now on is skipped rather than returned; see
+    /// [`Parser::skip_failed_directives`]
+    skip_failed: &'a mut bool,
 }
 
 /// Parser configuration and state
@@ -411,21 +424,28 @@ impl Parser {
             return self.from_file(&opts);
         }
 
-        let Some(handler) = directive_handler(&directive_lower) else {
+        let Some(directive) = directive_handler(&directive_lower) else {
             return Err(self.error(format!("unknown directive \"{}\"", directive_name)));
         };
 
-        let result = if opts.is_empty() {
-            Err("requires an argument".to_string())
-        } else {
-            handler(&mut DirectiveOptions {
-                opts,
-                config_dir: Path::new(&self.state.current_dir),
-                waf_config: &mut self.waf_config,
-                rules: &mut self.rules,
-                default_actions: &mut self.default_actions,
-                datasets: &mut self.datasets,
-            })
+        let result = match directive {
+            Directive::WithArgument(_) if opts.is_empty() => {
+                Err("requires an argument".to_string())
+            }
+            Directive::WithoutArgument(_) if !opts.is_empty() => {
+                Err("takes no argument".to_string())
+            }
+            Directive::WithArgument(handler) | Directive::WithoutArgument(handler) => {
+                handler(&mut DirectiveOptions {
+                    opts,
+                    config_dir: Path::new(&self.state.current_dir),
+                    waf_config: &mut self.waf_config,
+                    rules: &mut self.rules,
+                    default_actions: &mut self.default_actions,
+                    datasets: &mut self.datasets,
+                    skip_failed: &mut self.skip_failed,
+                })
+            }
         };
         result.map_err(|message| {
             self.error(format!(
@@ -454,53 +474,67 @@ impl Default for Parser {
 /// Handler of the directive with the given lowercase name; `None` if unknown.
 ///
 /// `Include` is handled by the parser itself.
-fn directive_handler(name: &str) -> Option<DirectiveFn> {
-    let handler: DirectiveFn = match name {
-        "secrule" => directive_sec_rule,
-        "secaction" => directive_sec_action,
-        "secmarker" => directive_sec_marker,
-        "secdefaultaction" => directive_sec_default_action,
-        "secdataset" => directive_sec_dataset,
-        "secruleremovebyid" => directive_sec_rule_remove_by_id,
-        "secruleremovebymsg" => directive_sec_rule_remove_by_msg,
-        "secruleremovebytag" => directive_sec_rule_remove_by_tag,
-        "secruleupdateactionbyid" => directive_sec_rule_update_action_by_id,
-        "secruleupdatetargetbyid" => directive_sec_rule_update_target_by_id,
-        "secruleupdatetargetbytag" => directive_sec_rule_update_target_by_tag,
-        "secruleengine" => directive_sec_rule_engine,
-        "secrequestbodyaccess" => directive_sec_request_body_access,
-        "secresponsebodyaccess" => directive_sec_response_body_access,
-        "secrequestbodylimit" => directive_sec_request_body_limit,
-        "secrequestbodylimitaction" => directive_sec_request_body_limit_action,
-        "secdebugloglevel" => directive_sec_debug_log_level,
-        "secwebappid" => directive_sec_web_app_id,
-        "seccomponentsignature" => directive_sec_component_signature,
-        "secserversignature" => directive_sec_server_signature,
-        "secsensorid" => directive_sec_sensor_id,
-        "secresponsebodylimit" => directive_sec_response_body_limit,
-        "secresponsebodylimitaction" => directive_sec_response_body_limit_action,
-        "secrequestbodyinmemorylimit" => directive_sec_request_body_in_memory_limit,
-        "secrequestbodynofileslimit" => directive_sec_request_body_no_files_limit,
-        "secargumentslimit" => directive_sec_arguments_limit,
-        "secuploaddir" => directive_sec_upload_dir,
-        "secuploadfilelimit" => directive_sec_upload_file_limit,
-        "secuploadfilemode" => directive_sec_upload_file_mode,
-        "secuploadkeepfiles" => directive_sec_upload_keep_files,
-        "secauditengine" => directive_sec_audit_engine,
-        "secauditlog" => directive_sec_audit_log,
-        "secauditlogformat" => directive_sec_audit_log_format,
-        "secauditlogparts" => directive_sec_audit_log_parts,
-        "secauditlogtype" => directive_sec_audit_log_type,
-        "secauditlogrelevantstatus" => directive_sec_audit_log_relevant_status,
-        "secrxprefilter" => directive_sec_rx_pre_filter,
-        "secrequestbodyjsondepthlimit" => directive_sec_request_body_json_depth_limit,
-        "secresponsebodyjsondepthlimit" => directive_sec_response_body_json_depth_limit,
-        "secresponsebodymimetype" => directive_sec_response_body_mime_type,
-        "secdatadir" => directive_sec_data_dir,
-        "seccollectiontimeout" => directive_sec_collection_timeout,
+fn directive_handler(name: &str) -> Option<Directive> {
+    use Directive::{WithArgument, WithoutArgument};
+    let directive = match name {
+        "secrule" => WithArgument(directive_sec_rule),
+        "secaction" => WithArgument(directive_sec_action),
+        "secmarker" => WithArgument(directive_sec_marker),
+        "secdefaultaction" => WithArgument(directive_sec_default_action),
+        "secdataset" => WithArgument(directive_sec_dataset),
+        "secruleremovebyid" => WithArgument(directive_sec_rule_remove_by_id),
+        "secruleremovebymsg" => WithArgument(directive_sec_rule_remove_by_msg),
+        "secruleremovebytag" => WithArgument(directive_sec_rule_remove_by_tag),
+        "secruleupdateactionbyid" => WithArgument(directive_sec_rule_update_action_by_id),
+        "secruleupdatetargetbyid" => WithArgument(directive_sec_rule_update_target_by_id),
+        "secruleupdatetargetbytag" => WithArgument(directive_sec_rule_update_target_by_tag),
+        "secruleengine" => WithArgument(directive_sec_rule_engine),
+        "secrequestbodyaccess" => WithArgument(directive_sec_request_body_access),
+        "secresponsebodyaccess" => WithArgument(directive_sec_response_body_access),
+        "secrequestbodylimit" => WithArgument(directive_sec_request_body_limit),
+        "secrequestbodylimitaction" => WithArgument(directive_sec_request_body_limit_action),
+        "secdebugloglevel" => WithArgument(directive_sec_debug_log_level),
+        "secwebappid" => WithArgument(directive_sec_web_app_id),
+        "seccomponentsignature" => WithArgument(directive_sec_component_signature),
+        "secserversignature" => WithArgument(directive_sec_server_signature),
+        "secsensorid" => WithArgument(directive_sec_sensor_id),
+        "secresponsebodylimit" => WithArgument(directive_sec_response_body_limit),
+        "secresponsebodylimitaction" => WithArgument(directive_sec_response_body_limit_action),
+        "secrequestbodyinmemorylimit" => WithArgument(directive_sec_request_body_in_memory_limit),
+        "secrequestbodynofileslimit" => WithArgument(directive_sec_request_body_no_files_limit),
+        "secargumentslimit" => WithArgument(directive_sec_arguments_limit),
+        "secuploaddir" => WithArgument(directive_sec_upload_dir),
+        "secuploadfilelimit" => WithArgument(directive_sec_upload_file_limit),
+        "secuploadfilemode" => WithArgument(directive_sec_upload_file_mode),
+        "secuploadkeepfiles" => WithArgument(directive_sec_upload_keep_files),
+        "secauditengine" => WithArgument(directive_sec_audit_engine),
+        "secauditlog" => WithArgument(directive_sec_audit_log),
+        "secauditlogformat" => WithArgument(directive_sec_audit_log_format),
+        "secauditlogparts" => WithArgument(directive_sec_audit_log_parts),
+        "secauditlogtype" => WithArgument(directive_sec_audit_log_type),
+        "secauditlogrelevantstatus" => WithArgument(directive_sec_audit_log_relevant_status),
+        "secrxprefilter" => WithArgument(directive_sec_rx_pre_filter),
+        "secrequestbodyjsondepthlimit" => WithArgument(directive_sec_request_body_json_depth_limit),
+        "secresponsebodyjsondepthlimit" => {
+            WithArgument(directive_sec_response_body_json_depth_limit)
+        }
+        "secresponsebodymimetype" => WithArgument(directive_sec_response_body_mime_type),
+        "secdatadir" => WithArgument(directive_sec_data_dir),
+        "seccollectiontimeout" => WithArgument(directive_sec_collection_timeout),
+        "secdebuglog" => WithArgument(directive_sec_debug_log),
+        "secauditlogdirmode" => WithArgument(directive_sec_audit_log_dir_mode),
+        "secauditlogfilemode" => WithArgument(directive_sec_audit_log_file_mode),
+        "secauditlogstoragedir" => WithArgument(directive_sec_audit_log_storage_dir),
+        "secignorerulecompilationerrors" => {
+            WithArgument(directive_sec_ignore_rule_compilation_errors)
+        }
+        "secremoterulesfailaction" => WithArgument(directive_sec_remote_rules_fail_action),
+        "secresponsebodymimetypesclear" => {
+            WithoutArgument(directive_sec_response_body_mime_types_clear)
+        }
         _ => return None,
     };
-    Some(handler)
+    Some(directive)
 }
 
 // ============================================================================
@@ -1037,6 +1071,67 @@ fn directive_sec_response_body_mime_type(options: &mut DirectiveOptions) -> Resu
         .split_whitespace()
         .map(str::to_string)
         .collect();
+    Ok(())
+}
+
+/// SecDebugLog PATH
+fn directive_sec_debug_log(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.debug_log = options.opts.clone();
+    Ok(())
+}
+
+/// An octal permission mode, e.g. `0640`.
+fn parse_mode(opts: &str) -> Result<u32, String> {
+    u32::from_str_radix(opts, 8).map_err(|e| format!("invalid file mode (expected octal): {}", e))
+}
+
+/// SecAuditLogDirMode MODE
+fn directive_sec_audit_log_dir_mode(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.audit_log_dir_mode = parse_mode(&options.opts)?;
+    Ok(())
+}
+
+/// SecAuditLogFileMode MODE
+fn directive_sec_audit_log_file_mode(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.audit_log_file_mode = parse_mode(&options.opts)?;
+    Ok(())
+}
+
+/// SecAuditLogStorageDir DIRECTORY
+fn directive_sec_audit_log_storage_dir(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.audit_log_storage_dir = options.opts.clone();
+    Ok(())
+}
+
+/// SecIgnoreRuleCompilationErrors On|Off
+///
+/// With `On`, later directives that fail are skipped, as with
+/// [`Parser::skip_failed_directives`]. Go Coraza records the setting but doesn't act on
+/// it.
+fn directive_sec_ignore_rule_compilation_errors(
+    options: &mut DirectiveOptions,
+) -> Result<(), String> {
+    *options.skip_failed = parse_boolean(&options.opts)?;
+    Ok(())
+}
+
+/// SecRemoteRulesFailAction Abort|Warn
+///
+/// Checked, and has no effect: `SecRemoteRules` isn't supported, as in Go Coraza.
+fn directive_sec_remote_rules_fail_action(options: &mut DirectiveOptions) -> Result<(), String> {
+    match options.opts.to_lowercase().as_str() {
+        "abort" | "warn" => Ok(()),
+        _ => Err(format!("expected Abort or Warn, got: {}", options.opts)),
+    }
+}
+
+/// SecResponseBodyMimeTypesClear
+///
+/// Clears the response content types set by `SecResponseBodyMimeType`.
+fn directive_sec_response_body_mime_types_clear(
+    options: &mut DirectiveOptions,
+) -> Result<(), String> {
+    options.waf_config.response_body_mime_types.clear();
     Ok(())
 }
 

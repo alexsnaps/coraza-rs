@@ -102,6 +102,20 @@ pub struct WafConfig {
     /// `SecAuditEngine RelevantOnly`; empty for none (`SecAuditLogRelevantStatus`).
     pub audit_log_relevant_status: String,
 
+    /// Permission bits for directories of `Concurrent` audit logs, e.g. `0o755`
+    /// (`SecAuditLogDirMode`).
+    pub audit_log_dir_mode: u32,
+
+    /// Permission bits for audit log files, e.g. `0o644` (`SecAuditLogFileMode`).
+    pub audit_log_file_mode: u32,
+
+    /// Directory of `Concurrent` audit logs; empty when unset (`SecAuditLogStorageDir`).
+    pub audit_log_storage_dir: String,
+
+    /// Path of the debug log, for the embedder: the library writes none; empty when
+    /// unset (`SecDebugLog`).
+    pub debug_log: String,
+
     /// Lifetime of persistent collection entries, in seconds (`SecCollectionTimeout`).
     pub collection_timeout: i64,
 
@@ -168,6 +182,10 @@ impl Default for WafConfig {
             ],
             audit_log_type: AuditLogType::Serial,
             audit_log_relevant_status: String::new(),
+            audit_log_dir_mode: 0o755,
+            audit_log_file_mode: 0o644,
+            audit_log_storage_dir: String::new(),
+            debug_log: String::new(),
             collection_timeout: 3600,
             debug_log_level: 0,
             argument_limit: DEFAULT_ARGUMENT_LIMIT,

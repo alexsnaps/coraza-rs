@@ -1193,3 +1193,54 @@ fn datasets_feed_the_dataset_operators() {
         .unwrap_err();
     assert!(err.message.contains("missing"), "{}", err.message);
 }
+
+#[test]
+fn logging_and_body_directives_set_their_settings() {
+    let mut parser = Parser::new();
+    parser
+        .from_string(
+            r#"
+            SecDebugLog /var/log/coraza/debug.log
+            SecAuditLogDirMode 0700
+            SecAuditLogFileMode 0600
+            SecAuditLogStorageDir /var/log/coraza/audit
+            SecRemoteRulesFailAction Warn
+            SecResponseBodyMimeType text/plain text/html
+            SecResponseBodyMimeTypesClear
+            "#,
+        )
+        .unwrap();
+
+    let config = parser.config();
+    assert_eq!(config.debug_log, "/var/log/coraza/debug.log");
+    assert_eq!(config.audit_log_dir_mode, 0o700);
+    assert_eq!(config.audit_log_file_mode, 0o600);
+    assert_eq!(config.audit_log_storage_dir, "/var/log/coraza/audit");
+    assert!(config.response_body_mime_types.is_empty());
+
+    for directive in [
+        "SecAuditLogDirMode 0799",
+        "SecRemoteRulesFailAction Explode",
+        "SecResponseBodyMimeTypesClear text/plain",
+        "SecIgnoreRuleCompilationErrors Sometimes",
+    ] {
+        assert!(Parser::new().from_string(directive).is_err(), "{directive}");
+    }
+}
+
+#[test]
+fn ignoring_rule_compilation_errors_skips_failing_directives() {
+    let mut parser = Parser::new();
+    parser
+        .from_string(
+            r#"
+            SecIgnoreRuleCompilationErrors On
+            SecRule ARGS "@nosuchop x" "id:1"
+            SecRule ARGS "@streq x" "id:2,phase:1,deny,status:403"
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(parser.skipped().len(), 1);
+    assert_eq!(parser.into_waf().unwrap().rule_count(), 1);
+}

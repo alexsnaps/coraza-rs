@@ -170,7 +170,7 @@ naming them expands to nothing. CRS v4.30.0 uses the ones below.
 
 Go Coraza has 69 `Sec*` directives; we have 26. Section 1 covers 11 of the 43 missing.
 
-- [ ] **The other directives that do something in Go.**
+- [x] **The other directives that do something in Go.**
   - `SecRuleRemoveById`, `SecRuleRemoveByMsg`, `SecRuleRemoveByTag`. `RuleGroup::delete_by_*`
     (`src/rules/group.rs:139`-`200`) already does the work.
   - `SecRuleUpdateActionById`.
@@ -184,6 +184,11 @@ Go Coraza has 69 `Sec*` directives; we have 26. Section 1 covers 11 of the 43 mi
     stops after the first single one.
   - Done for `SecDataset`, with the `@pmFromDataset` and `@ipMatchFromDataset` operators of section 5 that read
     its datasets through `OperatorContext::datasets`.
+  - Done for the rest. `SecDebugLog`, `SecAuditLogDirMode`, `SecAuditLogFileMode` and `SecAuditLogStorageDir`
+    set `WafConfig` for the embedder. `SecResponseBodyMimeTypesClear` empties the response content types; the parser
+    now knows which directives take no argument. `SecRemoteRulesFailAction` is checked and has no effect, as
+    `SecRemoteRules` isn't supported here or in Go. `SecIgnoreRuleCompilationErrors On` skips later failing
+    directives, as `Parser::skip_failed_directives` does, where Go records it and doesn't act on it.
 - [ ] **Accept the directives Go accepts and ignores,** so configs written for Go Coraza load: `SecArgumentSeparator`,
   `SecConnEngine`, `SecConnReadStateLimit`, `SecConnWriteStateLimit`, `SecCookieFormat`, `SecGsbLookupDb`,
   `SecHashEngine`, `SecHashKey`, `SecHashMethodPm`, `SecHashMethodRx`, `SecHashParam`, `SecHttpBlKey`,
