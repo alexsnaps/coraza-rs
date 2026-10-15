@@ -13,7 +13,9 @@ use crate::body_processors::{BodyProcessorKind, BodyProcessorOptions};
 use crate::collection::{Map, MatchData, Single};
 use crate::config::WafConfig;
 use crate::rules::RuleGroup;
-use crate::types::{AuditEngineStatus, AuditLogPart, AuditLogParts, RuleEngineStatus, RulePhase};
+use crate::types::{
+    AuditEngineStatus, AuditLogPart, AuditLogParts, RuleEngineStatus, RulePhase, RuleSeverity,
+};
 
 /// Information about a rule that matched during transaction processing.
 ///
@@ -132,6 +134,27 @@ macro_rules! variable_storage {
                 Some(Single($($borrow)+ $tx.multipart_invalid_quoting))
             }
             RuleVariable::Env => Some(Map($($borrow)+ $tx.env)),
+            RuleVariable::Rule => Some(Map($($borrow)+ $tx.rule)),
+            RuleVariable::HighestSeverity => Some(Single($($borrow)+ $tx.highest_severity)),
+            RuleVariable::Time => Some(Single($($borrow)+ $tx.time.time)),
+            RuleVariable::TimeDay => Some(Single($($borrow)+ $tx.time.day)),
+            RuleVariable::TimeEpoch => Some(Single($($borrow)+ $tx.time.epoch)),
+            RuleVariable::TimeHour => Some(Single($($borrow)+ $tx.time.hour)),
+            RuleVariable::TimeMin => Some(Single($($borrow)+ $tx.time.min)),
+            RuleVariable::TimeMon => Some(Single($($borrow)+ $tx.time.mon)),
+            RuleVariable::TimeSec => Some(Single($($borrow)+ $tx.time.sec)),
+            RuleVariable::TimeWday => Some(Single($($borrow)+ $tx.time.wday)),
+            RuleVariable::TimeYear => Some(Single($($borrow)+ $tx.time.year)),
+            // Go Coraza sets these to 0 and never changes them
+            RuleVariable::UrlencodedError => Some(Single($($borrow)+ $tx.urlencoded_error)),
+            RuleVariable::FullRequestLength => {
+                Some(Single($($borrow)+ $tx.full_request_length))
+            }
+            RuleVariable::Duration => Some(Single($($borrow)+ $tx.duration)),
+            RuleVariable::MultipartDataAfter => {
+                Some(Single($($borrow)+ $tx.multipart_data_after))
+            }
+            RuleVariable::OutboundDataError => Some(Single($($borrow)+ $tx.outbound_data_error)),
             RuleVariable::MatchedVars => Some(Map($($borrow)+ $tx.matched_vars)),
             RuleVariable::MatchedVarsNames => {
                 Some(Names(RuleVariable::MatchedVarsNames, $($borrow)+ $tx.matched_vars))
@@ -188,22 +211,15 @@ macro_rules! variable_storage {
 
             // Not populated by this engine yet
             RuleVariable::Unknown
-            | RuleVariable::FullRequestLength
             | RuleVariable::InboundDataError
-            | RuleVariable::MultipartDataAfter
-            | RuleVariable::OutboundDataError
             | RuleVariable::RemoteHost
-            | RuleVariable::HighestSeverity
             | RuleVariable::StatusLine
-            | RuleVariable::Duration
             | RuleVariable::ArgsPath
             | RuleVariable::FilesTmpContent
             | RuleVariable::MultipartFilename
             | RuleVariable::MultipartName
             | RuleVariable::Geo
-            | RuleVariable::Rule
             | RuleVariable::JSON
-            | RuleVariable::UrlencodedError
             | RuleVariable::AuthType
             | RuleVariable::FullRequest
             | RuleVariable::MultipartBoundaryQuoted
@@ -220,16 +236,7 @@ macro_rules! variable_storage {
             | RuleVariable::PathInfo
             | RuleVariable::Sessionid
             | RuleVariable::Userid
-            | RuleVariable::IP
-            | RuleVariable::Time
-            | RuleVariable::TimeDay
-            | RuleVariable::TimeEpoch
-            | RuleVariable::TimeHour
-            | RuleVariable::TimeMin
-            | RuleVariable::TimeMon
-            | RuleVariable::TimeSec
-            | RuleVariable::TimeWday
-            | RuleVariable::TimeYear => None,
+            | RuleVariable::IP => None,
         }
     }};
 }
@@ -420,6 +427,24 @@ pub struct Transaction {
     /// ENV - Variables set by `setenv`
     env: Map,
 
+    /// RULE - `id`, `msg`, `rev`, `logdata` and `severity` of the rule being evaluated
+    rule: Map,
+
+    /// HIGHEST_SEVERITY - The most severe (lowest) severity of the rules matched so far;
+    /// 255 before any
+    highest_severity: Single,
+
+    /// TIME, TIME_* - When the transaction started
+    time: TimeVariables,
+
+    /// URLENCODED_ERROR, FULL_REQUEST_LENGTH, DURATION, MULTIPART_DATA_AFTER,
+    /// OUTBOUND_DATA_ERROR - "0", as Go Coraza sets them and never changes them
+    urlencoded_error: Single,
+    full_request_length: Single,
+    duration: Single,
+    multipart_data_after: Single,
+    outbound_data_error: Single,
+
     /// MATCHED_VAR - The value of the latest match
     matched_var: Single,
 
@@ -512,6 +537,76 @@ fn flag(variable: RuleVariable) -> Single {
     let mut flag = Single::new(variable);
     flag.set("0");
     flag
+}
+
+/// TIME and its parts, for one instant, in UTC (Go Coraza uses local time).
+struct TimeVariables {
+    /// `HH:MM:SS`
+    time: Single,
+    /// Day of the month, 1 to 31
+    day: Single,
+    /// Seconds since the Unix epoch
+    epoch: Single,
+    /// `HH`, 00 to 23
+    hour: Single,
+    /// `MM`, 00 to 59
+    min: Single,
+    /// Month, 1 to 12
+    mon: Single,
+    /// `SS`, 00 to 59
+    sec: Single,
+    /// Day of the week, 0 (Sunday) to 6
+    wday: Single,
+    /// Four-digit year
+    year: Single,
+}
+
+impl TimeVariables {
+    fn since_epoch(seconds: u64) -> Self {
+        let days = seconds / 86_400;
+        let second_of_day = seconds % 86_400;
+        let (year, month, day) = civil_from_days(days);
+        let single = |variable, value: String| {
+            let mut single = Single::new(variable);
+            single.set(value);
+            single
+        };
+        let hour = format!("{:02}", second_of_day / 3600);
+        let min = format!("{:02}", second_of_day / 60 % 60);
+        let sec = format!("{:02}", second_of_day % 60);
+        Self {
+            time: single(RuleVariable::Time, format!("{hour}:{min}:{sec}")),
+            day: single(RuleVariable::TimeDay, day.to_string()),
+            epoch: single(RuleVariable::TimeEpoch, seconds.to_string()),
+            hour: single(RuleVariable::TimeHour, hour),
+            min: single(RuleVariable::TimeMin, min),
+            mon: single(RuleVariable::TimeMon, month.to_string()),
+            sec: single(RuleVariable::TimeSec, sec),
+            // 1970-01-01 was a Thursday
+            wday: single(RuleVariable::TimeWday, ((days + 4) % 7).to_string()),
+            year: single(RuleVariable::TimeYear, year.to_string()),
+        }
+    }
+}
+
+/// The (year, month 1-12, day 1-31) of a count of days since 1970-01-01, by Howard
+/// Hinnant's `civil_from_days`.
+fn civil_from_days(days: u64) -> (u64, u64, u64) {
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let day_of_era = z % 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    let year = year_of_era + era * 400 + u64::from(month <= 2);
+    (year, month, day)
 }
 
 /// Whether `uri` is a request URI as Go's `url.ParseRequestURI` accepts one: `*`, an
@@ -619,6 +714,22 @@ impl Transaction {
             response_xml: Map::new_case_sensitive(RuleVariable::ResponseXML),
             tx: Map::new(RuleVariable::TX),
             env: Map::new_case_sensitive(RuleVariable::Env),
+            rule: Map::new(RuleVariable::Rule),
+            highest_severity: {
+                let mut highest_severity = Single::new(RuleVariable::HighestSeverity);
+                highest_severity.set("255");
+                highest_severity
+            },
+            time: TimeVariables::since_epoch(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |since| since.as_secs()),
+            ),
+            urlencoded_error: flag(RuleVariable::UrlencodedError),
+            full_request_length: flag(RuleVariable::FullRequestLength),
+            duration: flag(RuleVariable::Duration),
+            multipart_data_after: flag(RuleVariable::MultipartDataAfter),
+            outbound_data_error: flag(RuleVariable::OutboundDataError),
             matched_var: Single::new(RuleVariable::MatchedVar),
             matched_var_name: Single::new(RuleVariable::MatchedVarName),
             matched_vars: Map::new(RuleVariable::MatchedVars),
@@ -732,6 +843,36 @@ impl Transaction {
     /// Sets `key` of ENV to `value`, as the `setenv` action does.
     pub fn set_env(&mut self, key: &str, value: String) {
         self.env.set(key, vec![value]);
+    }
+
+    /// Sets RULE to describe the rule about to be evaluated. As in Go Coraza, `msg` and
+    /// `logdata` keep their earlier values when `None`.
+    pub(crate) fn set_rule_variable(
+        &mut self,
+        id: i32,
+        msg: Option<String>,
+        rev: &str,
+        log_data: Option<String>,
+        severity: &str,
+    ) {
+        self.rule.set("id", vec![id.to_string()]);
+        if let Some(msg) = msg {
+            self.rule.set("msg", vec![msg]);
+        }
+        self.rule.set("rev", vec![rev.to_string()]);
+        if let Some(log_data) = log_data {
+            self.rule.set("logdata", vec![log_data]);
+        }
+        self.rule.set("severity", vec![severity.to_string()]);
+    }
+
+    /// Lowers HIGHEST_SEVERITY to `severity` if it is more severe, as a matching rule with
+    /// that severity does.
+    pub(crate) fn raise_highest_severity(&mut self, severity: RuleSeverity) {
+        let highest = self.highest_severity.get().parse::<u8>().unwrap_or(u8::MAX);
+        if severity.as_int() < highest {
+            self.highest_severity.set(severity.as_int().to_string());
+        }
     }
 
     /// Empties MATCHED_VARS, before a rule is evaluated.
@@ -1899,6 +2040,21 @@ mod tests {
         tx.set_server_name("example.com");
 
         assert_eq!(tx.server_name.get(), "example.com");
+    }
+
+    #[test]
+    fn test_time_variables() {
+        for (seconds, expected) in [
+            (0, ["00:00:00", "1", "1", "1970", "4"]),
+            (951_782_400, ["00:00:00", "29", "2", "2000", "2"]),
+            (1_700_000_000, ["22:13:20", "14", "11", "2023", "2"]),
+        ] {
+            let time = TimeVariables::since_epoch(seconds);
+            let actual = [&time.time, &time.day, &time.mon, &time.year, &time.wday]
+                .map(|single| single.get().to_string());
+            assert_eq!(actual, expected, "{seconds}");
+            assert_eq!(time.epoch.get(), seconds.to_string());
+        }
     }
 
     #[test]

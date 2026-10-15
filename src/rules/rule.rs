@@ -198,13 +198,14 @@ impl Rule {
     /// assert_eq!(matches.len(), 1);
     /// ```
     pub fn evaluate(&self, tx: &mut Transaction, rule_engine_on: bool) -> Vec<MatchData> {
-        let mut matched_values = self.match_values(tx);
+        let id = self.metadata.id;
+        let mut matched_values = self.match_values(tx, id);
         if matched_values.is_empty() {
             return matched_values;
         }
 
         for link in &self.chain {
-            let link_matches = link.match_values(tx);
+            let link_matches = link.match_values(tx, id);
             if link_matches.is_empty() {
                 return Vec::new();
             }
@@ -245,16 +246,29 @@ impl Rule {
             });
         }
 
+        if let Some(severity) = self.metadata.severity {
+            tx.raise_highest_severity(severity);
+        }
+
         execute_flow_and_disruptive_actions(&self.actions, &self.metadata, tx, rule_engine_on);
 
         matched_values
     }
 
     /// Matches this rule's own variables and operator, ignoring its chain, and runs its
-    /// non-disruptive actions once per matched value.
+    /// non-disruptive actions once per matched value. RULE describes it, as `id` (that
+    /// of the chain's first rule).
     ///
     /// A rule without an operator (SecAction, SecMarker) always matches once.
-    fn match_values(&self, tx: &mut Transaction) -> Vec<MatchData> {
+    fn match_values(&self, tx: &mut Transaction, id: i32) -> Vec<MatchData> {
+        let expand = |text: &Option<crate::operators::Macro>, tx: &Transaction| {
+            text.as_ref().map(|text| text.expand(Some(tx)))
+        };
+        let msg = expand(&self.metadata.msg, tx);
+        let log_data = expand(&self.metadata.log_data, tx);
+        let severity = self.metadata.severity.map_or("unknown", |s| s.as_str());
+        tx.set_rule_variable(id, msg, &self.metadata.rev, log_data, severity);
+
         let Some(operator) = &self.operator else {
             // As in Go Coraza, an operator-less rule matches an empty, unknown variable
             let matched = MatchData::new_empty();

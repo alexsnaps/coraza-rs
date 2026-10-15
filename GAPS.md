@@ -145,6 +145,11 @@ naming them expands to nothing. CRS v4.30.0 uses the ones below.
   - Done for `ENV`: `setenv` sets it. Unlike Go, it no longer sets the process environment too: that is undefined
     behaviour while other threads may read the environment, and its `unsafe` block claimed it was sound because
     Go does it.
+  - Done for `RULE`, `HIGHEST_SEVERITY` and `TIME*`, as in Go: `RULE` describes each rule as it is evaluated,
+    `HIGHEST_SEVERITY` starts at 255 and follows matching rules' severities, and the `TIME*` variables hold when
+    the transaction started, in UTC where Go uses local time. `URLENCODED_ERROR`, `FULL_REQUEST_LENGTH`,
+    `DURATION`, `MULTIPART_DATA_AFTER` and `OUTBOUND_DATA_ERROR` are `0`, as Go sets them and (but for the last)
+    never changes them.
 
 ## 4. Other missing directives
 

@@ -955,3 +955,71 @@ fn setenv_sets_env_for_later_rules() {
     let mut tx = waf.new_transaction();
     assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(2));
 }
+
+#[test]
+fn rule_and_highest_severity_describe_the_rules_evaluated() {
+    let waf = waf(r#"
+        SecRule ARGS:q "@streq x" "id:7,phase:1,pass,rev:'3',severity:'WARNING',msg:'saw %{ARGS.q}',logdata:'data',setvar:'tx.rule=%{RULE.id}/%{RULE.msg}/%{RULE.rev}/%{RULE.severity}/%{RULE.logdata}'"
+        SecRule ARGS:q "@streq x" "id:8,phase:1,pass,severity:'CRITICAL'"
+        SecRule ARGS:q "@streq x" "id:9,phase:1,pass,severity:'NOTICE'"
+        SecAction "id:10,phase:1,pass,setvar:tx.highest=%{HIGHEST_SEVERITY}"
+    "#);
+
+    let tx = waf.new_transaction();
+    assert_eq!(
+        tx.get_variable(coraza::RuleVariable::HighestSeverity, None)
+            .as_deref(),
+        Some("255")
+    );
+
+    let mut tx = request_with_arg(&waf, "q", "x");
+    tx.process_request_headers();
+    assert_eq!(
+        tx_var(&tx, "rule").as_deref(),
+        Some("7/saw x/3/warning/data")
+    );
+    assert_eq!(tx_var(&tx, "highest").as_deref(), Some("2"));
+}
+
+#[test]
+fn variables_go_only_ever_sets_to_zero_are_zero() {
+    use coraza::RuleVariable::*;
+
+    let tx = waf("").new_transaction();
+    for variable in [
+        UrlencodedError,
+        FullRequestLength,
+        Duration,
+        MultipartDataAfter,
+        OutboundDataError,
+    ] {
+        assert_eq!(
+            tx.get_variable(variable, None).as_deref(),
+            Some("0"),
+            "{variable}"
+        );
+    }
+}
+
+#[test]
+fn time_variables_are_set_when_the_transaction_starts() {
+    use coraza::RuleVariable::*;
+
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let tx = waf("").new_transaction();
+    let get = |variable| tx.get_variable(variable, None).unwrap();
+
+    let epoch: u64 = get(TimeEpoch).parse().unwrap();
+    assert!(epoch >= before && epoch <= before + 5);
+    assert_eq!(
+        get(Time),
+        format!("{}:{}:{}", get(TimeHour), get(TimeMin), get(TimeSec))
+    );
+    assert!((1..=31).contains(&get(TimeDay).parse::<u8>().unwrap()));
+    assert!((1..=12).contains(&get(TimeMon).parse::<u8>().unwrap()));
+    assert!((0..=6).contains(&get(TimeWday).parse::<u8>().unwrap()));
+    assert!(get(TimeYear).parse::<u16>().unwrap() >= 2026);
+}
