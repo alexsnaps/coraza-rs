@@ -157,8 +157,8 @@ pub fn remove_whitespace(input: &str) -> TransformationResult {
 
 /// Compresses consecutive whitespace into single spaces.
 ///
-/// Multiple consecutive whitespace characters (space, tab, newline, etc.) are
-/// replaced with a single space character.
+/// Each run of whitespace (ASCII whitespace, U+0085 or U+00A0) becomes one space
+/// character, as in Go Coraza.
 ///
 /// # Examples
 ///
@@ -174,50 +174,35 @@ pub fn remove_whitespace(input: &str) -> TransformationResult {
 /// assert!(!changed);
 /// ```
 pub fn compress_whitespace(input: &str) -> TransformationResult {
-    // Fast path: check if there's any whitespace to compress
-    let bytes = input.as_bytes();
-    if let Some(pos) = bytes.iter().position(|&b| is_latin_space(b)) {
-        return do_compress_whitespace(input, pos);
-    }
-    (input.to_string(), false, None)
-}
-
-/// Helper function for compress_whitespace - does the actual compression.
-fn do_compress_whitespace(input: &str, start_pos: usize) -> TransformationResult {
     let mut result = String::with_capacity(input.len());
-    result.push_str(&input[..start_pos]);
-
-    let bytes = input.as_bytes();
     let mut changed = false;
     let mut in_whitespace = false;
 
-    for &byte in bytes.iter().skip(start_pos) {
-        if is_latin_space(byte) {
+    for c in input.chars() {
+        if is_latin_space(c) {
             if in_whitespace {
                 changed = true;
-                continue;
             } else {
                 in_whitespace = true;
+                changed |= c != ' ';
                 result.push(' ');
             }
         } else {
             in_whitespace = false;
-            result.push(byte as char);
+            result.push(c);
         }
     }
 
     (result, changed, None)
 }
 
-/// Checks if a byte is a latin space character.
-///
-/// Includes: tab, newline, vertical tab, form feed, carriage return, space, and
-/// Latin-1 whitespace characters (0x85, 0xA0).
+/// Whether `c` is ASCII whitespace or one of Latin-1's (U+0085, U+00A0), the
+/// whitespace `compressWhitespace` matches in ModSecurity.
 #[inline]
-fn is_latin_space(c: u8) -> bool {
+fn is_latin_space(c: char) -> bool {
     matches!(
         c,
-        b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r' | b' ' | 0x85 | 0xA0
+        '\t' | '\n' | '\x0b' | '\x0c' | '\r' | ' ' | '\u{85}' | '\u{a0}'
     )
 }
 
@@ -444,6 +429,23 @@ mod tests {
     }
 
     #[test]
+    fn test_compress_whitespace_non_ascii() {
+        // 0x85 and 0xA0, U+0085 and U+00A0 in Latin-1, are also the last byte of
+        // characters such as ① (e2 91 a0) and à (c3 a0)
+        for (input, want, want_changed) in [
+            ("acap://①②⑦.⓪", "acap://①②⑦.⓪", false),
+            ("a  é", "a é", true),
+            ("à\u{a0}\u{85}b", "à b", true),
+            ("a\tb", "a b", true),
+        ] {
+            let (got, changed, err) = compress_whitespace(input);
+            assert!(err.is_none());
+            assert_eq!(got, want, "input: {input:?}");
+            assert_eq!(changed, want_changed, "input: {input:?}");
+        }
+    }
+
+    #[test]
     fn test_url_decode() {
         let tests = vec![
             ("hello+world", "hello world", true),
@@ -478,17 +480,11 @@ mod tests {
 
     #[test]
     fn test_is_latin_space() {
-        assert!(is_latin_space(b'\t'));
-        assert!(is_latin_space(b'\n'));
-        assert!(is_latin_space(b'\x0b')); // vertical tab
-        assert!(is_latin_space(b'\x0c')); // form feed
-        assert!(is_latin_space(b'\r'));
-        assert!(is_latin_space(b' '));
-        assert!(is_latin_space(0x85));
-        assert!(is_latin_space(0xA0));
-
-        assert!(!is_latin_space(b'a'));
-        assert!(!is_latin_space(b'Z'));
-        assert!(!is_latin_space(b'0'));
+        for c in ['\t', '\n', '\x0b', '\x0c', '\r', ' ', '\u{85}', '\u{a0}'] {
+            assert!(is_latin_space(c), "{c:?}");
+        }
+        for c in ['a', 'Z', '0', '\u{2000}', '\u{3000}'] {
+            assert!(!is_latin_space(c), "{c:?}");
+        }
     }
 }

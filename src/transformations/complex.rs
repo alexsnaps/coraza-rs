@@ -202,10 +202,10 @@ pub fn cmd_line(input: &str) -> TransformationResult {
 }
 
 fn do_cmd_line(input: &str, pos: usize) -> String {
-    let mut result = String::with_capacity(input.len());
+    let mut result = Vec::with_capacity(input.len());
 
     // Copy prefix before first transformable character
-    result.push_str(&input[..pos]);
+    result.extend_from_slice(&input.as_bytes()[..pos]);
 
     let mut space = false;
 
@@ -218,7 +218,7 @@ fn do_cmd_line(input: &str, pos: usize) -> String {
             // Replace with space (compress multiple)
             b' ' | b',' | b';' | b'\t' | b'\r' | b'\n' => {
                 if !space {
-                    result.push(' ');
+                    result.push(b' ');
                     space = true;
                 }
             }
@@ -228,7 +228,7 @@ fn do_cmd_line(input: &str, pos: usize) -> String {
                     result.pop(); // Remove the trailing space
                 }
                 space = false;
-                result.push(c as char);
+                result.push(c);
             }
             // Regular character - lowercase if needed
             _ => {
@@ -237,13 +237,13 @@ fn do_cmd_line(input: &str, pos: usize) -> String {
                 } else {
                     c
                 };
-                result.push(lower as char);
+                result.push(lower);
                 space = false;
             }
         }
     }
 
-    result
+    String::from_utf8(result).expect("only ASCII bytes are removed or changed")
 }
 
 /// Check if a byte needs command-line transformation
@@ -1045,6 +1045,13 @@ mod tests {
     fn test_cmd_line_quotes() {
         let (result, changed, _) = cmd_line("\"command\" /c DiR");
         assert_eq!(result, "command/c dir");
+        assert!(changed);
+    }
+
+    #[test]
+    fn test_cmd_line_non_ascii() {
+        let (result, changed, _) = cmd_line("C^OPY é");
+        assert_eq!(result, "copy é");
         assert!(changed);
     }
 

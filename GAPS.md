@@ -263,6 +263,11 @@ None of these is used by CRS v4.30.0.
   transaction, which rules never do.
   - Done: they use it whenever the pattern has no macro. CRS's 669 rules cost 464 ms on a plain `GET` before,
     under 1 ms after.
+- [x] **`t:compressWhitespace` panicked on some non-ASCII values.** Found by the FTW tests: `?ssrf=acap://①②⑦.⓪.⓪.①`
+  (934120-23) killed the server's task. The transformation took the bytes 0x85 and 0xA0 (Latin-1 whitespace) for
+  whitespace even inside a character (`①` is `e2 91 a0`), and sliced the text there. `t:compressWhitespace` and
+  `t:cmdLine` also turned each byte after it into a character of its own (`é` became `Ã©`).
+  - Done: `t:compressWhitespace` reads characters, as Go Coraza now does; `t:cmdLine` copies bytes.
 - [ ] **Run CRS v4.30.0's FTW tests and record the pass rate.** Not run yet; `ftw-runner/` drives
   `examples/ftw_server_async.rs`.
   - Go Coraza's CI runs all 5,260 tests (`testing/coreruleset`). It ignores 7 (`.ftw.yml`) and changes the expected
