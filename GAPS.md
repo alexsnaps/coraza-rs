@@ -350,8 +350,8 @@ None of these is used by CRS v4.30.0.
     section came from it.
     - 9 are tests Go's CI ignores (3) or overrides (6). Of the overridden, 4 meet Go's changed expectation;
       920290-1 doesn't (Go's own TODO), and 920430-8 needs a 505 that the server can't send.
-    - 29 are the test server's: hyper rejects 28 request lines before the WAF sees them (a raw `<`, `"`, `{` or `|`
-      in the URI; HTTP/3.0), and rewrites 920100-16's absolute-form `http://localhost` with a path.
+    - 29 are the test server's: hyper rejects 28 request lines for their URI before the WAF sees them (a raw `<`,
+      `>` or `"`, for instance), and rewrites 920100-16's absolute-form `http://localhost` with a path.
     - 8 are the engine's: 920250-1 to 4, 941310-1, 12 and 13, 944200-1, all bytes that aren't UTF-8 in arguments or
       bodies, the next item.
 - [ ] **Collection values are text.** Left from the bytes item above, and the FTW tests' last 8 failures of the

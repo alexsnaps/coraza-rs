@@ -118,8 +118,8 @@ The Rust FTW server is at `../examples/ftw_server_async.rs` and provides:
 - Go Coraza's error log line for every matched rule with `log`, which go-ftw reads
 - Support for FTW test requirements
 
-hyper rejects some request lines go-ftw sends (a raw `<`, `"`, `{` or `|` in the URI, HTTP/3.0), which then never
-reach the WAF.
+hyper rejects some request lines go-ftw sends (a raw `<`, `>` or `"` in the URI, a missing or unknown HTTP version),
+which then never reach the WAF.
 
 ### Adding Tests
 
@@ -168,8 +168,8 @@ Of the 46 that fail:
 - **9 are tests Go Coraza's CI sets aside too.** It ignores 920100-5, 920430-5 and 920610-2 (`.ftw.yml`), and
   changes the expected result of 920100-8, 920270-4, 920274-1, 920290-1, 920430-8 and 920620-1
   (`.ftw-overrides.yml`); all but 920290-1 and 920430-8 meet Go's changed expectation.
-- **29 never reach the WAF.** hyper rejects 28 request lines (see above), and rewrites 920100-16's absolute-form
-  `http://localhost` URI.
+- **29 are the test server's.** hyper rejects 28 request lines for their URI (see above), so the WAF never sees
+  them, and rewrites 920100-16's absolute-form `http://localhost` URI.
 - **8 are the engine's:** 920250-1 to 4, 941310-1, 12 and 13, and 944200-1. They send bytes that aren't UTF-8,
   which the engine's collections hold as text.
 
