@@ -70,6 +70,135 @@ pub struct Interruption {
     pub data: String,
 }
 
+/// The data behind one rule variable in a transaction: a single value or a key-value map.
+///
+/// `S` and `M` are `&Single`/`&Map` or their `&mut` forms.
+#[derive(Debug)]
+pub enum VariableCollection<S, M> {
+    /// A variable with one value, such as `REQUEST_URI`
+    Single(S),
+    /// A variable with values selected by key, such as `ARGS`
+    Map(M),
+}
+
+/// Maps each rule variable to the transaction field that holds it; `$borrow` is `&` or
+/// `&mut`. This is the only such mapping: adding a [`RuleVariable`] variant fails to
+/// compile here until it is mapped to a field or listed as not populated.
+macro_rules! variable_storage {
+    ($tx:expr, $variable:expr, $($borrow:tt)+) => {{
+        use VariableCollection::{Map, Single};
+        match $variable {
+            RuleVariable::Args => Some(Map($($borrow)+ $tx.args)),
+            RuleVariable::ArgsGet => Some(Map($($borrow)+ $tx.args_get)),
+            RuleVariable::ArgsPost => Some(Map($($borrow)+ $tx.args_post)),
+            RuleVariable::RequestHeaders => Some(Map($($borrow)+ $tx.request_headers)),
+            RuleVariable::RequestCookies => Some(Map($($borrow)+ $tx.request_cookies)),
+            RuleVariable::ResponseHeaders => Some(Map($($borrow)+ $tx.response_headers)),
+            RuleVariable::Files => Some(Map($($borrow)+ $tx.files)),
+            RuleVariable::FilesTmpNames => Some(Map($($borrow)+ $tx.files_tmp_names)),
+            RuleVariable::FilesSizes => Some(Map($($borrow)+ $tx.files_sizes)),
+            RuleVariable::FilesNames => Some(Map($($borrow)+ $tx.files_names)),
+            RuleVariable::MultipartPartHeaders => Some(Map($($borrow)+ $tx.multipart_part_headers)),
+            RuleVariable::RequestXML => Some(Map($($borrow)+ $tx.request_xml)),
+            RuleVariable::ResponseArgs => Some(Map($($borrow)+ $tx.response_args)),
+            RuleVariable::ResponseXML => Some(Map($($borrow)+ $tx.response_xml)),
+            RuleVariable::TX => Some(Map($($borrow)+ $tx.tx)),
+            RuleVariable::RequestURI => Some(Single($($borrow)+ $tx.request_uri)),
+            RuleVariable::RequestMethod => Some(Single($($borrow)+ $tx.request_method)),
+            RuleVariable::RemoteAddr => Some(Single($($borrow)+ $tx.remote_addr)),
+            RuleVariable::RemotePort => Some(Single($($borrow)+ $tx.remote_port)),
+            RuleVariable::ServerAddr => Some(Single($($borrow)+ $tx.server_addr)),
+            RuleVariable::ServerPort => Some(Single($($borrow)+ $tx.server_port)),
+            RuleVariable::ServerName => Some(Single($($borrow)+ $tx.server_name)),
+            RuleVariable::RequestProtocol => Some(Single($($borrow)+ $tx.request_protocol)),
+            RuleVariable::RequestURIRaw => Some(Single($($borrow)+ $tx.request_uri_raw)),
+            RuleVariable::RequestBasename => Some(Single($($borrow)+ $tx.request_basename)),
+            RuleVariable::RequestFilename => Some(Single($($borrow)+ $tx.request_filename)),
+            RuleVariable::RequestLine => Some(Single($($borrow)+ $tx.request_line)),
+            RuleVariable::QueryString => Some(Single($($borrow)+ $tx.query_string)),
+            RuleVariable::RequestBody => Some(Single($($borrow)+ $tx.request_body)),
+            RuleVariable::RequestBodyLength => Some(Single($($borrow)+ $tx.request_body_length)),
+            RuleVariable::FilesCombinedSize => Some(Single($($borrow)+ $tx.files_combined_size)),
+            RuleVariable::MultipartStrictError => Some(Single($($borrow)+ $tx.multipart_strict_error)),
+            RuleVariable::ResponseStatus => Some(Single($($borrow)+ $tx.response_status)),
+            RuleVariable::ResponseProtocol => Some(Single($($borrow)+ $tx.response_protocol)),
+            RuleVariable::ResponseContentType => Some(Single($($borrow)+ $tx.response_content_type)),
+            RuleVariable::ResponseContentLength => Some(Single($($borrow)+ $tx.response_content_length)),
+            RuleVariable::ResponseBody => Some(Single($($borrow)+ $tx.response_body)),
+
+            // Not populated by this engine yet
+            RuleVariable::Unknown
+            | RuleVariable::UniqueID
+            | RuleVariable::ArgsCombinedSize
+            | RuleVariable::FullRequestLength
+            | RuleVariable::InboundDataError
+            | RuleVariable::MatchedVar
+            | RuleVariable::MatchedVarName
+            | RuleVariable::MultipartDataAfter
+            | RuleVariable::OutboundDataError
+            | RuleVariable::RemoteHost
+            | RuleVariable::ReqbodyError
+            | RuleVariable::ReqbodyErrorMsg
+            | RuleVariable::ReqbodyProcessorError
+            | RuleVariable::ReqbodyProcessorErrorMsg
+            | RuleVariable::ReqbodyProcessor
+            | RuleVariable::HighestSeverity
+            | RuleVariable::StatusLine
+            | RuleVariable::Duration
+            | RuleVariable::ResponseHeadersNames
+            | RuleVariable::RequestHeadersNames
+            | RuleVariable::ArgsPath
+            | RuleVariable::FilesTmpContent
+            | RuleVariable::MultipartFilename
+            | RuleVariable::MultipartName
+            | RuleVariable::MatchedVarsNames
+            | RuleVariable::MatchedVars
+            | RuleVariable::ResBodyProcessor
+            | RuleVariable::Geo
+            | RuleVariable::RequestCookiesNames
+            | RuleVariable::ArgsNames
+            | RuleVariable::ArgsGetNames
+            | RuleVariable::ArgsPostNames
+            | RuleVariable::Rule
+            | RuleVariable::JSON
+            | RuleVariable::Env
+            | RuleVariable::UrlencodedError
+            | RuleVariable::XML
+            | RuleVariable::AuthType
+            | RuleVariable::FullRequest
+            | RuleVariable::MultipartBoundaryQuoted
+            | RuleVariable::MultipartBoundaryWhitespace
+            | RuleVariable::MultipartCrlfLfLines
+            | RuleVariable::MultipartDataBefore
+            | RuleVariable::MultipartFileLimitExceeded
+            | RuleVariable::MultipartHeaderFolding
+            | RuleVariable::MultipartInvalidHeaderFolding
+            | RuleVariable::MultipartInvalidPart
+            | RuleVariable::MultipartInvalidQuoting
+            | RuleVariable::MultipartLfLine
+            | RuleVariable::MultipartMissingSemicolon
+            | RuleVariable::MultipartUnmatchedBoundary
+            | RuleVariable::PathInfo
+            | RuleVariable::Sessionid
+            | RuleVariable::Userid
+            | RuleVariable::IP
+            | RuleVariable::ResBodyError
+            | RuleVariable::ResBodyErrorMsg
+            | RuleVariable::ResBodyProcessorError
+            | RuleVariable::ResBodyProcessorErrorMsg
+            | RuleVariable::Time
+            | RuleVariable::TimeDay
+            | RuleVariable::TimeEpoch
+            | RuleVariable::TimeHour
+            | RuleVariable::TimeMin
+            | RuleVariable::TimeMon
+            | RuleVariable::TimeSec
+            | RuleVariable::TimeWday
+            | RuleVariable::TimeYear => None,
+        }
+    }};
+}
+
 /// A transaction represents a single HTTP request/response being processed.
 ///
 /// Transactions store all request and response data in collections that
@@ -371,45 +500,18 @@ impl Transaction {
         self.matched_rules.push(matched);
     }
 
-    /// Get a collection by variable type.
-    ///
-    /// Returns a reference to the collection trait object for the given variable.
-    /// This is used by rule variable extraction to get the collection to query.
-    ///
-    /// # Arguments
-    ///
-    /// * `variable` - The variable type to get the collection for
-    ///
-    /// # Returns
-    ///
-    /// Option containing a reference to the Collection trait object, or None if
-    /// the variable is not supported or not yet populated.
-    pub fn get_collection(
-        &self,
-        variable: RuleVariable,
-    ) -> Option<&dyn crate::collection::Collection> {
-        use crate::collection::Collection;
+    /// The data a rule variable reads in this transaction, or `None` for a variable
+    /// this engine doesn't populate.
+    pub fn collection(&self, variable: RuleVariable) -> Option<VariableCollection<&Single, &Map>> {
+        variable_storage!(self, variable, &)
+    }
 
-        match variable {
-            RuleVariable::Args => Some(&self.args as &dyn Collection),
-            RuleVariable::ArgsGet => Some(&self.args_get as &dyn Collection),
-            RuleVariable::ArgsPost => Some(&self.args_post as &dyn Collection),
-            RuleVariable::RequestHeaders => Some(&self.request_headers as &dyn Collection),
-            RuleVariable::RequestCookies => Some(&self.request_cookies as &dyn Collection),
-            RuleVariable::ResponseHeaders => Some(&self.response_headers as &dyn Collection),
-            RuleVariable::RequestURI => Some(&self.request_uri as &dyn Collection),
-            RuleVariable::RequestMethod => Some(&self.request_method as &dyn Collection),
-            RuleVariable::RemoteAddr => Some(&self.remote_addr as &dyn Collection),
-            RuleVariable::RemotePort => Some(&self.remote_port as &dyn Collection),
-            RuleVariable::RequestLine => Some(&self.request_line as &dyn Collection),
-            RuleVariable::RequestProtocol => Some(&self.request_protocol as &dyn Collection),
-            RuleVariable::RequestURIRaw => Some(&self.request_uri_raw as &dyn Collection),
-            RuleVariable::RequestBasename => Some(&self.request_basename as &dyn Collection),
-            RuleVariable::RequestFilename => Some(&self.request_filename as &dyn Collection),
-            RuleVariable::QueryString => Some(&self.query_string as &dyn Collection),
-            RuleVariable::TX => Some(&self.tx as &dyn Collection),
-            _ => None, // Not yet implemented or not available
-        }
+    /// Like [`Transaction::collection`], for changing the data (e.g. by `setvar`).
+    pub fn collection_mut(
+        &mut self,
+        variable: RuleVariable,
+    ) -> Option<VariableCollection<&mut Single, &mut Map>> {
+        variable_storage!(self, variable, &mut)
     }
 
     /// Get ARGS (combined GET + POST) collection.
@@ -1337,31 +1439,9 @@ impl Transaction {
     /// single-value variable (with `key` `None`), or the first value of `key` in a
     /// collection. `None` if the variable isn't set or not available.
     pub fn get_variable(&self, variable: RuleVariable, key: Option<&str>) -> Option<String> {
-        match (variable, key) {
-            // Single-value variables
-            (RuleVariable::RequestURI, None) => Some(self.request_uri.get().to_string()),
-            (RuleVariable::RequestMethod, None) => Some(self.request_method.get().to_string()),
-            (RuleVariable::RemoteAddr, None) => Some(self.remote_addr.get().to_string()),
-            (RuleVariable::RemotePort, None) => Some(self.remote_port.get().to_string()),
-            (RuleVariable::RequestLine, None) => Some(self.request_line.get().to_string()),
-            (RuleVariable::RequestProtocol, None) => Some(self.request_protocol.get().to_string()),
-            (RuleVariable::RequestURIRaw, None) => Some(self.request_uri_raw.get().to_string()),
-            (RuleVariable::RequestBasename, None) => Some(self.request_basename.get().to_string()),
-            (RuleVariable::RequestFilename, None) => Some(self.request_filename.get().to_string()),
-            (RuleVariable::QueryString, None) => Some(self.query_string.get().to_string()),
-
-            // Keyed variables - return first value if key specified
-            (RuleVariable::Args, Some(k)) => self.args.get(k).first().cloned(),
-            (RuleVariable::ArgsGet, Some(k)) => self.args_get.get(k).first().cloned(),
-            (RuleVariable::ArgsPost, Some(k)) => self.args_post.get(k).first().cloned(),
-            (RuleVariable::RequestHeaders, Some(k)) => self.request_headers.get(k).first().cloned(),
-            (RuleVariable::RequestCookies, Some(k)) => self.request_cookies.get(k).first().cloned(),
-            (RuleVariable::ResponseHeaders, Some(k)) => {
-                self.response_headers.get(k).first().cloned()
-            }
-            (RuleVariable::TX, Some(k)) => self.tx.get(k).first().cloned(),
-
-            // Unsupported combinations
+        match (self.collection(variable)?, key) {
+            (VariableCollection::Single(single), None) => Some(single.get().to_string()),
+            (VariableCollection::Map(map), Some(key)) => map.get(key).first().cloned(),
             _ => None,
         }
     }
@@ -1415,24 +1495,6 @@ impl Transaction {
     /// for a transaction not created by a WAF.
     pub(crate) fn rules(&self) -> Option<&Arc<RuleGroup>> {
         self.rules.as_ref()
-    }
-
-    /// Writable collection for `variable`, for actions such as `setvar`; `None` if the
-    /// variable isn't a writable collection.
-    pub fn collection_mut(
-        &mut self,
-        variable: RuleVariable,
-    ) -> Option<&mut dyn crate::collection::MapCollection> {
-        match variable {
-            RuleVariable::TX => Some(&mut self.tx),
-            RuleVariable::Args => Some(&mut self.args),
-            RuleVariable::ArgsGet => Some(&mut self.args_get),
-            RuleVariable::ArgsPost => Some(&mut self.args_post),
-            RuleVariable::RequestHeaders => Some(&mut self.request_headers),
-            RuleVariable::RequestCookies => Some(&mut self.request_cookies),
-            RuleVariable::ResponseHeaders => Some(&mut self.response_headers),
-            _ => None,
-        }
     }
 }
 

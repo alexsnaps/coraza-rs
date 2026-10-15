@@ -348,7 +348,11 @@ mod tests {
         use crate::collection::MapCollection;
 
         let mut tx = Transaction::new("macro-test");
-        let vars = tx.collection_mut(RuleVariable::TX).unwrap();
+        let Some(crate::transaction::VariableCollection::Map(vars)) =
+            tx.collection_mut(RuleVariable::TX)
+        else {
+            unreachable!("TX is a map");
+        };
         vars.add("score", "42");
         vars.add("id", "test-123");
         tx.args_mut().add("count", "10");

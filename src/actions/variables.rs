@@ -9,8 +9,9 @@
 
 use crate::RuleVariable;
 use crate::actions::{Action, ActionError, ActionType, RuleMetadata};
+use crate::collection::{Keyed, MapCollection};
 use crate::operators::Macro;
-use crate::transaction::Transaction;
+use crate::transaction::{Transaction, VariableCollection};
 
 /// `setvar` action - Creates, removes, or updates a variable.
 ///
@@ -149,13 +150,9 @@ impl Action for SetvarAction {
         let key = self.key.expand(Some(tx)).to_lowercase();
         let value = self.value.expand(Some(tx));
 
-        // Get the TX collection
-        let collection = match tx.collection_mut(self.collection) {
-            Some(col) => col,
-            None => {
-                // Collection not available - this shouldn't happen for TX
-                return;
-            }
+        // init() only accepts TX, which is always a map
+        let Some(VariableCollection::Map(collection)) = tx.collection_mut(self.collection) else {
+            return;
         };
 
         // Handle removal

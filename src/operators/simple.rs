@@ -381,8 +381,14 @@ mod tests {
 
     // Mock transaction state for testing macro expansion
     fn mock_tx() -> Transaction {
+        use crate::collection::MapCollection;
+
         let mut tx = Transaction::new("operator-test");
-        let vars = tx.collection_mut(RuleVariable::TX).unwrap();
+        let Some(crate::transaction::VariableCollection::Map(vars)) =
+            tx.collection_mut(RuleVariable::TX)
+        else {
+            unreachable!("TX is a map");
+        };
         vars.add("threshold", "10");
         vars.add("method", "POST");
         vars.add("extension", ".php");

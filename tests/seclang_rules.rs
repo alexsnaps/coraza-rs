@@ -160,3 +160,24 @@ fn allow_request_skips_the_request_phases_only() {
     let interruption = tx.process_response_headers(200, "HTTP/1.1");
     assert_eq!(interruption.map(|i| i.rule_id), Some(3));
 }
+
+#[test]
+fn rules_can_inspect_the_request_body() {
+    let waf = waf(r#"SecRule REQUEST_BODY "@contains attack" "id:1,phase:2,deny,status:403""#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+    let interruption = tx.process_request_body(b"an attack payload").unwrap();
+
+    assert_eq!(interruption.map(|i| i.rule_id), Some(1));
+}
+
+#[test]
+fn rules_can_inspect_the_response_status() {
+    let waf = waf(r#"SecRule RESPONSE_STATUS "@streq 500" "id:1,phase:3,deny,status:403""#);
+
+    let mut tx = waf.new_transaction();
+    let interruption = tx.process_response_headers(500, "HTTP/1.1");
+
+    assert_eq!(interruption.map(|i| i.rule_id), Some(1));
+}

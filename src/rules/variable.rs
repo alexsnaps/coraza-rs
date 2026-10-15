@@ -12,8 +12,8 @@
 
 use regex::Regex;
 
-use crate::collection::MatchData;
-use crate::transaction::Transaction;
+use crate::collection::{Collection, Keyed, MatchData};
+use crate::transaction::{Transaction, VariableCollection};
 use crate::types::RuleVariable;
 
 /// Key selector for a rule variable.
@@ -191,33 +191,17 @@ impl VariableSpec {
     /// Vector of MatchData containing the matched variable, key, and value.
     /// If count mode is enabled, returns a single MatchData with the count as the value.
     pub fn get_matches(&self, tx: &Transaction) -> Vec<MatchData> {
-        // Get the collection for this variable
-        let Some(collection) = tx.get_collection(self.variable) else {
+        let Some(collection) = tx.collection(self.variable) else {
             return Vec::new();
         };
 
-        // Extract matches based on key type
-        let mut matches = match &self.key {
-            Some(VariableKey::Regex(rx)) => {
-                // Regex key matching - collection must support Keyed trait
-                if let Some(keyed) = collection.as_keyed() {
-                    keyed.find_regex(rx)
-                } else {
-                    Vec::new()
-                }
-            }
-            Some(VariableKey::String(key)) => {
-                // String key matching - collection must support Keyed trait
-                if let Some(keyed) = collection.as_keyed() {
-                    keyed.find_string(key)
-                } else {
-                    Vec::new()
-                }
-            }
-            None => {
-                // No key specified - match all
-                collection.find_all()
-            }
+        // Extract matches based on key type; single-value variables have no keys
+        let mut matches = match (collection, &self.key) {
+            (VariableCollection::Map(map), Some(VariableKey::Regex(rx))) => map.find_regex(rx),
+            (VariableCollection::Map(map), Some(VariableKey::String(key))) => map.find_string(key),
+            (VariableCollection::Map(map), None) => map.find_all(),
+            (VariableCollection::Single(single), None) => single.find_all(),
+            (VariableCollection::Single(_), Some(_)) => Vec::new(),
         };
 
         // Filter out exceptions

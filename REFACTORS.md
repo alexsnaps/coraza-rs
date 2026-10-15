@@ -72,11 +72,13 @@ probed bugs.
 
 ## 4. `RuleVariable` → transaction data mapped three times
 
-- [ ] **One exhaustive mapping.** `get_collection` (`src/transaction/mod.rs:387`, 17 variables), `get_variable`
+- [x] **One exhaustive mapping.** `get_collection` (`src/transaction/mod.rs:387`, 17 variables), `get_variable`
   (`:1337`, 17) and `collection_mut` (`:1449`, 7) each end in `_ => None`. `FILES*`, `REQUEST_BODY`, `REQUEST_XML`,
   `MULTIPART_*` and `RESPONSE_*` are populated but unreachable from rules. **(probe)** Confirmed for `REQUEST_BODY`
   and `FILES`. Replace with one `match` without `_` returning `enum CollectionRef { Single(&Single), Map(&Map) }`,
   plus a `_mut` twin; derive `get_variable` from it.
+  - Done: one `match` (shared by `collection`/`collection_mut` through a macro) maps all 105 variants, 37 to fields
+    and the rest explicitly to `None`; `get_variable`, `VariableSpec` and `setvar` all go through it.
 - [ ] **Collapse the collection traits.** `Collection`, `SingleCollection`, `Keyed`, `MapCollection` cover two
   concrete types; calling `Map::add` requires importing `MapCollection`. Make the methods inherent; keep at most one
   trait if `ConcatKeyed` needs it.

@@ -468,8 +468,14 @@ mod tests {
     use crate::types::RuleVariable;
 
     fn mock_tx() -> Transaction {
+        use crate::collection::MapCollection;
+
         let mut tx = Transaction::new("operator-test");
-        let vars = tx.collection_mut(RuleVariable::TX).unwrap();
+        let Some(crate::transaction::VariableCollection::Map(vars)) =
+            tx.collection_mut(RuleVariable::TX)
+        else {
+            unreachable!("TX is a map");
+        };
         vars.add("pattern", "test.*data");
         vars.add("keywords", "malware virus trojan");
         vars.add("methods", "GET,POST,HEAD");
