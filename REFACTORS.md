@@ -37,7 +37,7 @@ probed bugs.
 
 ## 2. Rule state stored twice
 
-- [ ] **Rename `actions::Rule` to `RuleMetadata`.** It collides with `rules::Rule`, which already imports it under
+- [x] **Rename `actions::Rule` to `RuleMetadata`.** It collides with `rules::Rule`, which already imports it under
   that alias (`src/actions/mod.rs:163`, `src/rules/rule.rs:14`).
 - [ ] **Resolve `t:` into the chain evaluation uses.** `t:` stores names in `metadata.transformations`
   (`src/actions/special.rs:177`); evaluation reads `rules::Rule.transformations: TransformationChain`

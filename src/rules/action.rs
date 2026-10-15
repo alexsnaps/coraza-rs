@@ -6,7 +6,7 @@
 //! This module handles action execution during rule evaluation. Actions are
 //! categorized by type and executed at different points in the rule flow.
 
-use crate::actions::{Action, ActionType, Rule};
+use crate::actions::{Action, ActionType, RuleMetadata};
 use crate::operators::TransactionState;
 
 /// Named action wrapper for rule execution.
@@ -26,9 +26,9 @@ use crate::operators::TransactionState;
 ///
 /// ```
 /// use coraza::rules::RuleAction;
-/// use coraza::actions::{Action, DenyAction, Rule};
+/// use coraza::actions::{Action, DenyAction, RuleMetadata};
 ///
-/// let mut rule = Rule::new();
+/// let mut rule = RuleMetadata::new();
 /// let mut action: Box<dyn Action> = Box::new(DenyAction);
 /// action.init(&mut rule, "").unwrap();
 ///
@@ -87,16 +87,16 @@ impl RuleAction {
     ///
     /// ```
     /// use coraza::rules::RuleAction;
-    /// use coraza::actions::{DenyAction, Rule};
+    /// use coraza::actions::{DenyAction, RuleMetadata};
     /// use coraza::transaction::Transaction;
     ///
-    /// let rule = Rule::new();
+    /// let rule = RuleMetadata::new();
     /// let rule_action = RuleAction::new("deny", Box::new(DenyAction));
     ///
     /// let mut tx = Transaction::new("test");
     /// rule_action.evaluate(&rule, &mut tx);
     /// ```
-    pub fn evaluate(&self, rule: &Rule, tx: &mut dyn TransactionState) {
+    pub fn evaluate(&self, rule: &RuleMetadata, tx: &mut dyn TransactionState) {
         self.action.evaluate(rule, tx);
     }
 }
@@ -129,11 +129,11 @@ impl std::fmt::Debug for RuleAction {
 ///
 /// ```
 /// use coraza::rules::execute_actions;
-/// use coraza::actions::{ActionType, Rule};
+/// use coraza::actions::{ActionType, RuleMetadata};
 /// use coraza::transaction::Transaction;
 ///
 /// let actions = vec![];
-/// let rule = Rule::new();
+/// let rule = RuleMetadata::new();
 /// let mut tx = Transaction::new("test");
 ///
 /// // Execute only nondisruptive actions
@@ -143,7 +143,7 @@ impl std::fmt::Debug for RuleAction {
 /// ```
 pub fn execute_actions<F>(
     actions: &[RuleAction],
-    rule: &Rule,
+    rule: &RuleMetadata,
     tx: &mut dyn TransactionState,
     action_filter: F,
 ) where
@@ -172,18 +172,18 @@ pub fn execute_actions<F>(
 ///
 /// ```
 /// use coraza::rules::execute_nondisruptive_actions;
-/// use coraza::actions::Rule;
+/// use coraza::actions::RuleMetadata;
 /// use coraza::transaction::Transaction;
 ///
 /// let actions = vec![];
-/// let rule = Rule::new();
+/// let rule = RuleMetadata::new();
 /// let mut tx = Transaction::new("test");
 ///
 /// execute_nondisruptive_actions(&actions, &rule, &mut tx);
 /// ```
 pub fn execute_nondisruptive_actions(
     actions: &[RuleAction],
-    rule: &Rule,
+    rule: &RuleMetadata,
     tx: &mut dyn TransactionState,
 ) {
     execute_actions(actions, rule, tx, |action_type| {
@@ -207,11 +207,11 @@ pub fn execute_nondisruptive_actions(
 ///
 /// ```
 /// use coraza::rules::execute_flow_and_disruptive_actions;
-/// use coraza::actions::Rule;
+/// use coraza::actions::RuleMetadata;
 /// use coraza::transaction::Transaction;
 ///
 /// let actions = vec![];
-/// let rule = Rule::new();
+/// let rule = RuleMetadata::new();
 /// let mut tx = Transaction::new("test");
 ///
 /// // Rule engine is on - execute disruptive actions
@@ -222,7 +222,7 @@ pub fn execute_nondisruptive_actions(
 /// ```
 pub fn execute_flow_and_disruptive_actions(
     actions: &[RuleAction],
-    rule: &Rule,
+    rule: &RuleMetadata,
     tx: &mut dyn TransactionState,
     rule_engine_on: bool,
 ) {
@@ -249,21 +249,21 @@ mod tests {
     // Helper to create a test action
     fn create_deny_action() -> RuleAction {
         let mut action = Box::new(DenyAction);
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         action.init(&mut rule, "").unwrap();
         RuleAction::new("deny", action)
     }
 
     fn create_log_action() -> RuleAction {
         let mut action = Box::new(LogAction);
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         action.init(&mut rule, "").unwrap();
         RuleAction::new("log", action)
     }
 
     fn create_skip_action() -> RuleAction {
         let mut action = Box::new(SkipAction::new());
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         action.init(&mut rule, "1").unwrap();
         RuleAction::new("skip", action)
     }
@@ -296,7 +296,7 @@ mod tests {
             create_skip_action(),
         ];
 
-        let rule = Rule::new();
+        let rule = RuleMetadata::new();
         let mut tx = crate::transaction::Transaction::new("test");
 
         // Test that filter works - execute only nondisruptive actions
@@ -319,7 +319,7 @@ mod tests {
             create_skip_action(),
         ];
 
-        let rule = Rule::new();
+        let rule = RuleMetadata::new();
         let mut tx = crate::transaction::Transaction::new("test");
 
         // This should execute only the log action
@@ -338,7 +338,7 @@ mod tests {
             create_skip_action(),
         ];
 
-        let rule = Rule::new();
+        let rule = RuleMetadata::new();
         let mut tx = crate::transaction::Transaction::new("test");
 
         // Rule engine ON - both flow and disruptive should execute
@@ -356,7 +356,7 @@ mod tests {
             create_skip_action(),
         ];
 
-        let rule = Rule::new();
+        let rule = RuleMetadata::new();
         let mut tx = crate::transaction::Transaction::new("test");
 
         // Rule engine OFF - only flow should execute, not disruptive
@@ -370,7 +370,7 @@ mod tests {
     fn test_multiple_actions_same_type() {
         let actions = vec![create_log_action(), create_log_action()];
 
-        let rule = Rule::new();
+        let rule = RuleMetadata::new();
         let mut tx = crate::transaction::Transaction::new("test");
 
         // Both nondisruptive actions should execute
@@ -380,7 +380,7 @@ mod tests {
     #[test]
     fn test_empty_actions() {
         let actions = vec![];
-        let rule = Rule::new();
+        let rule = RuleMetadata::new();
         let mut tx = crate::transaction::Transaction::new("test");
 
         // Should handle empty action list gracefully

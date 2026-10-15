@@ -6,7 +6,7 @@
 //! These actions provide specialized functionality for variable capturing,
 //! transformation pipelines, and HTTP status code configuration.
 
-use crate::actions::{Action, ActionError, ActionType, Rule, TransactionState};
+use crate::actions::{Action, ActionError, ActionType, RuleMetadata, TransactionState};
 
 /// `capture` action - Enables regex capturing.
 ///
@@ -32,7 +32,7 @@ use crate::actions::{Action, ActionError, ActionType, Rule, TransactionState};
 pub struct CaptureAction;
 
 impl Action for CaptureAction {
-    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         if !data.is_empty() {
             return Err(ActionError::UnexpectedArguments);
         }
@@ -41,7 +41,7 @@ impl Action for CaptureAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
         // Capture is a metadata action - doesn't execute at runtime
     }
 
@@ -72,7 +72,7 @@ impl Action for CaptureAction {
 pub struct MultimatchAction;
 
 impl Action for MultimatchAction {
-    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         if !data.is_empty() {
             return Err(ActionError::UnexpectedArguments);
         }
@@ -81,7 +81,7 @@ impl Action for MultimatchAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
         // Multimatch is a metadata action - doesn't execute at runtime
     }
 
@@ -112,7 +112,7 @@ impl Action for MultimatchAction {
 pub struct StatusAction;
 
 impl Action for StatusAction {
-    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
@@ -127,7 +127,7 @@ impl Action for StatusAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
         // Status is a data action - doesn't execute at runtime
     }
 
@@ -161,7 +161,7 @@ impl Action for StatusAction {
 pub struct TAction;
 
 impl Action for TAction {
-    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
@@ -178,7 +178,7 @@ impl Action for TAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
         // Transformation is a metadata action - doesn't execute at runtime
     }
 
@@ -194,7 +194,7 @@ mod tests {
     // CaptureAction Tests
     #[test]
     fn test_capture_no_arguments() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = CaptureAction;
         assert!(action.init(&mut rule, "").is_ok());
         assert!(rule.capture, "capture should be enabled");
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_capture_unexpected_arguments() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = CaptureAction;
         assert_eq!(
             action.init(&mut rule, "abc"),
@@ -218,7 +218,7 @@ mod tests {
     // MultimatchAction Tests
     #[test]
     fn test_multimatch_no_arguments() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = MultimatchAction;
         assert!(action.init(&mut rule, "").is_ok());
         assert!(rule.multi_match, "multi_match should be enabled");
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_multimatch_unexpected_arguments() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = MultimatchAction;
         assert_eq!(
             action.init(&mut rule, "abc"),
@@ -244,7 +244,7 @@ mod tests {
     fn test_status_no_arguments() {
         let mut action = StatusAction;
         assert_eq!(
-            action.init(&mut Rule::new(), ""),
+            action.init(&mut RuleMetadata::new(), ""),
             Err(ActionError::MissingArguments)
         );
     }
@@ -253,14 +253,14 @@ mod tests {
     fn test_status_non_numeric() {
         let mut action = StatusAction;
         assert!(matches!(
-            action.init(&mut Rule::new(), "abc"),
+            action.init(&mut RuleMetadata::new(), "abc"),
             Err(ActionError::InvalidArguments(_))
         ));
     }
 
     #[test]
     fn test_status_valid() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = StatusAction;
         assert!(action.init(&mut rule, "403").is_ok());
         assert_eq!(rule.status, 403);
@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn test_status_various_codes() {
         for status_code in &[200, 301, 302, 403, 404, 500, 503] {
-            let mut rule = Rule::new();
+            let mut rule = RuleMetadata::new();
             let mut action = StatusAction;
             assert!(action.init(&mut rule, &status_code.to_string()).is_ok());
             assert_eq!(rule.status, *status_code);
@@ -286,14 +286,14 @@ mod tests {
     fn test_t_no_arguments() {
         let mut action = TAction;
         assert_eq!(
-            action.init(&mut Rule::new(), ""),
+            action.init(&mut RuleMetadata::new(), ""),
             Err(ActionError::MissingArguments)
         );
     }
 
     #[test]
     fn test_t_none_clears_transformations() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
 
         // Add some transformations first
         rule.transformations.push("lowercase".to_string());
@@ -312,7 +312,7 @@ mod tests {
 
     #[test]
     fn test_t_adds_transformation() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = TAction;
         assert!(action.init(&mut rule, "lowercase").is_ok());
         assert_eq!(rule.transformations.len(), 1);
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn test_t_multiple_transformations() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
 
         let mut action1 = TAction;
         assert!(action1.init(&mut rule, "lowercase").is_ok());
@@ -338,7 +338,7 @@ mod tests {
     fn test_t_unknown_transformation() {
         // TODO: Add validation when transformation registry is implemented
         // For now, we accept any transformation name
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = TAction;
         assert!(action.init(&mut rule, "unknownTransformation").is_ok());
         assert_eq!(rule.transformations.len(), 1);

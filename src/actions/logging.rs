@@ -7,7 +7,7 @@
 //! and audit logs. These actions are non-disruptive and do not affect transaction
 //! processing - they only control logging behavior.
 
-use crate::actions::{Action, ActionError, ActionType, Rule, TransactionState};
+use crate::actions::{Action, ActionError, ActionType, RuleMetadata, TransactionState};
 use crate::operators::Macro;
 
 /// `log` action - Enables logging for the rule.
@@ -28,7 +28,7 @@ use crate::operators::Macro;
 pub struct LogAction;
 
 impl Action for LogAction {
-    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         if !data.is_empty() {
             return Err(ActionError::UnexpectedArguments);
         }
@@ -38,7 +38,7 @@ impl Action for LogAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
         // Logging actions don't execute at runtime
     }
 
@@ -66,7 +66,7 @@ impl Action for LogAction {
 pub struct NologAction;
 
 impl Action for NologAction {
-    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         if !data.is_empty() {
             return Err(ActionError::UnexpectedArguments);
         }
@@ -76,7 +76,7 @@ impl Action for NologAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
         // Logging actions don't execute at runtime
     }
 
@@ -103,7 +103,7 @@ impl Action for NologAction {
 pub struct AuditlogAction;
 
 impl Action for AuditlogAction {
-    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         if !data.is_empty() {
             return Err(ActionError::UnexpectedArguments);
         }
@@ -112,7 +112,7 @@ impl Action for AuditlogAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
         // Logging actions don't execute at runtime
     }
 
@@ -146,7 +146,7 @@ impl Action for AuditlogAction {
 pub struct NoauditlogAction;
 
 impl Action for NoauditlogAction {
-    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         if !data.is_empty() {
             return Err(ActionError::UnexpectedArguments);
         }
@@ -155,7 +155,7 @@ impl Action for NoauditlogAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
         // Logging actions don't execute at runtime
     }
 
@@ -184,7 +184,7 @@ impl Action for NoauditlogAction {
 pub struct LogdataAction;
 
 impl Action for LogdataAction {
-    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
@@ -194,7 +194,7 @@ impl Action for LogdataAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
         // logdata macro expansion is performed after all other actions have been
         // evaluated (and potentially all the needed variables have been set)
     }
@@ -211,7 +211,7 @@ mod tests {
     // LogAction Tests
     #[test]
     fn test_log_init() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = LogAction;
         assert!(action.init(&mut rule, "").is_ok());
         assert!(rule.log, "log should be enabled");
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_log_unexpected_arguments() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = LogAction;
         assert_eq!(
             action.init(&mut rule, "unexpected"),
@@ -231,7 +231,7 @@ mod tests {
     // NologAction Tests
     #[test]
     fn test_nolog_no_arguments() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = NologAction;
         assert!(action.init(&mut rule, "").is_ok());
         assert!(!rule.log, "log should be disabled");
@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_nolog_unexpected_arguments() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = NologAction;
         assert_eq!(
             action.init(&mut rule, "abc"),
@@ -251,7 +251,7 @@ mod tests {
     // AuditlogAction Tests
     #[test]
     fn test_auditlog_no_arguments() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = AuditlogAction;
         assert!(action.init(&mut rule, "").is_ok());
         assert!(rule.audit_log, "audit should be enabled");
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_auditlog_unexpected_arguments() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = AuditlogAction;
         assert_eq!(
             action.init(&mut rule, "unexpected"),
@@ -270,7 +270,7 @@ mod tests {
     // NoauditlogAction Tests
     #[test]
     fn test_noauditlog_no_arguments() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = NoauditlogAction;
         assert!(action.init(&mut rule, "").is_ok());
         assert!(!rule.audit_log, "audit should be disabled");
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_noauditlog_unexpected_arguments() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = NoauditlogAction;
         assert_eq!(
             action.init(&mut rule, "abc"),
@@ -289,7 +289,7 @@ mod tests {
     // LogdataAction Tests
     #[test]
     fn test_logdata_empty() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = LogdataAction;
         assert_eq!(
             action.init(&mut rule, ""),
@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn test_logdata_valid() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = LogdataAction;
         assert!(action.init(&mut rule, "%{tx.count}").is_ok());
         assert!(rule.log_data.is_some());
@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn test_logdata_invalid_macro() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = LogdataAction;
         // Invalid macro syntax (unclosed brace)
         assert!(matches!(

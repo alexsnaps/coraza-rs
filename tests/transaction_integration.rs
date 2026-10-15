@@ -11,7 +11,7 @@
 //! - Flow control (skip, skipAfter)
 //! - Deferred actions (exec, expirevar, setenv, initcol)
 
-use coraza::actions::{ActionType, Rule as ActionRule};
+use coraza::actions::{ActionType, RuleMetadata};
 use coraza::body_processors::{BodyProcessorOptions, get_body_processor};
 use coraza::collection::Keyed;
 use coraza::rules::{Rule, RuleGroup};
@@ -283,7 +283,7 @@ fn test_setenv_action_execution() {
     use coraza::actions::get;
 
     let mut action = get("setenv").unwrap();
-    let mut rule = ActionRule::new();
+    let mut rule = RuleMetadata::new();
 
     // Initialize with key=value
     action.init(&mut rule, "TEST_VAR=test_value").unwrap();
@@ -316,7 +316,7 @@ fn test_exec_action_is_safe_stub() {
 
     // Exec should be registered but not execute anything
     let mut action = get("exec").unwrap();
-    let mut rule = ActionRule::new();
+    let mut rule = RuleMetadata::new();
 
     // Should parse script path
     action.init(&mut rule, "/usr/bin/test.sh").unwrap();

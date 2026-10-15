@@ -6,7 +6,7 @@
 //! Flow actions control the execution flow of rules, such as chaining rules
 //! together or skipping over rules based on conditions.
 
-use crate::actions::{Action, ActionError, ActionType, Rule, TransactionState};
+use crate::actions::{Action, ActionError, ActionType, RuleMetadata, TransactionState};
 
 /// `chain` action - Links rules together in an AND condition.
 ///
@@ -40,7 +40,7 @@ use crate::actions::{Action, ActionError, ActionType, Rule, TransactionState};
 pub struct ChainAction;
 
 impl Action for ChainAction {
-    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         if !data.is_empty() {
             return Err(ActionError::UnexpectedArguments);
         }
@@ -49,7 +49,7 @@ impl Action for ChainAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
         // Chain is a metadata action - doesn't execute at runtime
     }
 
@@ -97,7 +97,7 @@ impl Default for SkipAction {
 }
 
 impl Action for SkipAction {
-    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, _rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
@@ -117,7 +117,7 @@ impl Action for SkipAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut dyn TransactionState) {
         tx.set_skip(self.count);
     }
 
@@ -170,7 +170,7 @@ impl Default for SkipAfterAction {
 }
 
 impl Action for SkipAfterAction {
-    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, _rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         let marker = crate::utils::strings::maybe_remove_quotes(data);
         if marker.is_empty() {
             return Err(ActionError::MissingArguments);
@@ -180,7 +180,7 @@ impl Action for SkipAfterAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut dyn TransactionState) {
         tx.set_skip_after(&self.marker);
     }
 
@@ -229,7 +229,7 @@ mod tests {
     // ChainAction Tests
     #[test]
     fn test_chain_no_arguments() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = ChainAction;
         assert!(action.init(&mut rule, "").is_ok());
         assert!(rule.has_chain, "has_chain should be true");
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_chain_unexpected_arguments() {
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
         let mut action = ChainAction;
         assert_eq!(
             action.init(&mut rule, "unexpected"),
@@ -255,7 +255,7 @@ mod tests {
     fn test_skip_no_arguments() {
         let mut action = SkipAction::new();
         assert_eq!(
-            action.init(&mut Rule::new(), ""),
+            action.init(&mut RuleMetadata::new(), ""),
             Err(ActionError::MissingArguments)
         );
     }
@@ -264,7 +264,7 @@ mod tests {
     fn test_skip_non_numeric() {
         let mut action = SkipAction::new();
         assert!(matches!(
-            action.init(&mut Rule::new(), "abc"),
+            action.init(&mut RuleMetadata::new(), "abc"),
             Err(ActionError::InvalidArguments(_))
         ));
     }
@@ -273,7 +273,7 @@ mod tests {
     fn test_skip_negative() {
         let mut action = SkipAction::new();
         assert!(matches!(
-            action.init(&mut Rule::new(), "-10"),
+            action.init(&mut RuleMetadata::new(), "-10"),
             Err(ActionError::InvalidArguments(_))
         ));
     }
@@ -282,7 +282,7 @@ mod tests {
     fn test_skip_zero() {
         let mut action = SkipAction::new();
         assert!(matches!(
-            action.init(&mut Rule::new(), "0"),
+            action.init(&mut RuleMetadata::new(), "0"),
             Err(ActionError::InvalidArguments(_))
         ));
     }
@@ -290,17 +290,17 @@ mod tests {
     #[test]
     fn test_skip_valid() {
         let mut action = SkipAction::new();
-        assert!(action.init(&mut Rule::new(), "5").is_ok());
+        assert!(action.init(&mut RuleMetadata::new(), "5").is_ok());
         assert_eq!(action.count, 5);
     }
 
     #[test]
     fn test_skip_evaluate() {
         let mut action = SkipAction::new();
-        action.init(&mut Rule::new(), "3").unwrap();
+        action.init(&mut RuleMetadata::new(), "3").unwrap();
 
         let mut tx = MockTransaction::new();
-        action.evaluate(&Rule::new(), &mut tx);
+        action.evaluate(&RuleMetadata::new(), &mut tx);
         assert_eq!(tx.skip, 3);
     }
 
@@ -314,7 +314,7 @@ mod tests {
     fn test_skipafter_no_arguments() {
         let mut action = SkipAfterAction::new();
         assert_eq!(
-            action.init(&mut Rule::new(), ""),
+            action.init(&mut RuleMetadata::new(), ""),
             Err(ActionError::MissingArguments)
         );
     }
@@ -322,24 +322,28 @@ mod tests {
     #[test]
     fn test_skipafter_valid() {
         let mut action = SkipAfterAction::new();
-        assert!(action.init(&mut Rule::new(), "MARKER_NAME").is_ok());
+        assert!(action.init(&mut RuleMetadata::new(), "MARKER_NAME").is_ok());
         assert_eq!(action.marker, "MARKER_NAME");
     }
 
     #[test]
     fn test_skipafter_with_quotes() {
         let mut action = SkipAfterAction::new();
-        assert!(action.init(&mut Rule::new(), "'MARKER_NAME'").is_ok());
+        assert!(
+            action
+                .init(&mut RuleMetadata::new(), "'MARKER_NAME'")
+                .is_ok()
+        );
         assert_eq!(action.marker, "MARKER_NAME");
     }
 
     #[test]
     fn test_skipafter_evaluate() {
         let mut action = SkipAfterAction::new();
-        action.init(&mut Rule::new(), "END_CHECK").unwrap();
+        action.init(&mut RuleMetadata::new(), "END_CHECK").unwrap();
 
         let mut tx = MockTransaction::new();
-        action.evaluate(&Rule::new(), &mut tx);
+        action.evaluate(&RuleMetadata::new(), &mut tx);
         assert_eq!(tx.skip_after, "END_CHECK");
     }
 

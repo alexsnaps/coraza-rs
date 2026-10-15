@@ -11,7 +11,7 @@
 //! - Rule chaining (AND logic)
 
 use crate::RulePhase;
-use crate::actions::Rule as RuleMetadata;
+use crate::actions::RuleMetadata;
 use crate::collection::MatchData;
 use crate::operators::TransactionState;
 use crate::rules::{

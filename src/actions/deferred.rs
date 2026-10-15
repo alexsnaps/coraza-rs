@@ -8,7 +8,7 @@
 //! - Persistence layer (expirevar, initcol)
 //! - Environment variable access (setenv)
 
-use crate::actions::{Action, ActionError, ActionType, Rule, TransactionState};
+use crate::actions::{Action, ActionError, ActionType, RuleMetadata, TransactionState};
 use crate::operators::Macro;
 
 /// `exec` action - Execute external script/binary.
@@ -61,7 +61,7 @@ impl Default for ExecAction {
 }
 
 impl Action for ExecAction {
-    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, _rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
@@ -70,7 +70,7 @@ impl Action for ExecAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
         // Not implemented for security reasons (matches Go behavior)
         // Executing arbitrary external processes from a WAF is dangerous
     }
@@ -128,7 +128,7 @@ impl Default for ExpirevarAction {
 }
 
 impl Action for ExpirevarAction {
-    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, _rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
@@ -149,7 +149,7 @@ impl Action for ExpirevarAction {
         Ok(())
     }
 
-    fn evaluate(&self, rule: &Rule, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
         // Not supported - would require persistence layer (matches Go behavior)
         // Go logs: "Expirevar was used but it's not supported"
         eprintln!(
@@ -209,7 +209,7 @@ impl Default for SetenvAction {
 }
 
 impl Action for SetenvAction {
-    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, _rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
@@ -242,7 +242,7 @@ impl Action for SetenvAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut dyn TransactionState) {
         // Expand macro with transaction state
         let value = self.value.expand(Some(tx));
 
@@ -312,7 +312,7 @@ impl Default for InitcolAction {
 }
 
 impl Action for InitcolAction {
-    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, _rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
@@ -331,7 +331,7 @@ impl Action for InitcolAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
         // Not fully implemented - persistence layer deferred to Phase 10
         // Go implementation has this commented out with TODO
 
@@ -357,14 +357,14 @@ mod tests {
     #[test]
     fn test_exec_missing_arguments() {
         let mut action = ExecAction::new();
-        let result = action.init(&mut Rule::new(), "");
+        let result = action.init(&mut RuleMetadata::new(), "");
         assert_eq!(result, Err(ActionError::MissingArguments));
     }
 
     #[test]
     fn test_exec_valid() {
         let mut action = ExecAction::new();
-        let result = action.init(&mut Rule::new(), "/usr/bin/test.sh");
+        let result = action.init(&mut RuleMetadata::new(), "/usr/bin/test.sh");
         assert!(result.is_ok());
         assert_eq!(action.script, "/usr/bin/test.sh");
     }
@@ -373,7 +373,9 @@ mod tests {
     fn test_exec_evaluate_does_nothing() {
         // Exec is a stub - evaluate should not crash but also not execute anything
         let mut action = ExecAction::new();
-        action.init(&mut Rule::new(), "/usr/bin/test.sh").unwrap();
+        action
+            .init(&mut RuleMetadata::new(), "/usr/bin/test.sh")
+            .unwrap();
 
         // Mock transaction state
         struct MockTx;
@@ -388,7 +390,7 @@ mod tests {
         }
 
         let mut tx = MockTx;
-        action.evaluate(&Rule::new(), &mut tx);
+        action.evaluate(&RuleMetadata::new(), &mut tx);
         // Should not crash - verify by test completing
     }
 
@@ -403,28 +405,28 @@ mod tests {
     #[test]
     fn test_expirevar_missing_arguments() {
         let mut action = ExpirevarAction::new();
-        let result = action.init(&mut Rule::new(), "");
+        let result = action.init(&mut RuleMetadata::new(), "");
         assert_eq!(result, Err(ActionError::MissingArguments));
     }
 
     #[test]
     fn test_expirevar_invalid_format() {
         let mut action = ExpirevarAction::new();
-        let result = action.init(&mut Rule::new(), "session.suspicious");
+        let result = action.init(&mut RuleMetadata::new(), "session.suspicious");
         assert!(matches!(result, Err(ActionError::InvalidArguments(_))));
     }
 
     #[test]
     fn test_expirevar_invalid_seconds() {
         let mut action = ExpirevarAction::new();
-        let result = action.init(&mut Rule::new(), "session.suspicious=abc");
+        let result = action.init(&mut RuleMetadata::new(), "session.suspicious=abc");
         assert!(matches!(result, Err(ActionError::InvalidArguments(_))));
     }
 
     #[test]
     fn test_expirevar_valid() {
         let mut action = ExpirevarAction::new();
-        let result = action.init(&mut Rule::new(), "session.suspicious=3600");
+        let result = action.init(&mut RuleMetadata::new(), "session.suspicious=3600");
         assert!(result.is_ok());
         assert_eq!(action.variable, "session.suspicious");
         assert_eq!(action.seconds, 3600);
@@ -441,35 +443,35 @@ mod tests {
     #[test]
     fn test_setenv_missing_arguments() {
         let mut action = SetenvAction::new();
-        let result = action.init(&mut Rule::new(), "");
+        let result = action.init(&mut RuleMetadata::new(), "");
         assert_eq!(result, Err(ActionError::MissingArguments));
     }
 
     #[test]
     fn test_setenv_missing_equals() {
         let mut action = SetenvAction::new();
-        let result = action.init(&mut Rule::new(), "MYVAR");
+        let result = action.init(&mut RuleMetadata::new(), "MYVAR");
         assert!(matches!(result, Err(ActionError::InvalidArguments(_))));
     }
 
     #[test]
     fn test_setenv_empty_key() {
         let mut action = SetenvAction::new();
-        let result = action.init(&mut Rule::new(), "=value");
+        let result = action.init(&mut RuleMetadata::new(), "=value");
         assert!(matches!(result, Err(ActionError::InvalidArguments(_))));
     }
 
     #[test]
     fn test_setenv_empty_value() {
         let mut action = SetenvAction::new();
-        let result = action.init(&mut Rule::new(), "MYVAR=");
+        let result = action.init(&mut RuleMetadata::new(), "MYVAR=");
         assert!(matches!(result, Err(ActionError::InvalidArguments(_))));
     }
 
     #[test]
     fn test_setenv_valid() {
         let mut action = SetenvAction::new();
-        let result = action.init(&mut Rule::new(), "MYVAR=value123");
+        let result = action.init(&mut RuleMetadata::new(), "MYVAR=value123");
         assert!(result.is_ok());
         assert_eq!(action.key, "MYVAR");
         assert_eq!(action.value.as_str(), "value123");
@@ -478,7 +480,7 @@ mod tests {
     #[test]
     fn test_setenv_with_macro() {
         let mut action = SetenvAction::new();
-        let result = action.init(&mut Rule::new(), "SESSION_ID=%{TX.session}");
+        let result = action.init(&mut RuleMetadata::new(), "SESSION_ID=%{TX.session}");
         assert!(result.is_ok());
         assert_eq!(action.key, "SESSION_ID");
         assert_eq!(action.value.as_str(), "%{TX.session}");
@@ -487,7 +489,7 @@ mod tests {
     #[test]
     fn test_setenv_with_equals_in_value() {
         let mut action = SetenvAction::new();
-        let result = action.init(&mut Rule::new(), "MYVAR=key=value");
+        let result = action.init(&mut RuleMetadata::new(), "MYVAR=key=value");
         assert!(result.is_ok());
         assert_eq!(action.key, "MYVAR");
         assert_eq!(action.value.as_str(), "key=value");
@@ -497,7 +499,7 @@ mod tests {
     fn test_setenv_evaluate() {
         let mut action = SetenvAction::new();
         action
-            .init(&mut Rule::new(), "TEST_VAR=test_value")
+            .init(&mut RuleMetadata::new(), "TEST_VAR=test_value")
             .unwrap();
 
         // Mock transaction state
@@ -513,7 +515,7 @@ mod tests {
         }
 
         let mut tx = MockTx;
-        action.evaluate(&Rule::new(), &mut tx);
+        action.evaluate(&RuleMetadata::new(), &mut tx);
 
         // Verify environment variable was set
         assert_eq!(std::env::var("TEST_VAR").unwrap(), "test_value");
@@ -536,21 +538,21 @@ mod tests {
     #[test]
     fn test_initcol_missing_arguments() {
         let mut action = InitcolAction::new();
-        let result = action.init(&mut Rule::new(), "");
+        let result = action.init(&mut RuleMetadata::new(), "");
         assert_eq!(result, Err(ActionError::MissingArguments));
     }
 
     #[test]
     fn test_initcol_invalid_format() {
         let mut action = InitcolAction::new();
-        let result = action.init(&mut Rule::new(), "ip");
+        let result = action.init(&mut RuleMetadata::new(), "ip");
         assert!(matches!(result, Err(ActionError::InvalidArguments(_))));
     }
 
     #[test]
     fn test_initcol_valid() {
         let mut action = InitcolAction::new();
-        let result = action.init(&mut Rule::new(), "ip=%{REMOTE_ADDR}");
+        let result = action.init(&mut RuleMetadata::new(), "ip=%{REMOTE_ADDR}");
         assert!(result.is_ok());
         assert_eq!(action.collection, "ip");
         assert_eq!(action.key, "%{REMOTE_ADDR}");
@@ -559,7 +561,10 @@ mod tests {
     #[test]
     fn test_initcol_session() {
         let mut action = InitcolAction::new();
-        let result = action.init(&mut Rule::new(), "session=%{REQUEST_COOKIES.JSESSIONID}");
+        let result = action.init(
+            &mut RuleMetadata::new(),
+            "session=%{REQUEST_COOKIES.JSESSIONID}",
+        );
         assert!(result.is_ok());
         assert_eq!(action.collection, "session");
         assert_eq!(action.key, "%{REQUEST_COOKIES.JSESSIONID}");

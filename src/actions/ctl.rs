@@ -11,7 +11,7 @@
 //! will be implemented in Phase 8 when the transaction system is complete.
 
 use crate::RuleVariable;
-use crate::actions::{Action, ActionError, ActionType, Rule, TransactionState};
+use crate::actions::{Action, ActionError, ActionType, RuleMetadata, TransactionState};
 use std::str::FromStr;
 
 /// CTL command types.
@@ -152,7 +152,7 @@ impl Default for CtlAction {
 }
 
 impl Action for CtlAction {
-    fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+    fn init(&mut self, _rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
         // Parse syntax: command=value or command=value;collection:key
         let (command_part, value_part) = data
             .split_once('=')
@@ -260,7 +260,7 @@ impl Action for CtlAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &Rule, tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut dyn TransactionState) {
         use crate::RuleEngineStatus;
         use crate::types::RulePhase;
 
@@ -483,7 +483,11 @@ mod tests {
     #[test]
     fn test_ctl_parse_audit_engine() {
         let mut action = CtlAction::new();
-        assert!(action.init(&mut Rule::new(), "auditEngine=On").is_ok());
+        assert!(
+            action
+                .init(&mut RuleMetadata::new(), "auditEngine=On")
+                .is_ok()
+        );
         assert_eq!(action.command, CtlCommand::AuditEngine);
         assert_eq!(action.value, "On");
     }
@@ -491,7 +495,11 @@ mod tests {
     #[test]
     fn test_ctl_parse_audit_log_parts() {
         let mut action = CtlAction::new();
-        assert!(action.init(&mut Rule::new(), "auditLogParts=ABZ").is_ok());
+        assert!(
+            action
+                .init(&mut RuleMetadata::new(), "auditLogParts=ABZ")
+                .is_ok()
+        );
         assert_eq!(action.command, CtlCommand::AuditLogParts);
         assert_eq!(action.value, "ABZ");
     }
@@ -501,7 +509,7 @@ mod tests {
         let mut action = CtlAction::new();
         assert!(
             action
-                .init(&mut Rule::new(), "requestBodyAccess=On")
+                .init(&mut RuleMetadata::new(), "requestBodyAccess=On")
                 .is_ok()
         );
         assert_eq!(action.command, CtlCommand::RequestBodyAccess);
@@ -513,7 +521,7 @@ mod tests {
         let mut action = CtlAction::new();
         assert!(
             action
-                .init(&mut Rule::new(), "requestBodyLimit=12345")
+                .init(&mut RuleMetadata::new(), "requestBodyLimit=12345")
                 .is_ok()
         );
         assert_eq!(action.command, CtlCommand::RequestBodyLimit);
@@ -525,7 +533,7 @@ mod tests {
         let mut action = CtlAction::new();
         assert!(
             action
-                .init(&mut Rule::new(), "requestBodyProcessor=XML")
+                .init(&mut RuleMetadata::new(), "requestBodyProcessor=XML")
                 .is_ok()
         );
         assert_eq!(action.command, CtlCommand::RequestBodyProcessor);
@@ -535,7 +543,11 @@ mod tests {
     #[test]
     fn test_ctl_parse_rule_engine() {
         let mut action = CtlAction::new();
-        assert!(action.init(&mut Rule::new(), "ruleEngine=Off").is_ok());
+        assert!(
+            action
+                .init(&mut RuleMetadata::new(), "ruleEngine=Off")
+                .is_ok()
+        );
         assert_eq!(action.command, CtlCommand::RuleEngine);
         assert_eq!(action.value, "Off");
     }
@@ -543,7 +555,11 @@ mod tests {
     #[test]
     fn test_ctl_parse_rule_remove_by_id() {
         let mut action = CtlAction::new();
-        assert!(action.init(&mut Rule::new(), "ruleRemoveById=123").is_ok());
+        assert!(
+            action
+                .init(&mut RuleMetadata::new(), "ruleRemoveById=123")
+                .is_ok()
+        );
         assert_eq!(action.command, CtlCommand::RuleRemoveById);
         assert_eq!(action.value, "123");
     }
@@ -551,7 +567,11 @@ mod tests {
     #[test]
     fn test_ctl_parse_rule_remove_by_id_range() {
         let mut action = CtlAction::new();
-        assert!(action.init(&mut Rule::new(), "ruleRemoveById=1-9").is_ok());
+        assert!(
+            action
+                .init(&mut RuleMetadata::new(), "ruleRemoveById=1-9")
+                .is_ok()
+        );
         assert_eq!(action.value, "1-9");
     }
 
@@ -560,7 +580,7 @@ mod tests {
         let mut action = CtlAction::new();
         assert!(
             action
-                .init(&mut Rule::new(), "ruleRemoveByTag=MY_TAG")
+                .init(&mut RuleMetadata::new(), "ruleRemoveByTag=MY_TAG")
                 .is_ok()
         );
         assert_eq!(action.command, CtlCommand::RuleRemoveByTag);
@@ -572,7 +592,7 @@ mod tests {
         let mut action = CtlAction::new();
         assert!(
             action
-                .init(&mut Rule::new(), "ruleRemoveByMsg=MY_MSG")
+                .init(&mut RuleMetadata::new(), "ruleRemoveByMsg=MY_MSG")
                 .is_ok()
         );
         assert_eq!(action.command, CtlCommand::RuleRemoveByMsg);
@@ -584,7 +604,10 @@ mod tests {
         let mut action = CtlAction::new();
         assert!(
             action
-                .init(&mut Rule::new(), "ruleRemoveTargetById=123;ARGS:user")
+                .init(
+                    &mut RuleMetadata::new(),
+                    "ruleRemoveTargetById=123;ARGS:user"
+                )
                 .is_ok()
         );
         assert_eq!(action.command, CtlCommand::RuleRemoveTargetById);
@@ -598,7 +621,10 @@ mod tests {
         let mut action = CtlAction::new();
         assert!(
             action
-                .init(&mut Rule::new(), "ruleRemoveTargetById=2;REQUEST_FILENAME:")
+                .init(
+                    &mut RuleMetadata::new(),
+                    "ruleRemoveTargetById=2;REQUEST_FILENAME:"
+                )
                 .is_ok()
         );
         assert_eq!(action.collection, Some(RuleVariable::RequestFilename));
@@ -610,7 +636,7 @@ mod tests {
         let mut action = CtlAction::new();
         assert!(
             action
-                .init(&mut Rule::new(), "responseBodyAccess=On")
+                .init(&mut RuleMetadata::new(), "responseBodyAccess=On")
                 .is_ok()
         );
         assert_eq!(action.command, CtlCommand::ResponseBodyAccess);
@@ -620,7 +646,11 @@ mod tests {
     #[test]
     fn test_ctl_parse_debug_log_level() {
         let mut action = CtlAction::new();
-        assert!(action.init(&mut Rule::new(), "debugLogLevel=3").is_ok());
+        assert!(
+            action
+                .init(&mut RuleMetadata::new(), "debugLogLevel=3")
+                .is_ok()
+        );
         assert_eq!(action.command, CtlCommand::DebugLogLevel);
         assert_eq!(action.value, "3");
     }
@@ -630,7 +660,7 @@ mod tests {
     fn test_ctl_invalid_syntax_no_equals() {
         let mut action = CtlAction::new();
         assert!(matches!(
-            action.init(&mut Rule::new(), "invalid"),
+            action.init(&mut RuleMetadata::new(), "invalid"),
             Err(ActionError::InvalidArguments(_))
         ));
     }
@@ -639,7 +669,7 @@ mod tests {
     fn test_ctl_unknown_command() {
         let mut action = CtlAction::new();
         assert!(matches!(
-            action.init(&mut Rule::new(), "unknownCommand=value"),
+            action.init(&mut RuleMetadata::new(), "unknownCommand=value"),
             Err(ActionError::InvalidArguments(_))
         ));
     }
@@ -648,7 +678,7 @@ mod tests {
     fn test_ctl_invalid_on_off() {
         let mut action = CtlAction::new();
         assert!(matches!(
-            action.init(&mut Rule::new(), "requestBodyAccess=Maybe"),
+            action.init(&mut RuleMetadata::new(), "requestBodyAccess=Maybe"),
             Err(ActionError::InvalidArguments(_))
         ));
     }
@@ -657,7 +687,7 @@ mod tests {
     fn test_ctl_invalid_limit() {
         let mut action = CtlAction::new();
         assert!(matches!(
-            action.init(&mut Rule::new(), "requestBodyLimit=abc"),
+            action.init(&mut RuleMetadata::new(), "requestBodyLimit=abc"),
             Err(ActionError::InvalidArguments(_))
         ));
     }
@@ -666,7 +696,7 @@ mod tests {
     fn test_ctl_invalid_debug_level() {
         let mut action = CtlAction::new();
         assert!(matches!(
-            action.init(&mut Rule::new(), "debugLogLevel=10"),
+            action.init(&mut RuleMetadata::new(), "debugLogLevel=10"),
             Err(ActionError::InvalidArguments(_))
         ));
     }
@@ -675,7 +705,10 @@ mod tests {
     fn test_ctl_invalid_collection() {
         let mut action = CtlAction::new();
         assert!(matches!(
-            action.init(&mut Rule::new(), "ruleRemoveTargetById=123;INVALID:key"),
+            action.init(
+                &mut RuleMetadata::new(),
+                "ruleRemoveTargetById=123;INVALID:key"
+            ),
             Err(ActionError::InvalidArguments(_))
         ));
     }
@@ -703,7 +736,7 @@ mod tests {
         use crate::transaction::Transaction;
 
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action.init(&mut rule, "ruleEngine=DetectionOnly").unwrap();
 
         let mut tx = Transaction::new("test-1");
@@ -718,7 +751,7 @@ mod tests {
         use crate::transaction::Transaction;
 
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action.init(&mut rule, "requestBodyAccess=off").unwrap();
 
         let mut tx = Transaction::new("test-2");
@@ -733,7 +766,7 @@ mod tests {
         use crate::transaction::Transaction;
 
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action.init(&mut rule, "requestBodyLimit=256000").unwrap();
 
         let mut tx = Transaction::new("test-3");
@@ -748,7 +781,7 @@ mod tests {
         use crate::transaction::Transaction;
 
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action
             .init(&mut rule, "forceRequestBodyVariable=on")
             .unwrap();
@@ -765,7 +798,7 @@ mod tests {
         use crate::transaction::Transaction;
 
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action.init(&mut rule, "responseBodyAccess=on").unwrap();
 
         let mut tx = Transaction::new("test-5");
@@ -780,7 +813,7 @@ mod tests {
         use crate::transaction::Transaction;
 
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action.init(&mut rule, "responseBodyLimit=1048576").unwrap();
 
         let mut tx = Transaction::new("test-6");
@@ -795,7 +828,7 @@ mod tests {
         use crate::transaction::Transaction;
 
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action
             .init(&mut rule, "forceResponseBodyVariable=on")
             .unwrap();
@@ -812,7 +845,7 @@ mod tests {
         use crate::transaction::Transaction;
 
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action.init(&mut rule, "requestBodyAccess=off").unwrap();
 
         let mut tx = Transaction::new("test-8");
@@ -831,7 +864,7 @@ mod tests {
         use crate::transaction::Transaction;
 
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action.init(&mut rule, "responseBodyLimit=1000").unwrap();
 
         let mut tx = Transaction::new("test-9");
@@ -852,7 +885,7 @@ mod tests {
         use crate::transaction::Transaction;
 
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action.init(&mut rule, "ruleRemoveById=123").unwrap();
 
         let mut tx = Transaction::new("test-remove-1");
@@ -868,7 +901,7 @@ mod tests {
         use crate::transaction::Transaction;
 
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action.init(&mut rule, "ruleRemoveById=100-199").unwrap();
 
         let mut tx = Transaction::new("test-remove-2");
@@ -893,7 +926,7 @@ mod tests {
         use crate::transaction::Transaction;
 
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action
             .init(&mut rule, "ruleRemoveTargetById=981260;ARGS:user")
             .unwrap();
@@ -917,7 +950,7 @@ mod tests {
         use crate::transaction::Transaction;
 
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action
             .init(&mut rule, "ruleRemoveTargetById=123;REQUEST_FILENAME:")
             .unwrap();
@@ -937,7 +970,7 @@ mod tests {
 
         // Remove multiple rules via multiple actions
         let mut action1 = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action1.init(&mut rule, "ruleRemoveById=100").unwrap();
         action1.evaluate(&rule, &mut tx);
 
@@ -964,7 +997,7 @@ mod tests {
 
         // Remove multiple targets from same rule
         let mut action1 = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action1
             .init(&mut rule, "ruleRemoveTargetById=123;ARGS:username")
             .unwrap();
@@ -1010,7 +1043,7 @@ mod tests {
 
         // Execute ctl:ruleRemoveByTag=attack
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action.init(&mut rule, "ruleRemoveByTag=attack").unwrap();
         action.evaluate(&rule, &mut tx);
 
@@ -1049,7 +1082,7 @@ mod tests {
 
         // Execute ctl:ruleRemoveByMsg=SQL Injection
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action
             .init(&mut rule, "ruleRemoveByMsg=SQL Injection")
             .unwrap();
@@ -1089,7 +1122,7 @@ mod tests {
 
         // Execute ctl:ruleRemoveTargetByTag=crs;ARGS:id
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action
             .init(&mut rule, "ruleRemoveTargetByTag=crs;ARGS:id")
             .unwrap();
@@ -1132,7 +1165,7 @@ mod tests {
 
         // Execute ctl:ruleRemoveTargetByMsg=Parameter Attack;REQUEST_HEADERS:user-agent
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action
             .init(
                 &mut rule,
@@ -1157,7 +1190,7 @@ mod tests {
 
         // Execute ctl:ruleRemoveByTag - should not panic, just do nothing
         let mut action = CtlAction::new();
-        let mut rule = Rule::default();
+        let mut rule = RuleMetadata::default();
         action.init(&mut rule, "ruleRemoveByTag=attack").unwrap();
         action.evaluate(&rule, &mut tx);
 

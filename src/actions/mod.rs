@@ -154,13 +154,13 @@ pub enum ActionType {
     Flow,
 }
 
-/// Rule configuration and metadata.
+/// Metadata and flags of one rule (ID, message, severity, logging flags, ...).
 ///
-/// Stores all metadata and configuration for a single rule. Actions modify
-/// this struct during initialization to set rule properties like ID, message,
-/// severity, and logging flags.
+/// Actions fill this in when the rule is compiled ([`Action::init`]) and read it
+/// when the rule matches ([`Action::evaluate`]). The evaluated rule itself is
+/// [`crate::rules::Rule`].
 #[derive(Debug, Clone)]
-pub struct Rule {
+pub struct RuleMetadata {
     /// Rule ID (mandatory, set by id action)
     pub id: i32,
     /// Parent rule ID (for chained rules)
@@ -199,7 +199,7 @@ pub struct Rule {
     pub phase: RulePhase,
 }
 
-impl Rule {
+impl RuleMetadata {
     /// Create a new rule with default values.
     pub fn new() -> Self {
         Self {
@@ -225,7 +225,7 @@ impl Rule {
     }
 }
 
-impl Default for Rule {
+impl Default for RuleMetadata {
     fn default() -> Self {
         Self::new()
     }
@@ -245,20 +245,20 @@ pub use crate::operators::TransactionState;
 /// # Examples
 ///
 /// ```
-/// use coraza::actions::{Action, ActionType, ActionError, Rule, TransactionState};
+/// use coraza::actions::{Action, ActionType, ActionError, RuleMetadata, TransactionState};
 ///
 /// // Simple action that requires no parameters
 /// struct DenyAction;
 ///
 /// impl Action for DenyAction {
-///     fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+///     fn init(&mut self, _rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
 ///         if !data.is_empty() {
 ///             return Err(ActionError::UnexpectedArguments);
 ///         }
 ///         Ok(())
 ///     }
 ///
-///     fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+///     fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
 ///         // Execute action logic (e.g., interrupt transaction)
 ///     }
 ///
@@ -283,7 +283,7 @@ pub trait Action: Send + Sync {
     ///
     /// * `Ok(())` if initialization succeeded
     /// * `Err(ActionError)` if parameters are invalid
-    fn init(&mut self, rule: &mut Rule, data: &str) -> Result<(), ActionError>;
+    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError>;
 
     /// Evaluate the action during transaction processing.
     ///
@@ -294,7 +294,7 @@ pub trait Action: Send + Sync {
     ///
     /// * `rule` - Immutable reference to rule
     /// * `tx` - Mutable reference to transaction state
-    fn evaluate(&self, rule: &Rule, tx: &mut dyn TransactionState);
+    fn evaluate(&self, rule: &RuleMetadata, tx: &mut dyn TransactionState);
 
     /// Return the action type category.
     fn action_type(&self) -> ActionType;
@@ -478,16 +478,16 @@ fn init_registry() -> HashMap<String, ActionFactory> {
 /// # Examples
 ///
 /// ```no_run
-/// use coraza::actions::{register, Action, ActionType, ActionError, Rule, TransactionState};
+/// use coraza::actions::{register, Action, ActionType, ActionError, RuleMetadata, TransactionState};
 ///
 /// struct CustomAction;
 ///
 /// impl Action for CustomAction {
-///     fn init(&mut self, _rule: &mut Rule, _data: &str) -> Result<(), ActionError> {
+///     fn init(&mut self, _rule: &mut RuleMetadata, _data: &str) -> Result<(), ActionError> {
 ///         Ok(())
 ///     }
 ///
-///     fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+///     fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
 ///         // Custom action logic
 ///     }
 ///
@@ -551,7 +551,7 @@ mod tests {
     }
 
     impl Action for MockAction {
-        fn init(&mut self, _rule: &mut Rule, data: &str) -> Result<(), ActionError> {
+        fn init(&mut self, _rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
             if !data.is_empty() {
                 return Err(ActionError::UnexpectedArguments);
             }
@@ -559,7 +559,7 @@ mod tests {
             Ok(())
         }
 
-        fn evaluate(&self, _rule: &Rule, _tx: &mut dyn TransactionState) {
+        fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
             // Mock evaluation
         }
 
@@ -597,7 +597,7 @@ mod tests {
     #[test]
     fn test_mock_action_init() {
         let mut action = MockAction { initialized: false };
-        let mut rule = Rule::new();
+        let mut rule = RuleMetadata::new();
 
         // Should succeed with empty data
         assert!(action.init(&mut rule, "").is_ok());
