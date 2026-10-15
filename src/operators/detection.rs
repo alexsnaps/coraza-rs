@@ -1,7 +1,7 @@
 //! SQL injection and XSS detection operators.
 //!
-//! This module provides operators for detecting SQL injection and cross-site scripting
-//! attacks using the libinjection library.
+//! Both detect attacks with libperfusion, a port of libinjection, as Coraza does with
+//! libinjection-go.
 
 use crate::operators::Operator;
 use crate::transaction::Transaction;
@@ -10,7 +10,7 @@ use crate::transaction::Transaction;
 ///
 /// Detects SQL injection attempts using libinjection's SQLi detection algorithm.
 /// Returns true if SQL injection patterns are detected in the input. When a match
-/// is found, the SQL fingerprint is captured in field 0.
+/// is found, the SQL fingerprint (such as `s&sos`) is captured in field 0.
 ///
 /// # Arguments
 ///
@@ -40,23 +40,13 @@ pub struct DetectSQLi;
 
 impl Operator for DetectSQLi {
     fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        if input.is_empty() {
+        let Some(fingerprint) = libperfusion::sqli(input.as_bytes()) else {
             return false;
+        };
+        if let Some(tx) = tx {
+            tx.capture_field(0, fingerprint.as_str());
         }
-
-        let result = libinjectionrs::detect_sqli(input.as_bytes());
-
-        if result.is_injection() {
-            // Capture fingerprint in field 0
-            if let Some(tx) = tx
-                && let Some(fingerprint) = &result.fingerprint
-            {
-                tx.capture_field(0, fingerprint.as_str());
-            }
-            true
-        } else {
-            false
-        }
+        true
     }
 }
 
@@ -96,7 +86,7 @@ pub fn detect_sqli() -> DetectSQLi {
 ///
 /// // XSS patterns
 /// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "<script>alert(1)</script>"));
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "javascript:alert(1)"));
+/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "<a href=\"javascript:alert(1)\">"));
 /// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "<img src=x onerror=alert(1)>"));
 ///
 /// // Normal input
@@ -107,12 +97,7 @@ pub struct DetectXSS;
 
 impl Operator for DetectXSS {
     fn evaluate(&self, _tx: Option<&mut Transaction>, input: &str) -> bool {
-        if input.is_empty() {
-            return false;
-        }
-
-        let result = libinjectionrs::detect_xss(input.as_bytes());
-        result.is_injection()
+        libperfusion::xss(input.as_bytes())
     }
 }
 
@@ -163,9 +148,10 @@ mod tests {
         assert!(op.evaluate(Some(&mut tx), "1' OR '1'='1"));
 
         // The fingerprint is captured into TX.0
-        assert!(
+        assert_eq!(
             tx.get_variable(crate::RuleVariable::TX, Some("0"))
-                .is_some_and(|fingerprint| !fingerprint.is_empty())
+                .as_deref(),
+            Some("s&sos")
         );
     }
 
@@ -183,8 +169,9 @@ mod tests {
         assert!(!op.evaluate(None::<&mut Transaction>, "<p>Normal HTML</p>"));
         assert!(!op.evaluate(None::<&mut Transaction>, ""));
 
-        // Note: javascript: URLs are not detected by libinjection in plain text context
-        // They need to be within HTML attributes to be detected
+        // A javascript: URL is only flagged as the value of an attribute that takes a URL
+        assert!(!op.evaluate(None::<&mut Transaction>, "javascript:alert(1)"));
+        assert!(op.evaluate(None::<&mut Transaction>, "<a href=\"javascript:alert(1)\">"));
     }
 
     #[test]

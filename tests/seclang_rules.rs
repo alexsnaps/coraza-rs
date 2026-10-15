@@ -256,3 +256,36 @@ fn multimatch_runs_actions_once_per_matching_value() {
     // "Aa" and "aa" both match
     assert_eq!(tx_var(&tx, "hits").as_deref(), Some("2"));
 }
+
+#[test]
+fn detect_sqli_blocks_and_captures_the_fingerprint() {
+    // CRS 942100, less its tags and scoring
+    let waf = waf(r#"
+        SecRule ARGS_NAMES|ARGS "@detectSQLi" "id:942100,phase:2,deny,status:403,capture,\
+            t:none,t:utf8toUnicode,t:urlDecodeUni,t:removeNulls,multiMatch"
+    "#);
+
+    // sqlmap's payload for MySQL's full-text search
+    let mut tx = request_with_arg(&waf, "q", "1' IN BOOLEAN MODE) UNION ALL SELECT NULL#");
+    tx.process_request_headers();
+    let interruption = tx.process_request_body(b"").unwrap();
+
+    assert_eq!(interruption.map(|i| i.rule_id), Some(942100));
+    assert_eq!(tx_var(&tx, "0").as_deref(), Some("sk)UE"));
+}
+
+#[test]
+fn detect_xss_blocks_recent_event_handlers() {
+    // CRS 941100, less its tags and scoring
+    let waf = waf(r#"
+        SecRule ARGS_NAMES|ARGS "@detectXSS" "id:941100,phase:2,deny,status:403,\
+            t:none,t:utf8toUnicode,t:urlDecodeUni,t:htmlEntityDecode,t:jsDecode,t:cssDecode,\
+            t:removeNulls"
+    "#);
+
+    let mut tx = request_with_arg(&waf, "q", "<a onauxclick=alert(1)>");
+    tx.process_request_headers();
+    let interruption = tx.process_request_body(b"").unwrap();
+
+    assert_eq!(interruption.map(|i| i.rule_id), Some(941100));
+}

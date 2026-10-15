@@ -36,8 +36,9 @@ serde_json = "1.0"
 # XML parsing
 quick-xml = "0.36"
 
-# SQL/XSS injection detection
-libinjectionrs = "0.1.1"
+# SQL/XSS injection detection (a port of libinjection). Its `std` feature has
+# the byte searches use AVX2 where the CPU has it, which speeds up long inputs.
+libperfusion = { path = "../libperfusion", features = ["std"] }
 
 # Async runtime and HTTP server (for ftw_server example)
 tokio = { version = "1.0", features = ["full"], optional = true }
