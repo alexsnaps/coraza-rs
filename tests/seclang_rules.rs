@@ -1162,3 +1162,34 @@ fn update_action_by_id_changes_the_actions_of_rules() {
         .unwrap_err();
     assert!(err.message.contains("404"), "{}", err.message);
 }
+
+#[test]
+fn datasets_feed_the_dataset_operators() {
+    let waf = waf(r#"
+        SecDataset bad_words `
+        # comments and blank lines are skipped
+        evil
+
+        nasty
+        `
+        SecDataset bad_ips `
+        10.0.0.0/8
+        192.168.1.1
+        `
+        SecRule ARGS:q "@pmFromDataset bad_words" "id:1,phase:1,deny,status:403"
+        SecRule ARGS:ip "@ipMatchFromDataset bad_ips" "id:2,phase:1,deny,status:403"
+    "#);
+
+    let mut tx = request_with_arg(&waf, "q", "something NASTY here");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+    let mut tx = request_with_arg(&waf, "ip", "10.2.3.4");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(2));
+    let mut tx = request_with_arg(&waf, "q", "fine");
+    assert!(tx.process_request_headers().is_none());
+
+    let mut parser = Parser::new();
+    let err = parser
+        .from_string(r#"SecRule ARGS "@pmFromDataset missing" "id:1,phase:1,pass""#)
+        .unwrap_err();
+    assert!(err.message.contains("missing"), "{}", err.message);
+}

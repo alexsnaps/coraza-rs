@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use crate::operators::{Macro, MacroError, Operator};
+use crate::operators::{Datasets, Macro, MacroError, Operator};
 use crate::transaction::Transaction;
 use aho_corasick::AhoCorasick;
 use regex::Regex;
@@ -244,8 +244,40 @@ pub fn pm(patterns: &str) -> Result<Pm, MacroError> {
 /// ```
 #[derive(Debug, Clone)]
 pub struct PmFromFile {
-    /// Aho-Corasick matcher built from file patterns
+    phrases: Phrases,
+}
+
+/// A fixed set of phrases, matched case-insensitively anywhere in the input, as `@pm`
+/// matches them.
+#[derive(Debug, Clone)]
+struct Phrases {
     matcher: AhoCorasick,
+}
+
+impl Phrases {
+    fn new(patterns: &[String]) -> Result<Self, String> {
+        let matcher = AhoCorasick::builder()
+            .ascii_case_insensitive(true)
+            .build(patterns)
+            .map_err(|e| format!("Failed to build matcher: {}", e))?;
+        Ok(Self { matcher })
+    }
+
+    /// Whether a phrase occurs in `input`; when the transaction captures, the first 10
+    /// occurrences go to TX.0 to TX.9, as found in `input`.
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
+        match tx {
+            Some(tx) if tx.capturing() => {
+                let mut matched = false;
+                for (index, found) in self.matcher.find_iter(input).take(10).enumerate() {
+                    tx.capture_field(index, &input[found.start()..found.end()]);
+                    matched = true;
+                }
+                matched
+            }
+            _ => self.matcher.is_match(input),
+        }
+    }
 }
 
 impl PmFromFile {
@@ -292,40 +324,44 @@ impl PmFromFile {
             ));
         }
 
-        // Build Aho-Corasick matcher
-        let matcher = AhoCorasick::builder()
-            .ascii_case_insensitive(true)
-            .build(&patterns)
-            .map_err(|e| format!("Failed to build matcher: {}", e))?;
-
-        Ok(Self { matcher })
+        Ok(Self {
+            phrases: Phrases::new(&patterns)?,
+        })
     }
 }
 
 impl Operator for PmFromFile {
-    fn evaluate(&self, mut tx: Option<&mut Transaction>, input: &str) -> bool {
-        // Determine if we're capturing based on transaction state
-        let capturing = tx.as_ref().is_some_and(|t| t.capturing());
-
-        if capturing {
-            // Capture mode: collect all matches
-            let matches: Vec<_> = self.matcher.find_iter(input).take(10).collect();
-
-            if !matches.is_empty() {
-                if let Some(ref mut tx) = tx {
-                    // Capture matched patterns (preserve case from input)
-                    for (idx, mat) in matches.iter().enumerate() {
-                        tx.capture_field(idx, &input[mat.start()..mat.end()]);
-                    }
-                }
-                return true;
-            }
-            false
-        } else {
-            // Fast path: just check if any pattern matches
-            self.matcher.is_match(input)
-        }
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
+        self.phrases.evaluate(tx, input)
     }
+}
+
+/// Phrase matching operator (from a `SecDataset`).
+///
+/// Matches the items of a dataset as `@pm` matches its phrases.
+#[derive(Debug, Clone)]
+pub struct PmFromDataset {
+    phrases: Phrases,
+}
+
+impl Operator for PmFromDataset {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
+        self.phrases.evaluate(tx, input)
+    }
+}
+
+/// Creates a new `@pmFromDataset` operator from the dataset `name` of `datasets`.
+///
+/// # Errors
+///
+/// If `datasets` has no dataset `name`.
+pub fn pm_from_dataset(name: &str, datasets: &Datasets) -> Result<PmFromDataset, String> {
+    let items = datasets
+        .get(name)
+        .ok_or_else(|| format!("dataset \"{}\" not found", name))?;
+    Ok(PmFromDataset {
+        phrases: Phrases::new(items)?,
+    })
 }
 
 /// Creates a new `@pmFromFile` operator.

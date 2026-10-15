@@ -3,7 +3,7 @@
 //! This module provides operators for matching IP addresses against CIDR blocks
 //! and IP ranges, compatible with ModSecurity's @ipMatch family of operators.
 
-use crate::operators::Operator;
+use crate::operators::{Datasets, Operator};
 use crate::transaction::Transaction;
 use ipnet::IpNet;
 use std::net::IpAddr;
@@ -143,6 +143,38 @@ impl Operator for IpMatch {
 /// ```
 pub fn ip_match(ips: &str) -> Result<IpMatch, String> {
     IpMatch::new(ips)
+}
+
+/// IP address matching operator (from a `SecDataset`).
+///
+/// Matches the IPs and CIDR blocks of a dataset as `@ipMatch` matches its own.
+#[derive(Debug, Clone)]
+pub struct IpMatchFromDataset {
+    ips: IpMatch,
+}
+
+impl Operator for IpMatchFromDataset {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
+        self.ips.evaluate(tx, input)
+    }
+}
+
+/// Creates a new `@ipMatchFromDataset` operator from the dataset `name` of `datasets`.
+///
+/// # Errors
+///
+/// If `datasets` has no dataset `name`, or an empty one, or it holds no valid IP.
+pub fn ip_match_from_dataset(
+    name: &str,
+    datasets: &Datasets,
+) -> Result<IpMatchFromDataset, String> {
+    let items = datasets
+        .get(name)
+        .filter(|items| !items.is_empty())
+        .ok_or_else(|| format!("dataset \"{}\" not found", name))?;
+    Ok(IpMatchFromDataset {
+        ips: IpMatch::new(&items.join(","))?,
+    })
 }
 
 /// IP address matching operator (from file).

@@ -182,6 +182,8 @@ Go Coraza has 69 `Sec*` directives; we have 26. Section 1 covers 11 of the 43 mi
     `SecRuleUpdateActionById`, which applies its actions to existing rules without the `SecDefaultAction` defaults,
     a disruptive one replacing the rule's. As for `SecRuleUpdateTargetById`, every listed id is updated, where Go
     stops after the first single one.
+  - Done for `SecDataset`, with the `@pmFromDataset` and `@ipMatchFromDataset` operators of section 5 that read
+    its datasets through `OperatorContext::datasets`.
 - [ ] **Accept the directives Go accepts and ignores,** so configs written for Go Coraza load: `SecArgumentSeparator`,
   `SecConnEngine`, `SecConnReadStateLimit`, `SecConnWriteStateLimit`, `SecCookieFormat`, `SecGsbLookupDb`,
   `SecHashEngine`, `SecHashKey`, `SecHashMethodPm`, `SecHashMethodRx`, `SecHashParam`, `SecHttpBlKey`,
@@ -197,6 +199,7 @@ None of these is used by CRS v4.30.0.
 
 - [ ] **Operators:** `@geoLookup`, `@inspectFile`, `@ipMatchFromDataset`, `@pmFromDataset`, `@rbl`, `@restpath`,
   `@validateNid` and `@validateSchema`.
+  - `@ipMatchFromDataset` and `@pmFromDataset` are done, with `SecDataset` in section 4.
 - [ ] **Action:** `accuracy`.
 - [ ] **Variables:** `MULTIPART_FILENAME_CHARSET` and `MULTIPART_FILENAME_LANGUAGE`.
 - [ ] **Go's spellings.**

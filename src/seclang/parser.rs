@@ -17,7 +17,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use crate::config::WafConfig;
-use crate::operators::OperatorContext;
+use crate::operators::{Datasets, OperatorContext};
 use crate::rules::{Rule, RuleGroup};
 use crate::seclang::CompileError;
 use crate::seclang::parse_actions;
@@ -83,6 +83,9 @@ struct DirectiveOptions<'a> {
 
     /// Defaults that rules compiled from now on merge their actions with
     default_actions: &'a mut DefaultActions,
+
+    /// Datasets defined so far
+    datasets: &'a mut Datasets,
 }
 
 /// Parser configuration and state
@@ -134,6 +137,9 @@ pub struct Parser {
     /// Defaults set by SecDefaultAction so far
     default_actions: DefaultActions,
 
+    /// Datasets defined by SecDataset so far
+    datasets: Datasets,
+
     /// Whether a failing directive is recorded in `skipped` instead of returned
     skip_failed: bool,
 
@@ -150,6 +156,7 @@ impl Parser {
             waf_config: WafConfig::new(),
             rules: RuleGroup::new(),
             default_actions: DefaultActions::default(),
+            datasets: Datasets::new(),
             skip_failed: false,
             skipped: Vec::new(),
         }
@@ -417,6 +424,7 @@ impl Parser {
                 waf_config: &mut self.waf_config,
                 rules: &mut self.rules,
                 default_actions: &mut self.default_actions,
+                datasets: &mut self.datasets,
             })
         };
         result.map_err(|message| {
@@ -452,6 +460,7 @@ fn directive_handler(name: &str) -> Option<DirectiveFn> {
         "secaction" => directive_sec_action,
         "secmarker" => directive_sec_marker,
         "secdefaultaction" => directive_sec_default_action,
+        "secdataset" => directive_sec_dataset,
         "secruleremovebyid" => directive_sec_rule_remove_by_id,
         "secruleremovebymsg" => directive_sec_rule_remove_by_msg,
         "secruleremovebytag" => directive_sec_rule_remove_by_tag,
@@ -520,6 +529,7 @@ fn add_rule(
 fn directive_sec_rule(options: &mut DirectiveOptions) -> Result<(), String> {
     let context = OperatorContext {
         base_dir: options.config_dir,
+        datasets: options.datasets,
     };
     let rule = compile_sec_rule_in(&options.opts, &context, options.default_actions);
     add_rule(options, rule)
@@ -672,6 +682,27 @@ fn directive_sec_rule_update_target_by_tag(options: &mut DirectiveOptions) -> Re
     options
         .rules
         .update_by_tag(tag, |rule| variables.apply_to(rule.variables_mut()));
+    Ok(())
+}
+
+/// SecDataset NAME `ITEMS`
+///
+/// Defines (or replaces) dataset NAME: one item per line of ITEMS, between backticks
+/// and over several lines; blank lines and `#` comments are skipped.
+fn directive_sec_dataset(options: &mut DirectiveOptions) -> Result<(), String> {
+    let (name, items) = options
+        .opts
+        .split_once(char::is_whitespace)
+        .ok_or("syntax error: SecDataset NAME `ITEMS`")?;
+    let items = items
+        .trim()
+        .trim_matches('`')
+        .lines()
+        .map(str::trim)
+        .filter(|item| !item.is_empty() && !item.starts_with('#'))
+        .map(str::to_string)
+        .collect();
+    options.datasets.insert(name.to_string(), items);
     Ok(())
 }
 

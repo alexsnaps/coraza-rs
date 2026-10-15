@@ -14,13 +14,20 @@ mod simple;
 pub mod validation;
 
 pub use detection::{DetectSQLi, DetectXSS, detect_sqli, detect_xss};
-pub use ip::{IpMatch, IpMatchFromFile, ip_match, ip_match_from_file};
+pub use ip::{
+    IpMatch, IpMatchFromDataset, IpMatchFromFile, ip_match, ip_match_from_dataset,
+    ip_match_from_file,
+};
 pub use macros::{Macro, MacroError};
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::transaction::Transaction;
-pub use pattern::{Pm, PmFromFile, Rx, StrMatch, Within, pm, pm_from_file, rx, strmatch, within};
+pub use pattern::{
+    Pm, PmFromDataset, PmFromFile, Rx, StrMatch, Within, pm, pm_from_dataset, pm_from_file, rx,
+    strmatch, within,
+};
 pub use simple::{
     BeginsWith, Contains, EndsWith, Eq, Ge, Gt, Le, Lt, StrEq, begins_with, contains, ends_with,
     eq, ge, gt, le, lt, streq,
@@ -49,6 +56,9 @@ pub trait Operator {
     fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool;
 }
 
+/// Named lists of items (`SecDataset`), for `@pmFromDataset` and `@ipMatchFromDataset`.
+pub type Datasets = BTreeMap<String, Vec<String>>;
+
 /// What creating an operator may need besides its name and argument.
 #[derive(Debug, Clone, Copy)]
 pub struct OperatorContext<'a> {
@@ -56,12 +66,17 @@ pub struct OperatorContext<'a> {
     /// relative to; empty for the working directory. SecLang rules use the directory of
     /// the file they are in.
     pub base_dir: &'a Path,
+
+    /// Datasets the `…FromDataset` operators can name
+    pub datasets: &'a Datasets,
 }
 
 impl Default for OperatorContext<'_> {
     fn default() -> Self {
+        static NO_DATASETS: Datasets = BTreeMap::new();
         Self {
             base_dir: Path::new(""),
+            datasets: &NO_DATASETS,
         }
     }
 }
@@ -136,6 +151,7 @@ operators! {
     Rx: "rx" => |arg, _| rx(arg).map_err(|e| e.to_string()),
     Pm: "pm" => |arg, _| pm(arg).map_err(|e| e.to_string()),
     PmFromFile: "pmfromfile" | "pmf" => |arg, ctx| pm_from_file(ctx.base_dir.join(arg)),
+    PmFromDataset: "pmfromdataset" => |arg, ctx| pm_from_dataset(arg, ctx.datasets),
     StrMatch: "strmatch" => |arg, _| strmatch(arg).map_err(|e| e.to_string()),
     Within: "within" => |arg, _| within(arg).map_err(|e| e.to_string()),
     StrEq: "streq" => |arg, _| streq(arg).map_err(|e| e.to_string()),
@@ -151,6 +167,7 @@ operators! {
     IpMatchFromFile: "ipmatchfromfile" | "ipmatchf" => |arg, ctx| {
         ip_match_from_file(ctx.base_dir.join(arg))
     },
+    IpMatchFromDataset: "ipmatchfromdataset" => |arg, ctx| ip_match_from_dataset(arg, ctx.datasets),
     ValidateByteRange: "validatebyterange" => |arg, _| validate_byte_range(arg),
     ValidateUrlEncoding: "validateurlencoding" => |_, _| Ok(validate_url_encoding()),
     ValidateUtf8Encoding: "validateutf8encoding" => |_, _| Ok(validate_utf8_encoding()),
