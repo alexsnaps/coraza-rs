@@ -54,30 +54,37 @@ This will:
 ### With CRS Tests
 
 ```bash
-# Point to CRS test directory
-go run main.go --tests ../coraza-coreruleset/tests
+# Build the server first
+cargo build --release --example ftw_server_async --features async-server
 
-# With custom rules
+# CRS's regression tests, with the rules a config file loads (Go Coraza's test harness
+# loads coraza.conf-recommended, its test settings, crs-setup.conf.example and rules/*.conf)
 go run main.go \
-  --rules ../crs-rules/crs-setup.conf \
-  --tests ../coraza-coreruleset/tests
+  --rules ../crs-test.conf \
+  --test-dir ../coreruleset/tests/regression/tests \
+  --failed-out /tmp/ftw-failed.txt
 ```
 
-### Configuration
+Flags:
+- `--rules` - Config file the server loads
+- `--test-dir` - Directory of go-ftw YAML tests, searched recursively
+- `--max-tests` - Run only the first N test files (0, the default, runs all)
+- `--failed-out` - File to write the IDs of the failed tests to, one per line
 
-Environment variables:
-- `FTW_SERVER_PORT` - Port for server (default: 8080)
-- `FTW_LOG_FILE` - Path to audit log (default: /tmp/coraza-ftw-audit.log)
+The server listens on port 8080 and logs to `/tmp/coraza-ftw-audit.log`.
 
 ## Development
 
 ### Server Implementation
 
-The Rust FTW server is at `../examples/ftw_server.rs` and provides:
-- HTTP server for receiving test requests
-- WAF processing with rule evaluation
-- ModSecurity-compatible audit logging
+The Rust FTW server is at `../examples/ftw_server_async.rs` and provides:
+- HTTP server for receiving test requests (hyper), answering `/reflect` as CRS's albedo backend
+- WAF processing with rule evaluation, in all four phases
+- Go Coraza's error log line for every matched rule with `log`, which go-ftw reads
 - Support for FTW test requirements
+
+hyper rejects some request lines go-ftw sends (a raw `<`, `"` or `{` in the URI, an unknown HTTP
+version), which then never reach the WAF.
 
 ### Adding Tests
 

@@ -336,7 +336,31 @@ None of these is used by CRS v4.30.0.
   - Done: references are decoded as Go Coraza decodes them, with Go's `html.UnescapeString`, ported with its table
     of HTML5 names (`transformations/html_entities.rs`); `htmlescape` is no longer a dependency. Go's
     transformation tests still pass in full.
-- [ ] **Run CRS v4.30.0's FTW tests and record the pass rate.** Not run yet; `ftw-runner/` drives
+- [x] **Run CRS v4.30.0's FTW tests and record the pass rate.** `ftw-runner/` drives
   `examples/ftw_server_async.rs`.
-  - Go Coraza's CI runs all 5,260 tests (`testing/coreruleset`). It ignores 7 (`.ftw.yml`) and changes the expected
+  - Go Coraza's CI runs all 5,260 tests (`testing/coreruleset`, go-ftw v2.5.0). It ignores 7 (`.ftw.yml`) and changes the expected
     result of 14 (`.ftw-overrides.yml`).
+  - Done: the server now runs all four phases, answers `/reflect` as CRS's albedo backend, and writes Go Coraza's
+    error log line for each matched rule with `log`, which go-ftw reads, as Go's CRS harness does. Headers reach the
+    WAF as Go's `net/http` hands them over (canonical names; values need not be ASCII). The runner stops the server
+    when tests fail (it was left running) and writes the failed tests' IDs with `--failed-out`.
+  - Result at `136cb54` plus the header fix, with go-ftw v2.1.0 and the rules of Go's harness
+    (`coraza.conf-recommended`, its test settings, `crs-setup.conf.example`, `rules/*.conf`): **5,185 of 5,231
+    passed (99.1%)**, 46 failed. The first full run, at `ecca3df`, passed 5,053; the fixes recorded above in this
+    section came from it.
+    - 9 are tests Go's CI ignores (3) or overrides (6). Of the overridden, 4 meet Go's changed expectation;
+      920290-1 doesn't (Go's own TODO), and 920430-8 needs a 505 that the server can't send.
+    - 29 are the test server's: hyper rejects 28 request lines before the WAF sees them (a raw `<`, `"`, `{` or `|`
+      in the URI; HTTP/3.0), and rewrites 920100-16's absolute-form `http://localhost` with a path.
+    - 8 are the engine's: 920250-1 to 4, 941310-1, 12 and 13, 944200-1, all bytes that aren't UTF-8 in arguments or
+      bodies, the next item.
+- [ ] **Collection values are text.** Left from the bytes item above, and the FTW tests' last 8 failures of the
+  engine: `?param=%c0%af` puts U+FFFD in `ARGS:param`, so `@validateUtf8Encoding` (920250) sees valid UTF-8, and a
+  body's `\xbc` (941310) or Java's `\xac\xed` (944200) never reach the operators as bytes. Go's values are bytes.
+  A fix would keep values as bytes in the collections, and give operators bytes (transformations already have
+  them), turning them into text only for macros and logs. It touches the collections, the 32 operators, macros,
+  `setvar` and the body processors.
+- [ ] **The FTW server's HTTP library rejects request lines Go's accepts.** 29 FTW tests never reach the WAF (above).
+  Go's harness uses `net/http`. A server reading requests with `httparse`, already in the dependency tree through
+  hyper, rather than hyper's strict `Uri`, would let them through; it would be an optional dependency of the
+  `async-server` feature.

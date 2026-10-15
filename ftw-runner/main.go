@@ -32,6 +32,7 @@ func main() {
 	rulesFile := flag.String("rules", "", "Path to CRS rules file (e.g., crs-test.conf)")
 	maxTests := flag.Int("max-tests", 0, "Maximum number of tests to run (0 = all tests)")
 	testDir := flag.String("test-dir", "", "Path to test directory (default: ../../coraza-coreruleset/tests)")
+	failedOut := flag.String("failed-out", "", "File to write the IDs of the failed tests to, one per line")
 	flag.Parse()
 
 	fmt.Println("🧪 Coraza-RS FTW Test Runner\n")
@@ -63,6 +64,7 @@ func main() {
 	time.Sleep(2 * time.Second)
 
 	if !server.IsHealthy() {
+		server.Stop()
 		fatal("Server failed to start properly")
 	}
 	fmt.Printf("✅ Server ready on http://localhost:%d\n\n", serverPort)
@@ -70,8 +72,10 @@ func main() {
 	// Run FTW tests
 	fmt.Println("🧪 Running FTW tests...")
 	fmt.Println("=" + repeat("=", 60))
-	if err := runFTW(*maxTests, *testDir); err != nil {
+	if err := runFTW(*maxTests, *testDir, *failedOut); err != nil {
 		fmt.Fprintf(os.Stderr, "\n❌ Tests failed: %v\n", err)
+		// os.Exit skips the deferred Stop, which would leave the server running
+		server.Stop()
 		os.Exit(1)
 	}
 
@@ -145,7 +149,7 @@ mode: "default"
 }
 
 // runFTW executes go-ftw tests using the library directly
-func runFTW(maxTests int, customTestDir string) error {
+func runFTW(maxTests int, customTestDir string, failedOut string) error {
 	// Set up logging
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 
@@ -245,6 +249,13 @@ func runFTW(maxTests int, customTestDir string) error {
 	fmt.Printf("   Failed:  %d\n", len(res.Stats.Failed))
 	fmt.Printf("   Ignored: %d\n", len(res.Stats.Ignored))
 	fmt.Printf(repeat("=", 60) + "\n")
+
+	if failedOut != "" {
+		failed := strings.Join(res.Stats.Failed, "\n") + "\n"
+		if err := os.WriteFile(failedOut, []byte(failed), 0o644); err != nil {
+			return fmt.Errorf("failed to write %s: %w", failedOut, err)
+		}
+	}
 
 	if len(res.Stats.Failed) > 0 {
 		return fmt.Errorf("%d test(s) failed", len(res.Stats.Failed))
