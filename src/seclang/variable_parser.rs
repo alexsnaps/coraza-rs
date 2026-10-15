@@ -74,38 +74,50 @@ struct ParsedVariable {
 /// ```
 pub fn parse_variables(input: &str) -> ParseResult<Vec<VariableSpec>> {
     let mut variables = Vec::new();
-    extend_variables(&mut variables, input)?;
+    VariableList::parse(input)?.apply_to(&mut variables);
     Ok(variables)
 }
 
-/// Adds the variables of the list `input` to `variables`, in order.
-///
-/// A negated element (`!ARGS:id`) adds nothing: it excludes its key from every
-/// variable of that collection in `variables` at that point, as in Go Coraza.
-pub(crate) fn extend_variables(variables: &mut Vec<VariableSpec>, input: &str) -> ParseResult<()> {
-    if input.is_empty() {
-        return Err(CompileError::new(
-            "empty variable specification".to_string(),
-        ));
+/// A parsed variable list (`ARGS|!ARGS:id|&TX:score`), to apply to a rule's variables.
+pub(crate) struct VariableList(Vec<Element>);
+
+impl VariableList {
+    pub(crate) fn parse(input: &str) -> ParseResult<Self> {
+        if input.is_empty() {
+            return Err(CompileError::new(
+                "empty variable specification".to_string(),
+            ));
+        }
+        parse_variable_list(input)?
+            .into_iter()
+            .map(build_element)
+            .collect::<ParseResult<_>>()
+            .map(Self)
     }
 
-    for parsed in parse_variable_list(input)? {
-        match build_element(parsed)? {
-            Element::Inspect(spec) => variables.push(spec),
-            Element::Exclude(variable, key) => {
-                for spec in variables
-                    .iter_mut()
-                    .filter(|spec| spec.variable() == variable)
-                {
-                    match &key {
-                        VariableKey::String(key) => spec.add_exception_string(key.clone()),
-                        VariableKey::Regex(key) => spec.add_exception_regex(key.clone()),
+    /// Adds the list's variables to `variables`, in order.
+    ///
+    /// A negated element (`!ARGS:id`) adds nothing: it excludes its key from every
+    /// variable of that collection in `variables` at that point, as in Go Coraza.
+    pub(crate) fn apply_to(&self, variables: &mut Vec<VariableSpec>) {
+        for element in &self.0 {
+            match element {
+                // Cloned, as one list may be applied to several rules
+                Element::Inspect(spec) => variables.push(spec.clone()),
+                Element::Exclude(variable, key) => {
+                    for spec in variables
+                        .iter_mut()
+                        .filter(|spec| spec.variable() == *variable)
+                    {
+                        match key {
+                            VariableKey::String(key) => spec.add_exception_string(key.clone()),
+                            VariableKey::Regex(key) => spec.add_exception_regex(key.clone()),
+                        }
                     }
                 }
             }
         }
     }
-    Ok(())
 }
 
 /// Parse a list of variables (handles pipe-separated syntax)

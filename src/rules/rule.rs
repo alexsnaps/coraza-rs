@@ -131,6 +131,11 @@ impl Rule {
         &self.actions
     }
 
+    /// The rule's own variables, in order, for SecLang directives that update them.
+    pub(crate) fn variables_mut(&mut self) -> &mut Vec<VariableSpec> {
+        &mut self.variables
+    }
+
     /// Set the rule's variables (replaces existing variables).
     ///
     /// This is used by SecLang directives like `SecRuleUpdateTargetById`.

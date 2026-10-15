@@ -327,3 +327,45 @@ fn negated_variables_exclude_keys_from_the_rest_of_the_rule() {
     let mut tx = request_with_arg(&waf, "other", "x");
     assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
 }
+
+#[test]
+fn update_target_by_id_excludes_and_adds_variables() {
+    let waf = waf(r#"
+        SecRule ARGS "@streq x" "id:1,phase:1,deny,status:403"
+        SecRule ARGS:a "@streq y" "id:2,phase:1,deny,status:403"
+        SecRule ARGS:a "@streq z" "id:3,phase:1,deny,status:403"
+        SecRuleUpdateTargetById 1 "!ARGS:skip"
+        SecRuleUpdateTargetById 2-3 ARGS:b
+    "#);
+
+    let mut tx = request_with_arg(&waf, "skip", "x");
+    assert!(tx.process_request_headers().is_none());
+    let mut tx = request_with_arg(&waf, "other", "x");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+    let mut tx = request_with_arg(&waf, "b", "z");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(3));
+}
+
+#[test]
+fn update_target_by_tag_adds_variables_to_tagged_rules() {
+    let waf = waf(r#"
+        SecRule ARGS:a "@streq y" "id:1,phase:1,deny,status:403,tag:'probe'"
+        SecRule ARGS:a "@streq z" "id:2,phase:1,deny,status:403"
+        SecRuleUpdateTargetByTag "probe" "ARGS:b"
+    "#);
+
+    let mut tx = request_with_arg(&waf, "b", "y");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+    let mut tx = request_with_arg(&waf, "b", "z");
+    assert!(tx.process_request_headers().is_none());
+}
+
+#[test]
+fn update_target_of_an_unknown_rule_is_an_error() {
+    let mut parser = Parser::new();
+    let err = parser
+        .from_string(r#"SecRuleUpdateTargetById 404 "!ARGS:id""#)
+        .unwrap_err();
+
+    assert!(err.message.contains("404"), "{}", err.message);
+}

@@ -12,6 +12,7 @@
 //! 4. Extract directive name and options
 //! 5. Dispatch to directive handler
 
+use std::ops::RangeInclusive;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -20,6 +21,7 @@ use crate::operators::OperatorContext;
 use crate::rules::{Rule, RuleGroup};
 use crate::seclang::CompileError;
 use crate::seclang::rule_compiler::{compile_sec_action, compile_sec_marker, compile_sec_rule_in};
+use crate::seclang::variable_parser::VariableList;
 use crate::types::{AuditEngineStatus, BodyLimitAction, RuleEngineStatus};
 use crate::waf::{ConfigError, Waf, WafBuilder};
 
@@ -435,6 +437,8 @@ fn directive_handler(name: &str) -> Option<DirectiveFn> {
         "secrule" => directive_sec_rule,
         "secaction" => directive_sec_action,
         "secmarker" => directive_sec_marker,
+        "secruleupdatetargetbyid" => directive_sec_rule_update_target_by_id,
+        "secruleupdatetargetbytag" => directive_sec_rule_update_target_by_tag,
         "secruleengine" => directive_sec_rule_engine,
         "secrequestbodyaccess" => directive_sec_request_body_access,
         "secresponsebodyaccess" => directive_sec_response_body_access,
@@ -504,6 +508,78 @@ fn directive_sec_action(options: &mut DirectiveOptions) -> Result<(), String> {
 fn directive_sec_marker(options: &mut DirectiveOptions) -> Result<(), String> {
     let rule = compile_sec_marker(&options.opts);
     add_rule(options, rule)
+}
+
+/// Splits `ARGUMENTS LAST` at its last argument, which may be double-quoted and then
+/// hold spaces. Quotes around either part are removed.
+fn split_last_argument(opts: &str) -> Option<(&str, &str)> {
+    let opts = opts.trim();
+    let (rest, last) = match opts.strip_suffix('"') {
+        Some(quoted) => quoted.rsplit_once('"')?,
+        None => opts.rsplit_once(char::is_whitespace)?,
+    };
+    let rest = rest.trim().trim_matches('"');
+    let last = last.trim_matches('"');
+    (!rest.is_empty() && !last.is_empty()).then_some((rest, last))
+}
+
+/// Parses a rule id (`942100`) or an inclusive range of them (`942100-942199`).
+fn parse_id_range(spec: &str) -> Result<RangeInclusive<i32>, String> {
+    let parse = |id: &str| {
+        id.parse::<i32>()
+            .map_err(|_| format!("invalid rule id or range: {}", spec))
+    };
+    let range = match spec.split_once('-') {
+        Some((start, end)) => parse(start)?..=parse(end)?,
+        None => parse(spec).map(|id| id..=id)?,
+    };
+    if range.is_empty() {
+        return Err(format!("invalid rule id range: {}", spec));
+    }
+    Ok(range)
+}
+
+/// SecRuleUpdateTargetById ID|RANGE... "VARIABLES"
+///
+/// Adds VARIABLES to the rules with the given ids or in the given inclusive ranges, as
+/// if appended to each rule's own: `!ARGS:id` excludes a key. A single id must name a
+/// rule defined earlier.
+fn directive_sec_rule_update_target_by_id(options: &mut DirectiveOptions) -> Result<(), String> {
+    let (ids, variables) = split_last_argument(&options.opts)
+        .ok_or("syntax error: SecRuleUpdateTargetById ID \"VARIABLES\"")?;
+    let variables = VariableList::parse(variables).map_err(|e| e.message)?;
+
+    for spec in ids.split_whitespace() {
+        let range = parse_id_range(spec)?;
+        let mut found = false;
+        for rule in options
+            .rules
+            .iter_mut()
+            .filter(|rule| range.contains(&rule.metadata().id))
+        {
+            variables.apply_to(rule.variables_mut());
+            found = true;
+        }
+        if !found && range.start() == range.end() {
+            return Err(format!("rule {} not found", range.start()));
+        }
+    }
+    Ok(())
+}
+
+/// SecRuleUpdateTargetByTag TAG "VARIABLES"
+///
+/// Adds VARIABLES to every rule tagged TAG, as [`directive_sec_rule_update_target_by_id`]
+/// does.
+fn directive_sec_rule_update_target_by_tag(options: &mut DirectiveOptions) -> Result<(), String> {
+    let (tag, variables) = split_last_argument(&options.opts)
+        .ok_or("syntax error: SecRuleUpdateTargetByTag TAG \"VARIABLES\"")?;
+    let variables = VariableList::parse(variables).map_err(|e| e.message)?;
+
+    options
+        .rules
+        .update_by_tag(tag, |rule| variables.apply_to(rule.variables_mut()));
+    Ok(())
 }
 
 /// SecRuleEngine On|Off|DetectionOnly
@@ -792,6 +868,30 @@ fn directive_sec_collection_timeout(options: &mut DirectiveOptions) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_split_last_argument() {
+        assert_eq!(split_last_argument("1 2 ARGS"), Some(("1 2", "ARGS")));
+        assert_eq!(
+            split_last_argument(r#"1 "!ARGS:a b""#),
+            Some(("1", "!ARGS:a b"))
+        );
+        // As left by the parser once it removed the quotes around the whole argument
+        assert_eq!(
+            split_last_argument(r#"tag" "!ARGS:a"#),
+            Some(("tag", "!ARGS:a"))
+        );
+        assert_eq!(split_last_argument("ARGS"), None);
+    }
+
+    #[test]
+    fn test_parse_id_range() {
+        assert_eq!(parse_id_range("5"), Ok(5..=5));
+        assert_eq!(parse_id_range("5-9"), Ok(5..=9));
+        assert!(parse_id_range("9-5").is_err());
+        assert!(parse_id_range("-5").is_err());
+        assert!(parse_id_range("a").is_err());
+    }
 
     #[test]
     fn test_parser_new() {

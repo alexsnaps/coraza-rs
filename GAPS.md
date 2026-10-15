@@ -28,10 +28,15 @@ Suggested order: 1 → 2 → 5, then 3 and 4. The first three items of 1 account
   CRS's own exclusions, such as `REQUEST_COOKIES|!REQUEST_COOKIES:/__utm/` on 941100, had no effect.
   - Done: a negated element excludes its key from the collection's earlier variables in the list, as Go's
     `AddVariableNegation` does; one without a key is a compile error.
-- [ ] **`SecRuleUpdateTargetById` and `SecRuleUpdateTargetByTag`.** 55 skipped: all of CRS's false-positive
+- [x] **`SecRuleUpdateTargetById` and `SecRuleUpdateTargetByTag`.** 55 skipped: all of CRS's false-positive
   exclusions in `REQUEST-999-COMMON-EXCEPTIONS-AFTER.conf`, such as `!REQUEST_COOKIES:/^_ga(?:_\w+)?$/` on 941100.
   - These add targets or exclusions to a rule. `WafBuilder::update_rule_variables_by_id` (`src/waf.rs:436`) replaces
     the rule's variables, so it doesn't fit as it is.
+  - Done: both apply the variable list to each matching rule's own variables, as if appended to them, through the
+    same `VariableList` the rule compiler uses. Ids and inclusive ranges can be mixed; a single id must name an
+    existing rule. Unlike Go, which returns after the first single id, every listed id and range is updated.
+    ModSecurity's third argument (a target to replace) is not supported, as in Go. The CRS load check now skips 18
+    directives.
 - [ ] **`SecDefaultAction`, and a `block` that follows it.** 5 skipped: the `phase:N,log,auditlog,pass` defaults of
   `crs-setup.conf.example`.
   - `block` always denies with 403 (`src/actions/disruptive.rs:179`). `WafBuilder::set_default_actions` stores
