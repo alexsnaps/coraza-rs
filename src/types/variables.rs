@@ -136,7 +136,7 @@ pub enum RuleVariable {
     Geo,
     /// REQUEST_COOKIES_NAMES - Names of request cookies (collection)
     RequestCookiesNames,
-    /// FILES_TMP_NAMES - Names of temporary uploaded files (collection)
+    /// FILES_TMPNAMES - Names of temporary uploaded files (collection)
     FilesTmpNames,
     /// ARGS_NAMES - Names of all arguments (POST and GET, collection)
     ArgsNames,
@@ -204,13 +204,13 @@ pub enum RuleVariable {
     Userid,
     /// IP - Kept for compatibility (unsupported)
     IP,
-    /// RESBODY_ERROR - Response body processor error flag
+    /// RES_BODY_ERROR - Response body processor error flag
     ResBodyError,
-    /// RESBODY_ERROR_MSG - Response body processor error message
+    /// RES_BODY_ERROR_MSG - Response body processor error message
     ResBodyErrorMsg,
-    /// RESBODY_PROCESSOR_ERROR - Response body processor error flag
+    /// RES_BODY_PROCESSOR_ERROR - Response body processor error flag
     ResBodyProcessorError,
-    /// RESBODY_PROCESSOR_ERROR_MSG - Response body processor error message
+    /// RES_BODY_PROCESSOR_ERROR_MSG - Response body processor error message
     ResBodyProcessorErrorMsg,
     /// TIME - Formatted time string (hour:minute:second)
     Time,
@@ -303,10 +303,10 @@ const VARIABLE_NAMES: &[&str] = &[
     "REQUEST_COOKIES",
     "REQUEST_HEADERS",
     "RESPONSE_HEADERS",
-    "RESBODY_PROCESSOR",
+    "RES_BODY_PROCESSOR",
     "GEO",
     "REQUEST_COOKIES_NAMES",
-    "FILES_TMP_NAMES",
+    "FILES_TMPNAMES",
     "ARGS_NAMES",
     "ARGS_GET_NAMES",
     "ARGS_POST_NAMES",
@@ -339,10 +339,10 @@ const VARIABLE_NAMES: &[&str] = &[
     "SESSIONID",
     "USERID",
     "IP",
-    "RESBODY_ERROR",
-    "RESBODY_ERROR_MSG",
-    "RESBODY_PROCESSOR_ERROR",
-    "RESBODY_PROCESSOR_ERROR_MSG",
+    "RES_BODY_ERROR",
+    "RES_BODY_ERROR_MSG",
+    "RES_BODY_PROCESSOR_ERROR",
+    "RES_BODY_PROCESSOR_ERROR_MSG",
     "TIME",
     "TIME_DAY",
     "TIME_EPOCH",

@@ -233,11 +233,14 @@ None of these is used by CRS v4.30.0.
   - Done: as in Go, a part's RFC 5987 `filename*=charset'language'value` gives its file name, percent-decoded,
     with `filename` kept in `MULTIPART_FILENAME` when different, and its charset and language in these two
     variables; a malformed one sets `MULTIPART_STRICT_ERROR`. `filename*` was ignored before.
-- [ ] **Go's spellings.**
+- [x] **Go's spellings.**
   - `RES_BODY_ERROR`, `RES_BODY_ERROR_MSG`, `RES_BODY_PROCESSOR`, `RES_BODY_PROCESSOR_ERROR` and
-    `RES_BODY_PROCESSOR_ERROR_MSG`: ours are `RESBODY_*`.
-  - `FILES_TMPNAMES`: ours is `FILES_TMP_NAMES` (`src/types/variables.rs:297`).
-  - `t:normalisePath` and `t:normalisePathWin`, which Go accepts alongside the `normalize` spellings.
+    `RES_BODY_PROCESSOR_ERROR_MSG`: ours were `RESBODY_*`.
+  - `FILES_TMPNAMES`: ours was `FILES_TMP_NAMES`.
+  - Done: the variables now have Go's names; the old ones, which neither Go nor ModSecurity uses, are gone.
+  - Correction: `t:normalisePath` and `t:normalisePathWin` were listed here by mistake. Both spellings were already
+    accepted (`transformations::by_name`); the comparison that produced this list read only the first name of each
+    `match` arm.
 
 ## 6. Measure
 

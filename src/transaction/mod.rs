@@ -494,20 +494,20 @@ pub struct Transaction {
     /// REQBODY_PROCESSOR_ERROR_MSG - Why the request body processor failed
     reqbody_processor_error_msg: Single,
 
-    /// RESBODY_PROCESSOR - Name of the processor that parses the response body; empty for
+    /// RES_BODY_PROCESSOR - Name of the processor that parses the response body; empty for
     /// none, which stores it in RESPONSE_BODY instead
     res_body_processor: Single,
 
-    /// RESBODY_ERROR - "1" when the response body processor failed
+    /// RES_BODY_ERROR - "1" when the response body processor failed
     res_body_error: Single,
 
-    /// RESBODY_ERROR_MSG - Why the response body processor failed, after its name
+    /// RES_BODY_ERROR_MSG - Why the response body processor failed, after its name
     res_body_error_msg: Single,
 
-    /// RESBODY_PROCESSOR_ERROR - "1" when the response body processor failed
+    /// RES_BODY_PROCESSOR_ERROR - "1" when the response body processor failed
     res_body_processor_error: Single,
 
-    /// RESBODY_PROCESSOR_ERROR_MSG - Why the response body processor failed
+    /// RES_BODY_PROCESSOR_ERROR_MSG - Why the response body processor failed
     res_body_processor_error_msg: Single,
 
     /// URI_PARSE_ERROR - "1" when the request URI could not be parsed
@@ -519,7 +519,7 @@ pub struct Transaction {
     /// FILES - Original file names from multipart/form-data
     pub(crate) files: Map,
 
-    /// FILES_TMP_NAMES - Temporary file paths for uploaded files
+    /// FILES_TMPNAMES - Temporary file paths for uploaded files
     pub(crate) files_tmp_names: Map,
 
     /// FILES_SIZES - Sizes of uploaded files
@@ -1248,7 +1248,7 @@ impl Transaction {
         &self.files
     }
 
-    /// Get the FILES_TMP_NAMES collection.
+    /// Get the FILES_TMPNAMES collection.
     pub fn files_tmp_names(&self) -> &Map {
         &self.files_tmp_names
     }
@@ -1646,7 +1646,7 @@ impl Transaction {
         self.reqbody_processor.set(processor.name());
     }
 
-    /// Makes `processor` parse the response body (`RESBODY_PROCESSOR`), as
+    /// Makes `processor` parse the response body (`RES_BODY_PROCESSOR`), as
     /// `ctl:responseBodyProcessor` does. Without one, the response body is stored in
     /// RESPONSE_BODY.
     pub fn set_response_body_processor(&mut self, processor: BodyProcessorKind) {
@@ -1900,7 +1900,7 @@ impl Transaction {
                 .any(|mime| mime.eq_ignore_ascii_case(self.response_content_type.get()))
     }
 
-    /// Parses the response body with the processor RESBODY_PROCESSOR names, or stores it
+    /// Parses the response body with the processor RES_BODY_PROCESSOR names, or stores it
     /// in RESPONSE_BODY if none.
     fn inspect_response_body(&mut self, body: &[u8]) {
         match self.res_body_processor.get().parse::<BodyProcessorKind>() {

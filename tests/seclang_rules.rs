@@ -727,7 +727,7 @@ fn the_response_body_processor_is_chosen_by_ctl() {
         SecResponseBodyMimeType application/json
         SecRule RESPONSE_HEADERS:Content-Type "@beginsWith application/json" "id:100,phase:3,pass,nolog,ctl:responseBodyProcessor=JSON"
         SecRule RESPONSE_ARGS "@streq leak" "id:1,phase:4,deny,status:403"
-        SecRule RESBODY_ERROR "@eq 1" "id:2,phase:4,deny,status:500"
+        SecRule RES_BODY_ERROR "@eq 1" "id:2,phase:4,deny,status:500"
     "#);
 
     for (body, rule_id) in [(r#"{"a": "leak"}"#, Some(1)), ("{not json", Some(2))] {
@@ -1568,4 +1568,14 @@ fn extended_multipart_filenames_are_decoded_with_their_charset_and_language() {
             .as_deref(),
         Some("")
     );
+}
+
+#[test]
+fn variables_have_go_names() {
+    let mut parser = Parser::new();
+    parser
+        .from_string(
+            r#"SecRule RES_BODY_ERROR|RES_BODY_ERROR_MSG|RES_BODY_PROCESSOR|RES_BODY_PROCESSOR_ERROR|RES_BODY_PROCESSOR_ERROR_MSG|FILES_TMPNAMES "@rx x" "id:1,phase:4,pass""#,
+        )
+        .unwrap();
 }
