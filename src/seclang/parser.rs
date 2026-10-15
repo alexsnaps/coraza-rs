@@ -12,7 +12,6 @@
 //! 4. Extract directive name and options
 //! 5. Dispatch to directive handler
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -121,9 +120,6 @@ pub struct Parser {
     /// Include recursion counter (prevents DoS)
     include_count: usize,
 
-    /// Directive registry (directive name -> handler function)
-    directives: HashMap<String, DirectiveFn>,
-
     /// WAF configuration (populated by directives)
     waf_config: WafConfig,
 
@@ -140,20 +136,14 @@ pub struct Parser {
 impl Parser {
     /// Create a new parser
     pub fn new() -> Self {
-        let mut parser = Self {
+        Self {
             state: ParserState::default(),
             include_count: 0,
-            directives: HashMap::new(),
             waf_config: WafConfig::new(),
             rules: RuleGroup::new(),
             skip_failed: false,
             skipped: Vec::new(),
-        };
-
-        // Register built-in directives
-        parser.register_directives();
-
-        parser
+        }
     }
 
     /// Get reference to the WAF configuration
@@ -188,99 +178,6 @@ impl Parser {
     /// Returns [`ConfigError`] if the parsed configuration is invalid (see [`Waf::new`]).
     pub fn into_waf(self) -> Result<Waf, ConfigError> {
         WafBuilder::with_rules(self.waf_config, self.rules).build()
-    }
-
-    /// Register all built-in directives
-    fn register_directives(&mut self) {
-        // Rule directives
-        self.directives
-            .insert("secrule".to_string(), directive_sec_rule);
-        self.directives
-            .insert("secaction".to_string(), directive_sec_action);
-        self.directives
-            .insert("secmarker".to_string(), directive_sec_marker);
-
-        // Engine configuration directives
-        self.directives
-            .insert("secruleengine".to_string(), directive_sec_rule_engine);
-        self.directives.insert(
-            "secrequestbodyaccess".to_string(),
-            directive_sec_request_body_access,
-        );
-        self.directives.insert(
-            "secresponsebodyaccess".to_string(),
-            directive_sec_response_body_access,
-        );
-        self.directives.insert(
-            "secrequestbodylimit".to_string(),
-            directive_sec_request_body_limit,
-        );
-        self.directives.insert(
-            "secrequestbodylimitaction".to_string(),
-            directive_sec_request_body_limit_action,
-        );
-        self.directives.insert(
-            "secdebugloglevel".to_string(),
-            directive_sec_debug_log_level,
-        );
-        self.directives
-            .insert("secwebappid".to_string(), directive_sec_web_app_id);
-        self.directives.insert(
-            "seccomponentsignature".to_string(),
-            directive_sec_component_signature,
-        );
-
-        // Additional configuration directives
-        self.directives.insert(
-            "secserversignature".to_string(),
-            directive_sec_server_signature,
-        );
-        self.directives
-            .insert("secsensorid".to_string(), directive_sec_sensor_id);
-        self.directives.insert(
-            "secresponsebodylimit".to_string(),
-            directive_sec_response_body_limit,
-        );
-        self.directives.insert(
-            "secresponsebodylimitaction".to_string(),
-            directive_sec_response_body_limit_action,
-        );
-        self.directives.insert(
-            "secrequestbodyinmemorylimit".to_string(),
-            directive_sec_request_body_in_memory_limit,
-        );
-        self.directives.insert(
-            "secrequestbodynofileslimit".to_string(),
-            directive_sec_request_body_no_files_limit,
-        );
-        self.directives.insert(
-            "secargumentslimit".to_string(),
-            directive_sec_arguments_limit,
-        );
-        self.directives
-            .insert("secuploaddir".to_string(), directive_sec_upload_dir);
-        self.directives.insert(
-            "secuploadfilelimit".to_string(),
-            directive_sec_upload_file_limit,
-        );
-        self.directives.insert(
-            "secuploadfilemode".to_string(),
-            directive_sec_upload_file_mode,
-        );
-        self.directives.insert(
-            "secuploadkeepfiles".to_string(),
-            directive_sec_upload_keep_files,
-        );
-        self.directives
-            .insert("secauditengine".to_string(), directive_sec_audit_engine);
-        self.directives
-            .insert("secauditlog".to_string(), directive_sec_audit_log);
-        self.directives
-            .insert("secdatadir".to_string(), directive_sec_data_dir);
-        self.directives.insert(
-            "seccollectiontimeout".to_string(),
-            directive_sec_collection_timeout,
-        );
     }
 
     /// Parse directives from a string
@@ -514,7 +411,7 @@ impl Parser {
         }
 
         // Look up directive handler
-        let handler = self.directives.get(&directive_lower).copied();
+        let handler = directive_handler(&directive_lower);
 
         match handler {
             Some(func) => {
@@ -551,6 +448,42 @@ impl Default for Parser {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Handler of the directive with the given lowercase name; `None` if unknown.
+///
+/// `Include` is handled by the parser itself.
+fn directive_handler(name: &str) -> Option<DirectiveFn> {
+    let handler: DirectiveFn = match name {
+        "secrule" => directive_sec_rule,
+        "secaction" => directive_sec_action,
+        "secmarker" => directive_sec_marker,
+        "secruleengine" => directive_sec_rule_engine,
+        "secrequestbodyaccess" => directive_sec_request_body_access,
+        "secresponsebodyaccess" => directive_sec_response_body_access,
+        "secrequestbodylimit" => directive_sec_request_body_limit,
+        "secrequestbodylimitaction" => directive_sec_request_body_limit_action,
+        "secdebugloglevel" => directive_sec_debug_log_level,
+        "secwebappid" => directive_sec_web_app_id,
+        "seccomponentsignature" => directive_sec_component_signature,
+        "secserversignature" => directive_sec_server_signature,
+        "secsensorid" => directive_sec_sensor_id,
+        "secresponsebodylimit" => directive_sec_response_body_limit,
+        "secresponsebodylimitaction" => directive_sec_response_body_limit_action,
+        "secrequestbodyinmemorylimit" => directive_sec_request_body_in_memory_limit,
+        "secrequestbodynofileslimit" => directive_sec_request_body_no_files_limit,
+        "secargumentslimit" => directive_sec_arguments_limit,
+        "secuploaddir" => directive_sec_upload_dir,
+        "secuploadfilelimit" => directive_sec_upload_file_limit,
+        "secuploadfilemode" => directive_sec_upload_file_mode,
+        "secuploadkeepfiles" => directive_sec_upload_keep_files,
+        "secauditengine" => directive_sec_audit_engine,
+        "secauditlog" => directive_sec_audit_log,
+        "secdatadir" => directive_sec_data_dir,
+        "seccollectiontimeout" => directive_sec_collection_timeout,
+        _ => return None,
+    };
+    Some(handler)
 }
 
 // ============================================================================
