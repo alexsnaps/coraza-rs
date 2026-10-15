@@ -467,6 +467,47 @@ pub fn strmatch(pattern: &str) -> Result<StrMatch, MacroError> {
     })
 }
 
+/// `@restpath TEMPLATE`: matches a path against TEMPLATE, such as
+/// `/users/{id}/{name}`, and puts what each `{name}` matched in `ARGS_PATH` (and
+/// `ARGS`), as Go Coraza does.
+///
+/// A segment matches up to the next `/` or `?`. As in Go, the rest of TEMPLATE is a
+/// regular expression, matched anywhere in the value.
+#[derive(Debug, Clone)]
+pub struct RestPath {
+    regex: Regex,
+}
+
+impl Operator for RestPath {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
+        let Some(captures) = self.regex.captures(input) else {
+            return false;
+        };
+        if let Some(tx) = tx {
+            for name in self.regex.capture_names().flatten() {
+                if let Some(segment) = captures.name(name) {
+                    tx.set_path_argument(name, segment.as_str());
+                }
+            }
+        }
+        true
+    }
+}
+
+/// Creates a `@restpath` operator for `template`.
+///
+/// # Errors
+///
+/// If `template`, its segments replaced, isn't a valid regular expression, or a segment
+/// name isn't a valid group name (letters, digits and `_`).
+pub fn rest_path(template: &str) -> Result<RestPath, String> {
+    let segment = Regex::new(r"\{([^}]+)\}").expect("valid segment pattern");
+    let pattern = segment.replace_all(template, "(?P<$1>[^?/]+)");
+    Regex::new(&pattern)
+        .map(|regex| RestPath { regex })
+        .map_err(|e| format!("invalid @restpath template {template:?}: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

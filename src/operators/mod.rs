@@ -7,6 +7,7 @@
 //! They return boolean results indicating whether the match succeeded.
 
 pub mod detection;
+pub mod external;
 pub mod ip;
 pub mod macros;
 mod pattern;
@@ -14,6 +15,7 @@ mod simple;
 pub mod validation;
 
 pub use detection::{DetectSQLi, DetectXSS, detect_sqli, detect_xss};
+pub use external::{InspectFile, Rbl, inspect_file, rbl};
 pub use ip::{
     IpMatch, IpMatchFromDataset, IpMatchFromFile, ip_match, ip_match_from_dataset,
     ip_match_from_file,
@@ -25,17 +27,17 @@ use std::path::Path;
 
 use crate::transaction::Transaction;
 pub use pattern::{
-    Pm, PmFromDataset, PmFromFile, Rx, StrMatch, Within, pm, pm_from_dataset, pm_from_file, rx,
-    strmatch, within,
+    Pm, PmFromDataset, PmFromFile, RestPath, Rx, StrMatch, Within, pm, pm_from_dataset,
+    pm_from_file, rest_path, rx, strmatch, within,
 };
 pub use simple::{
     BeginsWith, Contains, EndsWith, Eq, Ge, Gt, Le, Lt, StrEq, begins_with, contains, ends_with,
     eq, ge, gt, le, lt, streq,
 };
 pub use validation::{
-    NoMatch, UnconditionalMatch, ValidateByteRange, ValidateUrlEncoding, ValidateUtf8Encoding,
-    no_match, unconditional_match, validate_byte_range, validate_url_encoding,
-    validate_utf8_encoding,
+    NoMatch, UnconditionalMatch, ValidateByteRange, ValidateNid, ValidateUrlEncoding,
+    ValidateUtf8Encoding, no_match, unconditional_match, validate_byte_range, validate_nid,
+    validate_url_encoding, validate_utf8_encoding,
 };
 
 /// Trait for rule operators.
@@ -173,7 +175,12 @@ operators! {
     ValidateUtf8Encoding: "validateutf8encoding" => |_, _| Ok(validate_utf8_encoding()),
     DetectSQLi: "detectsqli" => |_, _| Ok(detect_sqli()),
     DetectXSS: "detectxss" => |_, _| Ok(detect_xss()),
-    UnconditionalMatch: "unconditionalmatch" => |_, _| Ok(unconditional_match()),
+    // Go Coraza's @geoLookup matches unconditionally too
+    UnconditionalMatch: "unconditionalmatch" | "geolookup" => |_, _| Ok(unconditional_match()),
+    RestPath: "restpath" => |arg, _| rest_path(arg),
+    ValidateNid: "validatenid" => |arg, _| validate_nid(arg),
+    InspectFile: "inspectfile" => |arg, _| Ok(inspect_file(arg)),
+    Rbl: "rbl" => |arg, _| Ok(rbl(arg)),
     NoMatch: "nomatch" => |_, _| Ok(no_match()),
 }
 

@@ -1464,3 +1464,76 @@ fn audit_log_entries_can_go_to_syslog() {
     assert!(message.contains(" com.coraza.waf["), "{message}");
     assert!(message.contains("[id \"1\"]"), "{message}");
 }
+
+#[test]
+fn restpath_fills_args_path_from_the_path_template() {
+    let waf = waf(r#"
+        SecRule REQUEST_FILENAME "@restpath /users/{id}/{name}" "id:1,phase:1,pass,nolog"
+        SecRule ARGS_PATH:id "@streq 123" "id:2,phase:1,pass,setvar:tx.id=%{ARGS_PATH.id}"
+        SecRule ARGS:name "@streq juan" "id:3,phase:1,deny,status:403"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_uri("/users/123/juan?q=1", "GET", "HTTP/1.1");
+    let interruption = tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "id").as_deref(), Some("123"));
+    assert_eq!(interruption.map(|i| i.rule_id), Some(3));
+}
+
+#[test]
+fn validate_nid_finds_valid_national_ids() {
+    let waf = waf(r#"
+        SecRule ARGS:rut "@validateNid cl [0-9.]+-[0-9kK]" "id:1,phase:1,pass,capture,setvar:tx.rut=%{TX.0}"
+        SecRule ARGS:ssn "@validateNid us [0-9-]+" "id:2,phase:1,deny,status:403"
+    "#);
+
+    let mut tx = request_with_arg(&waf, "rut", "mine is 10727393-K");
+    assert!(tx.process_request_headers().is_none());
+    assert_eq!(tx_var(&tx, "rut").as_deref(), Some("10727393-K"));
+
+    let mut tx = request_with_arg(&waf, "ssn", "078-05-1120");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(2));
+    // Same digits throughout, or in sequence, are not valid
+    for ssn in ["111-11-1111", "123-45-6789"] {
+        let mut tx = request_with_arg(&waf, "ssn", ssn);
+        assert!(tx.process_request_headers().is_none(), "{ssn}");
+    }
+}
+
+#[test]
+fn geo_lookup_always_matches_as_in_go() {
+    let waf = waf(r#"SecRule REMOTE_ADDR "@geoLookup" "id:1,phase:1,deny,status:403""#);
+    let mut tx = waf.new_transaction();
+    tx.process_connection("192.0.2.1", 1, "192.0.2.2", 80);
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+}
+
+#[test]
+fn rbl_does_not_match_names_that_do_not_resolve() {
+    let waf = waf(r#"SecRule REMOTE_ADDR "@rbl rbl.invalid" "id:1,phase:1,deny,status:403""#);
+    let mut tx = waf.new_transaction();
+    tx.process_connection("192.0.2.1", 1, "192.0.2.2", 80);
+    assert!(tx.process_request_headers().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn inspect_file_runs_a_program_on_the_value() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("inspect.sh");
+    std::fs::write(&script, "#!/bin/sh\necho \"$1\"\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let waf = waf(&format!(
+        r#"SecRule ARGS:f "@inspectFile {}" "id:1,phase:1,deny,status:403""#,
+        script.display()
+    ));
+
+    // As in Go, it matches unless the program's output starts with 1
+    let mut tx = request_with_arg(&waf, "f", "0 virus found");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+    let mut tx = request_with_arg(&waf, "f", "1 clean");
+    assert!(tx.process_request_headers().is_none());
+}

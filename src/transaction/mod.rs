@@ -1309,6 +1309,21 @@ impl Transaction {
         }
     }
 
+    /// Sets ARGS_PATH `key` to `value`, replacing its first value, as `@restpath` does;
+    /// ARGS follows.
+    pub(crate) fn set_path_argument(&mut self, key: &str, value: &str) {
+        let previous = self.args_path.get(key).into_iter().next();
+        let Some(previous) = previous else {
+            self.add_path_argument(key, value);
+            return;
+        };
+        self.args_path.set_index(key, 0, value);
+        match self.args.get(key).iter().position(|arg| *arg == previous) {
+            Some(index) => self.args.set_index(key, index, value),
+            None => self.args.add(key, value),
+        }
+    }
+
     /// Adds a response body argument to RESPONSE_ARGS, within the argument limit as
     /// [`Transaction::add_get_argument`] does.
     pub fn add_response_argument(&mut self, key: &str, value: &str) {

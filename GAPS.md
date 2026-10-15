@@ -221,6 +221,12 @@ None of these is used by CRS v4.30.0.
 - [ ] **Operators:** `@geoLookup`, `@inspectFile`, `@ipMatchFromDataset`, `@pmFromDataset`, `@rbl`, `@restpath`,
   `@validateNid` and `@validateSchema`.
   - `@ipMatchFromDataset` and `@pmFromDataset` are done, with `SecDataset` in section 4.
+  - Done for `@geoLookup` (which, as in Go, matches unconditionally), `@inspectFile` (runs a program, as Go does,
+    with its 10 s timeout), `@rbl` (500 ms DNS lookup; unlike Go, no TXT record is read, as the standard library
+    resolves addresses only), `@restpath` (fills `ARGS_PATH`) and `@validateNid` (`cl` and `us`, with Go's test
+    vectors).
+  - Left: `@validateSchema`, which needs a JSON Schema validator. Go uses `kaptinlin/jsonschema`; a Rust one would
+    be a new dependency, which is your call.
 - [x] **Action:** `accuracy`.
   - Done with the error log line of section 4, which prints it.
 - [ ] **Variables:** `MULTIPART_FILENAME_CHARSET` and `MULTIPART_FILENAME_LANGUAGE`.
