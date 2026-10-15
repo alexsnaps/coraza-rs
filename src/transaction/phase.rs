@@ -80,7 +80,7 @@ impl Transaction {
 
         for rule in rules.get_rules() {
             if self.flow.interruption.is_some() && phase != RulePhase::Logging {
-                return;
+                break;
             }
             // An earlier `allow` skips the rest of this phase
             if self.is_allowed(phase) {
@@ -109,10 +109,11 @@ impl Transaction {
             rule.evaluate(self);
         }
 
-        // `allow:phase` ends with the phase that triggered it
+        // As in Go Coraza, `allow:phase` and `skip` end with the phase; `skipAfter` doesn't
         if self.flow.allow == AllowType::Phase {
             self.flow.allow = AllowType::Unset;
         }
+        self.flow.skip = 0;
     }
 
     /// The interruption, if a disruptive action or a body limit interrupted the transaction.

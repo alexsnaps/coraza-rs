@@ -321,6 +321,21 @@ fn skip_skips_the_next_rules_of_the_phase() {
 }
 
 #[test]
+fn skip_ends_with_its_phase() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,nolog,skip:1"
+        SecAction "id:2,phase:2,pass,nolog,setvar:tx.phase2=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+    tx.process_request_body(b"");
+
+    // As in Go Coraza, rules left to skip at the end of a phase aren't skipped in the next
+    assert_eq!(tx_var(&tx, "phase2").as_deref(), Some("1"));
+}
+
+#[test]
 fn skip_after_resumes_after_the_marker() {
     let waf = waf(r#"
         SecAction "id:1,phase:1,pass,nolog,skipAfter:END"
