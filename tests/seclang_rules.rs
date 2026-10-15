@@ -1537,3 +1537,35 @@ fn inspect_file_runs_a_program_on_the_value() {
     let mut tx = request_with_arg(&waf, "f", "1 clean");
     assert!(tx.process_request_headers().is_none());
 }
+
+#[test]
+fn extended_multipart_filenames_are_decoded_with_their_charset_and_language() {
+    use coraza::RuleVariable::{
+        MultipartFilename, MultipartFilenameCharset, MultipartFilenameLanguage,
+    };
+
+    let waf = waf("SecRequestBodyAccess On");
+    let body = "--b\r\nContent-Disposition: form-data; name=\"f\"; filename=\"plain.txt\"; filename*=UTF-8'en'%E2%82%AC.php\r\n\r\nx\r\n--b--\r\n";
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
+    tx.process_request_headers();
+    tx.process_request_body(body.as_bytes()).unwrap();
+
+    let values = |variable| {
+        let mut values: Vec<String> = match tx.collection(variable) {
+            Some(coraza::transaction::VariableCollection::Map(map)) => map.get("f"),
+            _ => Vec::new(),
+        };
+        values.sort();
+        values
+    };
+    assert_eq!(values(MultipartFilename), ["plain.txt", "€.php"]);
+    assert_eq!(values(MultipartFilenameCharset), ["UTF-8"]);
+    assert_eq!(values(MultipartFilenameLanguage), ["en"]);
+    assert_eq!(tx.files().get("f"), ["€.php"]);
+    assert_eq!(
+        tx.get_variable(coraza::RuleVariable::MultipartStrictError, None)
+            .as_deref(),
+        Some("")
+    );
+}

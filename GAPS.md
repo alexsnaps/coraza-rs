@@ -229,7 +229,10 @@ None of these is used by CRS v4.30.0.
     be a new dependency, which is your call.
 - [x] **Action:** `accuracy`.
   - Done with the error log line of section 4, which prints it.
-- [ ] **Variables:** `MULTIPART_FILENAME_CHARSET` and `MULTIPART_FILENAME_LANGUAGE`.
+- [x] **Variables:** `MULTIPART_FILENAME_CHARSET` and `MULTIPART_FILENAME_LANGUAGE`.
+  - Done: as in Go, a part's RFC 5987 `filename*=charset'language'value` gives its file name, percent-decoded,
+    with `filename` kept in `MULTIPART_FILENAME` when different, and its charset and language in these two
+    variables; a malformed one sets `MULTIPART_STRICT_ERROR`. `filename*` was ignored before.
 - [ ] **Go's spellings.**
   - `RES_BODY_ERROR`, `RES_BODY_ERROR_MSG`, `RES_BODY_PROCESSOR`, `RES_BODY_PROCESSOR_ERROR` and
     `RES_BODY_PROCESSOR_ERROR_MSG`: ours are `RESBODY_*`.

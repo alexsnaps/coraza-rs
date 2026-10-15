@@ -87,6 +87,19 @@ impl BodyProcessor for MultipartBodyProcessor {
             if let Some(filename) = &part.filename {
                 tx.multipart_filename.add(&part.name, filename);
             }
+            // The name a backend reading `filename` rather than `filename*` would use
+            if let Some(alt_filename) = &part.alt_filename {
+                tx.multipart_filename.add(&part.name, alt_filename);
+            }
+            if let Some(encoding) = &part.filename_encoding {
+                tx.multipart_filename_charset
+                    .add(&part.name, &encoding.charset);
+                tx.multipart_filename_language
+                    .add(&part.name, &encoding.language);
+            }
+            if part.malformed_filename {
+                tx.multipart_strict_error.set("1");
+            }
 
             // Add Content-Type if present
             if let Some(content_type) = &part.content_type {

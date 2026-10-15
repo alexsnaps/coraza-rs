@@ -239,6 +239,12 @@ macro_rules! variable_storage {
             RuleVariable::ArgsPath => Some(Map($($borrow)+ $tx.args_path)),
             RuleVariable::MultipartName => Some(Map($($borrow)+ $tx.multipart_name)),
             RuleVariable::MultipartFilename => Some(Map($($borrow)+ $tx.multipart_filename)),
+            RuleVariable::MultipartFilenameCharset => {
+                Some(Map($($borrow)+ $tx.multipart_filename_charset))
+            }
+            RuleVariable::MultipartFilenameLanguage => {
+                Some(Map($($borrow)+ $tx.multipart_filename_language))
+            }
             RuleVariable::RequestHeaders => Some(Map($($borrow)+ $tx.request_headers)),
             RuleVariable::RequestCookies => Some(Map($($borrow)+ $tx.request_cookies)),
             RuleVariable::ResponseHeaders => Some(Map($($borrow)+ $tx.response_headers)),
@@ -533,6 +539,12 @@ pub struct Transaction {
 
     /// MULTIPART_FILENAME - The file name of each multipart file part, by part name
     pub(crate) multipart_filename: Map,
+
+    /// MULTIPART_FILENAME_CHARSET - The charset of each part's `filename*`, by part name
+    pub(crate) multipart_filename_charset: Map,
+
+    /// MULTIPART_FILENAME_LANGUAGE - The language of each part's `filename*`, by part name
+    pub(crate) multipart_filename_language: Map,
 
     /// MULTIPART_STRICT_ERROR - Set to "1" when multipart parsing fails
     pub(crate) multipart_strict_error: Single,
@@ -839,6 +851,12 @@ impl Transaction {
             multipart_part_headers: Map::new_case_sensitive(RuleVariable::MultipartPartHeaders),
             multipart_name: Map::new_case_sensitive(RuleVariable::MultipartName),
             multipart_filename: Map::new_case_sensitive(RuleVariable::MultipartFilename),
+            multipart_filename_charset: Map::new_case_sensitive(
+                RuleVariable::MultipartFilenameCharset,
+            ),
+            multipart_filename_language: Map::new_case_sensitive(
+                RuleVariable::MultipartFilenameLanguage,
+            ),
             multipart_strict_error: Single::new(RuleVariable::MultipartStrictError),
             multipart_duplicate_part_header: flag(RuleVariable::MultipartDuplicatePartHeader),
             multipart_invalid_quoting: flag(RuleVariable::MultipartInvalidQuoting),

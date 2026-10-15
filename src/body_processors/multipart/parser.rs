@@ -39,14 +39,33 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+/// The charset and language of an RFC 5987 `filename*` parameter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilenameEncoding {
+    /// e.g. `UTF-8`
+    pub charset: String,
+    /// e.g. `en`; may be empty
+    pub language: String,
+}
+
 /// A single part in a multipart message
 #[derive(Debug, Clone)]
 pub struct Part {
     /// Form field name (from Content-Disposition name parameter)
     pub name: String,
 
-    /// Filename (from Content-Disposition filename parameter), if this is a file upload
+    /// Filename, if this is a file upload: from the Content-Disposition `filename*`
+    /// parameter, decoded, or else from `filename`
     pub filename: Option<String>,
+
+    /// The `filename` parameter, when `filename*` gave a different name
+    pub alt_filename: Option<String>,
+
+    /// The charset and language of the `filename*` parameter
+    pub filename_encoding: Option<FilenameEncoding>,
+
+    /// Whether the `filename*` parameter is malformed
+    pub malformed_filename: bool,
 
     /// Content-Type of this part, if specified
     pub content_type: Option<String>,
@@ -176,6 +195,9 @@ fn parse_part(data: &[u8]) -> Result<Part, ParseError> {
     Ok(Part {
         name: disposition.name,
         filename: disposition.filename,
+        alt_filename: disposition.alt_filename,
+        filename_encoding: disposition.filename_encoding,
+        malformed_filename: disposition.malformed_extended_filename,
         content_type,
         headers,
         repeats_header,
@@ -210,7 +232,14 @@ fn parse_headers(data: &[u8]) -> Result<HashMap<String, Vec<String>>, ParseError
 /// What a part's Content-Disposition header says.
 struct ContentDisposition {
     name: String,
+    /// `filename*` decoded, or else `filename`
     filename: Option<String>,
+    /// `filename`, when `filename*` gave a different one
+    alt_filename: Option<String>,
+    /// The charset and language of `filename*`
+    filename_encoding: Option<FilenameEncoding>,
+    /// Whether `filename*` isn't `charset'language'value` or holds an invalid escape
+    malformed_extended_filename: bool,
     /// Whether a parameter appears more than once; the last one counts
     repeats_param: bool,
     /// Whether `filename*` is a quoted string
@@ -246,12 +275,61 @@ fn extract_content_disposition(
         ParseError::MalformedHeaders("missing name in Content-Disposition".to_string())
     })?;
 
-    Ok(ContentDisposition {
+    // As Go Coraza reads RFC 5987's `filename*=charset'language'value`
+    let plain = param("filename");
+    let mut disposition = ContentDisposition {
         name,
-        filename: param("filename"),
+        filename: plain.clone(),
+        alt_filename: None,
+        filename_encoding: None,
+        malformed_extended_filename: false,
         repeats_param,
         quoted_extended_filename,
-    })
+    };
+    if let Some(extended) = param("filename*") {
+        match extended.splitn(3, '\'').collect::<Vec<_>>()[..] {
+            [charset, language, value] => {
+                let (decoded, invalid_escape) = percent_decode_lenient(value);
+                disposition.alt_filename =
+                    plain.filter(|plain| !plain.is_empty() && *plain != decoded);
+                disposition.filename = Some(decoded);
+                disposition.filename_encoding = Some(FilenameEncoding {
+                    charset: charset.to_string(),
+                    language: language.to_string(),
+                });
+                disposition.malformed_extended_filename = invalid_escape;
+            }
+            _ => disposition.malformed_extended_filename = true,
+        }
+    }
+    Ok(disposition)
+}
+
+/// `value` with its `%XX` escapes decoded, and whether it held an invalid one, which is
+/// kept as written.
+fn percent_decode_lenient(value: &str) -> (String, bool) {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut invalid = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let escaped = (bytes[i] == b'%')
+            .then(|| bytes.get(i + 1..i + 3))
+            .flatten()
+            .and_then(|hex| u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok());
+        match escaped {
+            Some(byte) => {
+                decoded.push(byte);
+                i += 3;
+            }
+            None => {
+                invalid |= bytes[i] == b'%';
+                decoded.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    (String::from_utf8_lossy(&decoded).into_owned(), invalid)
 }
 
 /// One `name=value` parameter of a header.

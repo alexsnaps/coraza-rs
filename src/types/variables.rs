@@ -238,6 +238,10 @@ pub enum RuleVariable {
     /// MULTIPART_DUPLICATE_PART_HEADER - 1 if a multipart part repeats a header or a
     /// `Content-Disposition` parameter, 0 otherwise
     MultipartDuplicatePartHeader,
+    /// MULTIPART_FILENAME_CHARSET - The charset of each part's `filename*`, by part name
+    MultipartFilenameCharset,
+    /// MULTIPART_FILENAME_LANGUAGE - The language of each part's `filename*`, by part name
+    MultipartFilenameLanguage,
 }
 
 /// Lookup table of all variable names in enum order.
@@ -351,6 +355,8 @@ const VARIABLE_NAMES: &[&str] = &[
     "URI_PARSE_ERROR",
     "ARGUMENTS_LIMIT_REACHED",
     "MULTIPART_DUPLICATE_PART_HEADER",
+    "MULTIPART_FILENAME_CHARSET",
+    "MULTIPART_FILENAME_LANGUAGE",
 ];
 
 impl RuleVariable {
@@ -432,6 +438,8 @@ impl RuleVariable {
                 | Self::FilesNames
                 | Self::FilesTmpContent
                 | Self::MultipartFilename
+                | Self::MultipartFilenameCharset
+                | Self::MultipartFilenameLanguage
                 | Self::MultipartName
                 | Self::MatchedVarsNames
                 | Self::MatchedVars
@@ -688,6 +696,8 @@ mod tests {
             RuleVariable::UriParseError,
             RuleVariable::ArgumentsLimitReached,
             RuleVariable::MultipartDuplicatePartHeader,
+            RuleVariable::MultipartFilenameCharset,
+            RuleVariable::MultipartFilenameLanguage,
         ];
 
         for variant in &all_variants {
