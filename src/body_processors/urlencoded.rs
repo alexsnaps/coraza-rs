@@ -25,10 +25,8 @@ impl BodyProcessor for UrlencodedBodyProcessor {
         let body_str = String::from_utf8_lossy(body).to_string();
         let body_len = body.len();
 
-        // Populate ARGS_POST, and ARGS with GET and POST arguments
         for (key, value) in parse_query(&body_str) {
-            tx.args_post_mut().add(&key, &value);
-            tx.args_mut().add(&key, &value);
+            tx.add_post_argument(&key, &value);
         }
 
         // Store REQUEST_BODY and REQUEST_BODY_LENGTH

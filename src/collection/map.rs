@@ -216,6 +216,11 @@ impl Map {
         self.data.len()
     }
 
+    /// Number of values, counting each value of a repeated key.
+    pub fn value_count(&self) -> usize {
+        self.data.values().map(Vec::len).sum()
+    }
+
     /// Whether the map has no keys.
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()

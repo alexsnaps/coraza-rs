@@ -50,9 +50,20 @@ Suggested order: 1 → 2 → 3 → 6, then 4 and 5. The first three items of 1 a
     defaults) does nothing at runtime, as in Go. `WafBuilder::set_default_actions` and `Waf::get_default_actions`
     are removed. With CRS loaded, a scratch probe now sees a benign request pass and two attacks denied by 949110;
     the load check skips 13 directives.
-- [ ] **Variables `ARGUMENTS_LIMIT_REACHED`, `URI_PARSE_ERROR` and `MULTIPART_DUPLICATE_PART_HEADER`.** 4 skipped:
+- [x] **Variables `ARGUMENTS_LIMIT_REACHED`, `URI_PARSE_ERROR` and `MULTIPART_DUPLICATE_PART_HEADER`.** 4 skipped:
   Coraza's own rules 200003 (`MULTIPART_STRICT_ERROR`, which names the last one in its `logdata`), 200004, 200005
   and 200009 in `coraza.conf-recommended`.
+  - Done: the three variables exist, start at `0` as in Go, and are set by the engine.
+    - `SecArgumentsLimit` was never enforced. `Transaction::add_get_argument`, `add_post_argument` and
+      `add_response_argument` now drop an argument once its collection holds the limit's worth of values (each
+      value of a repeated key counts, as in Go) and set `ARGUMENTS_LIMIT_REACHED`. Every body processor goes through
+      them, which also puts JSON and multipart arguments in `ARGS`: before, only urlencoded ones got there.
+    - `URI_PARSE_ERROR` is set for a URI that Go's `url.ParseRequestURI` would reject: control characters, invalid
+      `%`-escapes in the path, or neither `*`, an absolute path nor an absolute URL. Host validation is not
+      replicated.
+    - A multipart part that repeats a header or a `Content-Disposition` parameter sets
+      `MULTIPART_DUPLICATE_PART_HEADER` and `MULTIPART_STRICT_ERROR`, as in Go.
+    - The CRS load check now skips 9 directives.
 - [ ] **Transformation `removeCommentsChar`.** 1 skipped: 942190.
 - [ ] **Configuration directives.** 8 skipped: `SecAuditLogFormat`, `SecAuditLogParts`, `SecAuditLogType`,
   `SecAuditLogRelevantStatus`, `SecRxPreFilter`, `SecRequestBodyJsonDepthLimit`, `SecResponseBodyJsonDepthLimit`

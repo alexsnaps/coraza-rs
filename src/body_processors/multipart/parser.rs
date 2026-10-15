@@ -55,6 +55,9 @@ pub struct Part {
     #[allow(dead_code)]
     pub headers: HashMap<String, Vec<String>>,
 
+    /// Whether the part repeats a header, or a parameter of its Content-Disposition
+    pub repeats_header: bool,
+
     /// The part body data
     pub data: Vec<u8>,
 }
@@ -157,8 +160,9 @@ fn parse_part(data: &[u8]) -> Result<Part, ParseError> {
     // Parse headers
     let headers = parse_headers(header_data)?;
 
-    // Extract name and filename from Content-Disposition
-    let (name, filename) = extract_content_disposition(&headers)?;
+    let disposition = extract_content_disposition(&headers)?;
+    let repeats_header =
+        disposition.repeats_param || headers.values().any(|values| values.len() > 1);
 
     // Extract Content-Type
     let content_type = headers
@@ -167,10 +171,11 @@ fn parse_part(data: &[u8]) -> Result<Part, ParseError> {
         .map(|s| s.to_string());
 
     Ok(Part {
-        name,
-        filename,
+        name: disposition.name,
+        filename: disposition.filename,
         content_type,
         headers,
+        repeats_header,
         data: body_data.to_vec(),
     })
 }
@@ -198,37 +203,54 @@ fn parse_headers(data: &[u8]) -> Result<HashMap<String, Vec<String>>, ParseError
     Ok(headers)
 }
 
+/// What a part's Content-Disposition header says.
+struct ContentDisposition {
+    name: String,
+    filename: Option<String>,
+    /// Whether a parameter appears more than once; the last one counts
+    repeats_param: bool,
+}
+
 /// Extract name and filename from Content-Disposition header
 ///
 /// Example: `form-data; name="field"; filename="file.txt"`
 fn extract_content_disposition(
     headers: &HashMap<String, Vec<String>>,
-) -> Result<(String, Option<String>), ParseError> {
+) -> Result<ContentDisposition, ParseError> {
     let disposition = headers
         .get("content-disposition")
         .and_then(|v| v.first())
         .ok_or_else(|| ParseError::MalformedHeaders("missing Content-Disposition".to_string()))?;
 
-    // Parse parameters from Content-Disposition
     let params = parse_header_params(disposition);
+    let param = |key: &str| {
+        params
+            .iter()
+            .rev()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+    };
+    let repeats_param = params
+        .iter()
+        .enumerate()
+        .any(|(i, (key, _))| params[..i].iter().any(|(earlier, _)| earlier == key));
 
-    let name = params
-        .get("name")
-        .ok_or_else(|| {
-            ParseError::MalformedHeaders("missing name in Content-Disposition".to_string())
-        })?
-        .clone();
+    let name = param("name").ok_or_else(|| {
+        ParseError::MalformedHeaders("missing name in Content-Disposition".to_string())
+    })?;
 
-    let filename = params.get("filename").cloned();
-
-    Ok((name, filename))
+    Ok(ContentDisposition {
+        name,
+        filename: param("filename"),
+        repeats_param,
+    })
 }
 
 /// Parse header parameters like: `form-data; name="value"; filename="file.txt"`
 ///
-/// Returns a map of parameter names to values (with quotes removed)
-fn parse_header_params(header: &str) -> HashMap<String, String> {
-    let mut params = HashMap::new();
+/// Returns the parameters in order, as lowercase names and values with quotes removed
+fn parse_header_params(header: &str) -> Vec<(String, String)> {
+    let mut params = Vec::new();
 
     for part in header.split(';') {
         let part = part.trim();
@@ -242,7 +264,7 @@ fn parse_header_params(header: &str) -> HashMap<String, String> {
                 value = value[1..value.len() - 1].to_string();
             }
 
-            params.insert(key, value);
+            params.push((key, value));
         }
     }
 
@@ -462,8 +484,11 @@ value\r\n\
         let header = "form-data; name=\"field\"; filename=\"file.txt\"";
         let params = parse_header_params(header);
 
-        assert_eq!(params.get("name"), Some(&"field".to_string()));
-        assert_eq!(params.get("filename"), Some(&"file.txt".to_string()));
+        let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+        assert_eq!(
+            params,
+            [pair("name", "field"), pair("filename", "file.txt")]
+        );
     }
 
     #[test]

@@ -8,6 +8,10 @@
 
 use crate::types::{AuditEngineStatus, BodyLimitAction, RuleEngineStatus};
 
+/// Default maximum number of arguments per collection (`SecArgumentsLimit`), as in Go
+/// Coraza.
+pub const DEFAULT_ARGUMENT_LIMIT: usize = 1000;
+
 /// Configuration for a WAF instance.
 ///
 /// A plain set of settings: build one with struct-update syntax over [`Default`], or let
@@ -118,7 +122,7 @@ impl Default for WafConfig {
             audit_log: String::new(),
             collection_timeout: 3600,
             debug_log_level: 0,
-            argument_limit: 1000,
+            argument_limit: DEFAULT_ARGUMENT_LIMIT,
             web_app_id: String::new(),
             sensor_id: String::new(),
             server_signature: String::new(),

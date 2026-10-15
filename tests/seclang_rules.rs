@@ -450,3 +450,102 @@ fn invalid_default_actions_are_parse_errors() {
         .unwrap_err();
     assert!(err.message.contains("already"), "{}", err.message);
 }
+
+#[test]
+fn arguments_over_the_limit_are_dropped_and_flagged() {
+    let waf = waf(r#"
+        SecArgumentsLimit 2
+        SecRule ARGUMENTS_LIMIT_REACHED "@eq 1" "id:1,phase:1,deny,status:400"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_uri("/?a=1&b=2", "GET", "HTTP/1.1");
+    assert!(tx.process_request_headers().is_none());
+    assert_eq!(
+        tx.get_variable(coraza::RuleVariable::ArgumentsLimitReached, None)
+            .as_deref(),
+        Some("0")
+    );
+
+    // Each value counts, not each key
+    let mut tx = waf.new_transaction();
+    tx.process_uri("/?a=1&a=2&a=3", "GET", "HTTP/1.1");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+    assert_eq!(tx.args_get().get("a"), vec!["1", "2"]);
+}
+
+#[test]
+fn body_arguments_of_every_processor_are_in_args() {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule ARGS "@streq evil" "id:1,phase:2,deny,status:403"
+    "#);
+
+    let multipart = "--b\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nevil\r\n--b--\r\n";
+    for (content_type, body) in [
+        ("application/x-www-form-urlencoded", "a=evil"),
+        ("application/json", r#"{"a": "evil"}"#),
+        ("multipart/form-data; boundary=b", multipart),
+    ] {
+        let mut tx = waf.new_transaction();
+        tx.add_request_header("Content-Type", content_type);
+        tx.process_request_headers();
+        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        assert_eq!(interruption.map(|i| i.rule_id), Some(1), "{content_type}");
+    }
+}
+
+#[test]
+fn unparsable_uris_are_flagged() {
+    let waf = waf(r#"SecRule URI_PARSE_ERROR "@eq 1" "id:1,phase:1,deny,status:400""#);
+
+    for (uri, flagged) in [
+        ("/a/b?c=%zz", false),
+        ("*", false),
+        ("http://example.com/a", false),
+        ("/a\0b", true),
+        ("/a\nb", true),
+        ("/%zz", true),
+        ("relative/path", true),
+        ("", true),
+    ] {
+        let mut tx = waf.new_transaction();
+        tx.process_uri(uri, "GET", "HTTP/1.1");
+        let interruption = tx.process_request_headers();
+        assert_eq!(interruption.is_some(), flagged, "{uri:?}");
+    }
+}
+
+#[test]
+fn repeated_multipart_part_headers_are_flagged() {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule MULTIPART_DUPLICATE_PART_HEADER "@eq 1" "id:1,phase:2,deny,status:400"
+    "#);
+
+    for (part_headers, flagged) in [
+        ("Content-Disposition: form-data; name=\"a\"", false),
+        (
+            "Content-Disposition: form-data; name=\"a\"\r\nContent-Type: text/plain\r\nContent-Type: text/html",
+            true,
+        ),
+        (
+            "Content-Disposition: form-data; name=\"a\"; name=\"b\"",
+            true,
+        ),
+    ] {
+        let body = format!("--b\r\n{part_headers}\r\n\r\nx\r\n--b--\r\n");
+        let mut tx = waf.new_transaction();
+        tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
+        tx.process_request_headers();
+        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        assert_eq!(interruption.is_some(), flagged, "{part_headers:?}");
+        assert_eq!(
+            tx.get_variable(coraza::RuleVariable::MultipartStrictError, None)
+                .as_deref()
+                == Some("1"),
+            flagged,
+            "{part_headers:?}"
+        );
+    }
+}

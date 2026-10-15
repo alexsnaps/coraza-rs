@@ -11,6 +11,7 @@ use crate::RuleVariable;
 use crate::actions::AllowType;
 use crate::body_processors::{BodyProcessorKind, BodyProcessorOptions};
 use crate::collection::{Map, Single};
+use crate::config::DEFAULT_ARGUMENT_LIMIT;
 use crate::rules::RuleGroup;
 use crate::types::{RuleEngineStatus, RulePhase};
 
@@ -123,6 +124,13 @@ macro_rules! variable_storage {
             RuleVariable::ReqbodyErrorMsg => Some(Single($($borrow)+ $tx.reqbody_error_msg)),
             RuleVariable::FilesCombinedSize => Some(Single($($borrow)+ $tx.files_combined_size)),
             RuleVariable::MultipartStrictError => Some(Single($($borrow)+ $tx.multipart_strict_error)),
+            RuleVariable::MultipartDuplicatePartHeader => {
+                Some(Single($($borrow)+ $tx.multipart_duplicate_part_header))
+            }
+            RuleVariable::UriParseError => Some(Single($($borrow)+ $tx.uri_parse_error)),
+            RuleVariable::ArgumentsLimitReached => {
+                Some(Single($($borrow)+ $tx.arguments_limit_reached))
+            }
             RuleVariable::ResponseStatus => Some(Single($($borrow)+ $tx.response_status)),
             RuleVariable::ResponseProtocol => Some(Single($($borrow)+ $tx.response_protocol)),
             RuleVariable::ResponseContentType => Some(Single($($borrow)+ $tx.response_content_type)),
@@ -293,6 +301,12 @@ pub struct Transaction {
     /// REQBODY_ERROR_MSG - Why the request body processor failed
     reqbody_error_msg: Single,
 
+    /// URI_PARSE_ERROR - "1" when the request URI could not be parsed
+    uri_parse_error: Single,
+
+    /// ARGUMENTS_LIMIT_REACHED - "1" when arguments were dropped over `argument_limit`
+    arguments_limit_reached: Single,
+
     /// FILES - Original file names from multipart/form-data
     pub(crate) files: Map,
 
@@ -313,6 +327,9 @@ pub struct Transaction {
 
     /// MULTIPART_STRICT_ERROR - Set to "1" when multipart parsing fails
     pub(crate) multipart_strict_error: Single,
+
+    /// MULTIPART_DUPLICATE_PART_HEADER - "1" when a part repeats a header or parameter
+    pub(crate) multipart_duplicate_part_header: Single,
 
     /// REQUEST_XML - Parsed XML data (attributes and content)
     pub(crate) request_xml: Map,
@@ -350,6 +367,10 @@ pub struct Transaction {
 
     /// Request body size limit in bytes (controlled by ctl:requestBodyLimit)
     pub(crate) request_body_limit: i64,
+
+    /// Most values ARGS_GET, ARGS_POST and RESPONSE_ARGS each hold; see
+    /// [`Transaction::add_get_argument`]
+    argument_limit: usize,
 
     /// Force REQUEST_BODY variable creation (controlled by ctl:forceRequestBodyVariable)
     pub(crate) force_request_body_variable: bool,
@@ -405,6 +426,55 @@ impl Default for Transaction {
     }
 }
 
+/// A `0`/`1` variable, starting at `0` as in Go Coraza.
+fn flag(variable: RuleVariable) -> Single {
+    let mut flag = Single::new(variable);
+    flag.set("0");
+    flag
+}
+
+/// Whether `uri` is a request URI as Go's `url.ParseRequestURI` accepts one: `*`, an
+/// absolute path or an absolute URL, with no control character and only valid
+/// `%`-escapes in its path. The query string is not checked.
+fn is_request_uri(uri: &str) -> bool {
+    if uri.bytes().any(|b| b.is_ascii_control()) {
+        return false;
+    }
+    if uri == "*" {
+        return true;
+    }
+    let before_query = uri.split_once('?').map_or(uri, |(path, _)| path);
+    let path = if before_query.starts_with('/') {
+        before_query
+    } else {
+        let Some((scheme, rest)) = before_query.split_once(':') else {
+            return false;
+        };
+        let is_scheme = scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+        if !is_scheme {
+            return false;
+        }
+        // The path follows the authority (`//host`), if any
+        match rest.strip_prefix("//") {
+            Some(authority_and_path) => authority_and_path
+                .find('/')
+                .map_or("", |start| &authority_and_path[start..]),
+            None => rest,
+        }
+    };
+
+    let bytes = path.as_bytes();
+    bytes.iter().enumerate().all(|(i, &b)| {
+        b != b'%'
+            || bytes
+                .get(i + 1..i + 3)
+                .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
+    })
+}
+
 impl Transaction {
     /// Create a new transaction with the given ID.
     pub fn new(id: impl Into<String>) -> Self {
@@ -433,6 +503,8 @@ impl Transaction {
             request_body_length: Single::new(RuleVariable::RequestBodyLength),
             reqbody_error: Single::new(RuleVariable::ReqbodyError),
             reqbody_error_msg: Single::new(RuleVariable::ReqbodyErrorMsg),
+            uri_parse_error: flag(RuleVariable::UriParseError),
+            arguments_limit_reached: flag(RuleVariable::ArgumentsLimitReached),
             files: Map::new_case_sensitive(RuleVariable::Files),
             files_tmp_names: Map::new_case_sensitive(RuleVariable::FilesTmpNames),
             files_sizes: Map::new_case_sensitive(RuleVariable::FilesSizes),
@@ -440,6 +512,7 @@ impl Transaction {
             files_combined_size: Single::new(RuleVariable::FilesCombinedSize),
             multipart_part_headers: Map::new_case_sensitive(RuleVariable::MultipartPartHeaders),
             multipart_strict_error: Single::new(RuleVariable::MultipartStrictError),
+            multipart_duplicate_part_header: flag(RuleVariable::MultipartDuplicatePartHeader),
             request_xml: Map::new_case_sensitive(RuleVariable::RequestXML),
             response_status: Single::new(RuleVariable::ResponseStatus),
             response_protocol: Single::new(RuleVariable::ResponseProtocol),
@@ -452,6 +525,7 @@ impl Transaction {
             rule_engine: RuleEngineStatus::On,
             request_body_access: true,
             request_body_limit: 131072, // 128KB default
+            argument_limit: DEFAULT_ARGUMENT_LIMIT,
             force_request_body_variable: false,
             response_body_access: false,
             response_body_limit: 524288, // 512KB default
@@ -745,6 +819,50 @@ impl Transaction {
         self.request_body_limit = limit;
     }
 
+    /// Sets the most values ARGS_GET, ARGS_POST and RESPONSE_ARGS each hold
+    /// (`SecArgumentsLimit`); see [`Transaction::add_get_argument`].
+    pub fn set_argument_limit(&mut self, limit: usize) {
+        self.argument_limit = limit;
+    }
+
+    /// Adds a query string argument to ARGS_GET and ARGS.
+    ///
+    /// Once ARGS_GET holds the argument limit's worth of values, counting each value of
+    /// a repeated key, the argument is dropped and ARGUMENTS_LIMIT_REACHED set to 1.
+    pub fn add_get_argument(&mut self, key: &str, value: &str) {
+        if self.within_argument_limit(self.args_get.value_count()) {
+            self.args_get.add(key, value);
+            self.args.add(key, value);
+        }
+    }
+
+    /// Adds a request body argument to ARGS_POST and ARGS, within the argument limit as
+    /// [`Transaction::add_get_argument`] does.
+    pub fn add_post_argument(&mut self, key: &str, value: &str) {
+        if self.within_argument_limit(self.args_post.value_count()) {
+            self.args_post.add(key, value);
+            self.args.add(key, value);
+        }
+    }
+
+    /// Adds a response body argument to RESPONSE_ARGS, within the argument limit as
+    /// [`Transaction::add_get_argument`] does.
+    pub fn add_response_argument(&mut self, key: &str, value: &str) {
+        if self.within_argument_limit(self.response_args.value_count()) {
+            self.response_args.add(key, value);
+        }
+    }
+
+    /// Whether a collection holding `values` values can take one more; sets
+    /// ARGUMENTS_LIMIT_REACHED if not.
+    fn within_argument_limit(&mut self, values: usize) -> bool {
+        let within = values < self.argument_limit;
+        if !within {
+            self.arguments_limit_reached.set("1");
+        }
+        within
+    }
+
     /// Get request body limit.
     pub fn request_body_limit(&self) -> i64 {
         self.request_body_limit
@@ -922,6 +1040,9 @@ impl Transaction {
 
         // The path and query string, as in ModSecurity: the request URI without fragment
         self.request_uri.set(uri_without_anchor);
+        if !is_request_uri(uri_without_anchor) {
+            self.uri_parse_error.set("1");
+        }
 
         // Extract basename (last component of path)
         if let Some(last_slash) = path.rfind(['/', '\\']) {
@@ -943,8 +1064,7 @@ impl Transaction {
     /// Adds the arguments of a query string to ARGS_GET and ARGS.
     fn extract_get_arguments(&mut self, query: &str) {
         for (key, value) in crate::body_processors::urlencoded::parse_query(query) {
-            self.args_get.add(&key, &value);
-            self.args.add(&key, &value);
+            self.add_get_argument(&key, &value);
         }
     }
 

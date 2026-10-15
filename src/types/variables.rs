@@ -230,6 +230,14 @@ pub enum RuleVariable {
     TimeWday,
     /// TIME_YEAR - Current four-digit year
     TimeYear,
+    /// URI_PARSE_ERROR - 1 if the request URI could not be parsed, 0 otherwise
+    UriParseError,
+    /// ARGUMENTS_LIMIT_REACHED - 1 if arguments were dropped for going over
+    /// `SecArgumentsLimit`, 0 otherwise
+    ArgumentsLimitReached,
+    /// MULTIPART_DUPLICATE_PART_HEADER - 1 if a multipart part repeats a header or a
+    /// `Content-Disposition` parameter, 0 otherwise
+    MultipartDuplicatePartHeader,
 }
 
 /// Lookup table of all variable names in enum order.
@@ -340,6 +348,9 @@ const VARIABLE_NAMES: &[&str] = &[
     "TIME_SEC",
     "TIME_WDAY",
     "TIME_YEAR",
+    "URI_PARSE_ERROR",
+    "ARGUMENTS_LIMIT_REACHED",
+    "MULTIPART_DUPLICATE_PART_HEADER",
 ];
 
 impl RuleVariable {
@@ -674,6 +685,9 @@ mod tests {
             RuleVariable::TimeSec,
             RuleVariable::TimeWday,
             RuleVariable::TimeYear,
+            RuleVariable::UriParseError,
+            RuleVariable::ArgumentsLimitReached,
+            RuleVariable::MultipartDuplicatePartHeader,
         ];
 
         for variant in &all_variants {

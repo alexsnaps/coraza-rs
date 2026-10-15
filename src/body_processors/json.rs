@@ -32,10 +32,8 @@ impl BodyProcessor for JsonBodyProcessor {
         // Flatten JSON into dot-notation map
         let flattened = flatten_json(&json_value);
 
-        // Populate ARGS_POST with flattened values
-        let args_post = tx.args_post_mut();
         for (key, value) in &flattened {
-            args_post.set_index(key, 0, value);
+            tx.add_post_argument(key, value);
         }
 
         // Store REQUEST_BODY and REQUEST_BODY_LENGTH
@@ -61,10 +59,8 @@ impl BodyProcessor for JsonBodyProcessor {
         // Flatten JSON into dot-notation map
         let flattened = flatten_json(&json_value);
 
-        // Populate RESPONSE_ARGS with flattened values
-        let response_args = tx.response_args_mut();
         for (key, value) in &flattened {
-            response_args.set_index(key, 0, value);
+            tx.add_response_argument(key, value);
         }
 
         Ok(())

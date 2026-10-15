@@ -155,6 +155,7 @@ impl Waf {
         tx.set_request_body_limit(self.config.request_body_limit);
         tx.set_response_body_access(self.config.response_body_access);
         tx.set_response_body_limit(self.config.response_body_limit);
+        tx.set_argument_limit(self.config.argument_limit);
 
         // Share rules reference for CTL tag/msg-based exclusions
         tx.set_rules(Arc::clone(&self.rules));

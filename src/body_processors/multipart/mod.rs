@@ -66,6 +66,11 @@ impl BodyProcessor for MultipartBodyProcessor {
 
         // Process each part
         for part in parts {
+            if part.repeats_header {
+                tx.multipart_duplicate_part_header.set("1");
+                tx.multipart_strict_error.set("1");
+            }
+
             // Collect part headers into MULTIPART_PART_HEADERS
             // Add Content-Disposition
             let mut content_disp =
@@ -97,10 +102,10 @@ impl BodyProcessor for MultipartBodyProcessor {
                 tx.files_sizes.set_index(filename, 0, &size.to_string());
                 tx.files_names.add(&part.name, &part.name);
             } else {
-                // Regular form field - add to ARGS_POST
-                let value = String::from_utf8_lossy(&part.data).to_string();
+                // Regular form field
+                let value = String::from_utf8_lossy(&part.data);
                 total_size += part.data.len() as u64;
-                tx.args_post_mut().add(&part.name, &value);
+                tx.add_post_argument(&part.name, &value);
             }
         }
 
