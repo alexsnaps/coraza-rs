@@ -7,6 +7,8 @@
 //! that can be inspected by rules (e.g., ARGS, HEADERS, REQUEST_URI).
 
 use std::fmt;
+
+use super::ParseValueError;
 use std::str::FromStr;
 
 /// Identifies information from a transaction that can be inspected by rules.
@@ -449,22 +451,8 @@ impl fmt::Display for RuleVariable {
     }
 }
 
-/// Error type for invalid variable parsing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseVariableError {
-    input: String,
-}
-
-impl fmt::Display for ParseVariableError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unknown variable: {}", self.input)
-    }
-}
-
-impl std::error::Error for ParseVariableError {}
-
 impl FromStr for RuleVariable {
-    type Err = ParseVariableError;
+    type Err = ParseValueError;
 
     /// Parses a variable name (case-insensitive).
     ///
@@ -486,9 +474,7 @@ impl FromStr for RuleVariable {
             .iter()
             .position(|&name| name == upper.as_str())
             .and_then(|idx| Self::from_u8(idx as u8))
-            .ok_or_else(|| ParseVariableError {
-                input: s.to_string(),
-            })
+            .ok_or_else(|| ParseValueError::new("unknown variable", s.to_string()))
     }
 }
 

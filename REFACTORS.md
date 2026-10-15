@@ -134,7 +134,8 @@ probed bugs.
 - [x] **Transformation signature defined twice:** `Transformation` (`src/rules/transformation.rs:37`) and
   `TransformationResult` (`src/transformations/mod.rs:37`); the escape transformations return `(String, bool)`
   instead.
-- [ ] **Six near-identical `Parse*Error { input }` structs** in `src/types/`.
+- [x] **Six near-identical `Parse*Error { input }` structs** in `src/types/`. Done: one `types::ParseValueError`;
+  `ParseAuditLogPartsError` (a free-form message) stays.
 
 ## Tooling
 

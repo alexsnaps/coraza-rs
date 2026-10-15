@@ -7,6 +7,8 @@
 //! Each phase provides access to different parts of the HTTP transaction.
 
 use std::fmt;
+
+use super::ParseValueError;
 use std::str::FromStr;
 
 /// Represents the phase of rule execution.
@@ -95,22 +97,8 @@ impl fmt::Display for RulePhase {
     }
 }
 
-/// Error type for invalid phase parsing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsePhaseError {
-    input: String,
-}
-
-impl fmt::Display for ParsePhaseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid phase {}", self.input)
-    }
-}
-
-impl std::error::Error for ParsePhaseError {}
-
 impl FromStr for RulePhase {
-    type Err = ParsePhaseError;
+    type Err = ParseValueError;
 
     /// Parses a string into a RulePhase.
     ///
@@ -151,9 +139,7 @@ impl FromStr for RulePhase {
 
         // Validate the phase number (must be 1-5)
         if !(1..=5).contains(&phase_num) {
-            return Err(ParsePhaseError {
-                input: s.to_string(),
-            });
+            return Err(ParseValueError::new("invalid phase", s.to_string()));
         }
 
         // Convert to enum

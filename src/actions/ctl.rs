@@ -9,9 +9,7 @@
 //!
 use crate::actions::{ActionError, RuleMetadata};
 use crate::transaction::Transaction;
-use crate::types::{
-    AuditEngineStatus, ParseRuleEngineStatusError, RuleEngineStatus, RulePhase, RuleVariable,
-};
+use crate::types::{AuditEngineStatus, ParseValueError, RuleEngineStatus, RulePhase, RuleVariable};
 use std::ops::RangeInclusive;
 use std::str::FromStr;
 
@@ -57,7 +55,7 @@ impl CtlCommand {
             "ruleEngine" => Self::RuleEngine(
                 value
                     .parse()
-                    .map_err(|e: ParseRuleEngineStatusError| invalid(e.to_string()))?,
+                    .map_err(|e: ParseValueError| invalid(e.to_string()))?,
             ),
             "requestBodyAccess" => Self::RequestBodyAccess(parse_on_off(value)?),
             "requestBodyLimit" => Self::RequestBodyLimit(parse_limit(value)?),
