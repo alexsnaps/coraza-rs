@@ -18,6 +18,9 @@ pub(super) struct FlowState {
     /// The interruption, by a disruptive action or a body limit
     interruption: Option<Interruption>,
 
+    /// The first interruption a disruptive action would have caused in `DetectionOnly` mode
+    would_be_interruption: Option<Interruption>,
+
     /// Rules of the current phase still to skip (`skip`)
     skip: i32,
 
@@ -39,6 +42,7 @@ impl FlowState {
     pub(super) fn new() -> Self {
         Self {
             interruption: None,
+            would_be_interruption: None,
             skip: 0,
             skip_after: String::new(),
             allow: AllowType::Unset,
@@ -121,17 +125,29 @@ impl Transaction {
         self.flow.interruption.as_ref()
     }
 
-    /// Interrupts the transaction on behalf of a disruptive action of rule `rule_id`, if the
-    /// rule engine is `On`, as Go Coraza does.
+    /// Interrupts the transaction on behalf of a disruptive action of rule `rule_id`, as Go
+    /// Coraza does: if the rule engine is `On`; in `DetectionOnly` mode, the first such
+    /// interruption is kept as the would-be interruption.
     pub(crate) fn interrupt(&mut self, rule_id: i32, action: &str, status: i32, data: &str) {
-        if self.rule_engine == RuleEngineStatus::On {
-            self.flow.interruption = Some(Interruption {
-                rule_id: rule_id as usize,
-                action: action.to_string(),
-                status: status as u16,
-                data: data.to_string(),
-            });
+        let interruption = Interruption {
+            rule_id: rule_id as usize,
+            action: action.to_string(),
+            status: status as u16,
+            data: data.to_string(),
+        };
+        match self.rule_engine {
+            RuleEngineStatus::On => self.flow.interruption = Some(interruption),
+            RuleEngineStatus::DetectionOnly => {
+                self.flow.would_be_interruption.get_or_insert(interruption);
+            }
+            RuleEngineStatus::Off => {}
         }
+    }
+
+    /// The first interruption a disruptive action would have caused in `DetectionOnly`
+    /// mode, if any.
+    pub(super) fn would_be_interruption(&self) -> Option<&Interruption> {
+        self.flow.would_be_interruption.as_ref()
     }
 
     /// Interrupts the transaction for a body over its limit (`Reject`), as Go Coraza does:

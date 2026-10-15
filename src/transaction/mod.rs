@@ -1935,7 +1935,8 @@ impl Transaction {
     /// `Off`, then writes the transaction's audit log entry, as Go Coraza decides: always
     /// with `SecAuditEngine On`, and with
     /// `RelevantOnly` when a rule with `auditlog` matched or the status is one of
-    /// `SecAuditLogRelevantStatus` (the interruption's, or the response's).
+    /// `SecAuditLogRelevantStatus`: the interruption's, the would-be interruption's in
+    /// `DetectionOnly` mode, or the response's.
     ///
     /// # Errors
     ///
@@ -1966,7 +1967,7 @@ impl Transaction {
             AuditEngineStatus::Off => false,
             AuditEngineStatus::On => true,
             AuditEngineStatus::RelevantOnly => {
-                let status = match self.interruption() {
+                let status = match self.interruption().or(self.would_be_interruption()) {
                     Some(interruption) => interruption.status.to_string(),
                     None => self.response_status.get().to_string(),
                 };

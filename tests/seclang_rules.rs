@@ -1757,6 +1757,24 @@ fn relevant_transactions_are_audit_logged_natively() {
 }
 
 #[test]
+fn detection_only_audit_logs_by_the_status_a_rule_would_have_set() {
+    let dir = tempfile::tempdir().unwrap();
+    let waf = audited_waf(
+        dir.path(),
+        r#"SecRuleEngine DetectionOnly
+        SecAuditLogRelevantStatus "^4""#,
+    );
+
+    let tx = audit_request(&waf, "tx-evil", "evil");
+
+    // As in Go Coraza, the status is the one rule 1's deny would have set: there is no
+    // response status, and the transaction wasn't interrupted
+    assert!(tx.interruption().is_none());
+    let log = std::fs::read_to_string(dir.path().join("audit.log")).unwrap_or_default();
+    assert!(log.contains("tx-evil"), "{log}");
+}
+
+#[test]
 fn audit_log_entries_can_be_json() {
     let dir = tempfile::tempdir().unwrap();
     let waf = audited_waf(dir.path(), "SecAuditLogFormat JSON");
