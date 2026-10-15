@@ -202,3 +202,32 @@ fn ctl_rule_engine_applies_to_later_phases() {
 
     assert_eq!(tx.process_request_body(b"").unwrap(), None);
 }
+
+#[test]
+fn malformed_bodies_are_reported_to_rules() {
+    let waf = waf(r#"
+        SecRule REQBODY_ERROR "@eq 1" "id:1,phase:2,deny,status:400,logdata:'%{REQBODY_ERROR_MSG}'"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "application/json");
+    tx.process_request_headers();
+    let interruption = tx.process_request_body(b"{not json").unwrap();
+
+    assert_eq!(interruption.map(|i| i.rule_id), Some(1));
+    assert!(
+        tx.get_variable(coraza::RuleVariable::ReqbodyErrorMsg, None)
+            .is_some_and(|msg| !msg.is_empty())
+    );
+}
+
+#[test]
+fn well_formed_bodies_raise_no_body_error() {
+    let waf = waf(r#"SecRule REQBODY_ERROR "@eq 1" "id:1,phase:2,deny,status:400""#);
+
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "application/json");
+    tx.process_request_headers();
+
+    assert_eq!(tx.process_request_body(br#"{"a": 1}"#).unwrap(), None);
+}

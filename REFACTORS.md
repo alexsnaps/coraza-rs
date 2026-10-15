@@ -143,8 +143,10 @@ probed bugs.
   it. (`cargo clippy --lib --tests` is clean.)
 - [x] `cargo fmt`: diffs in `src/rules/group.rs` and `src/seclang/operator_parser.rs`. (The `operator_parser.rs` diff went
   away with item 5's import changes.)
-- [ ] Remove `println!`/`eprintln!` from library code (5 sites, in `actions/deferred.rs`, `rules/group.rs`,
+- [x] Remove `println!`/`eprintln!` from library code (5 sites, in `actions/deferred.rs`, `rules/group.rs`,
   `seclang/parser.rs`, `transaction/mod.rs`).
+  - Done: three went with earlier items, and the `seclang/parser.rs` one was in a test. The last (a body-processor
+    error) now sets `REQBODY_ERROR`/`REQBODY_ERROR_MSG` for rules, as in Go Coraza.
 
 ## Noticed, not consolidation
 

@@ -119,6 +119,8 @@ macro_rules! variable_storage {
             RuleVariable::QueryString => Some(Single($($borrow)+ $tx.query_string)),
             RuleVariable::RequestBody => Some(Single($($borrow)+ $tx.request_body)),
             RuleVariable::RequestBodyLength => Some(Single($($borrow)+ $tx.request_body_length)),
+            RuleVariable::ReqbodyError => Some(Single($($borrow)+ $tx.reqbody_error)),
+            RuleVariable::ReqbodyErrorMsg => Some(Single($($borrow)+ $tx.reqbody_error_msg)),
             RuleVariable::FilesCombinedSize => Some(Single($($borrow)+ $tx.files_combined_size)),
             RuleVariable::MultipartStrictError => Some(Single($($borrow)+ $tx.multipart_strict_error)),
             RuleVariable::ResponseStatus => Some(Single($($borrow)+ $tx.response_status)),
@@ -138,8 +140,6 @@ macro_rules! variable_storage {
             | RuleVariable::MultipartDataAfter
             | RuleVariable::OutboundDataError
             | RuleVariable::RemoteHost
-            | RuleVariable::ReqbodyError
-            | RuleVariable::ReqbodyErrorMsg
             | RuleVariable::ReqbodyProcessorError
             | RuleVariable::ReqbodyProcessorErrorMsg
             | RuleVariable::ReqbodyProcessor
@@ -287,6 +287,12 @@ pub struct Transaction {
     /// REQUEST_BODY_LENGTH
     pub(crate) request_body_length: Single,
 
+    /// REQBODY_ERROR - "1" when the request body processor failed
+    reqbody_error: Single,
+
+    /// REQBODY_ERROR_MSG - Why the request body processor failed
+    reqbody_error_msg: Single,
+
     /// FILES - Original file names from multipart/form-data
     pub(crate) files: Map,
 
@@ -425,6 +431,8 @@ impl Transaction {
             query_string: Single::new(RuleVariable::QueryString),
             request_body: Single::new(RuleVariable::RequestBody),
             request_body_length: Single::new(RuleVariable::RequestBodyLength),
+            reqbody_error: Single::new(RuleVariable::ReqbodyError),
+            reqbody_error_msg: Single::new(RuleVariable::ReqbodyErrorMsg),
             files: Map::new_case_sensitive(RuleVariable::Files),
             files_tmp_names: Map::new_case_sensitive(RuleVariable::FilesTmpNames),
             files_sizes: Map::new_case_sensitive(RuleVariable::FilesSizes),
@@ -1118,9 +1126,10 @@ impl Transaction {
                 ..Default::default()
             };
 
+            // A malformed body doesn't stop the transaction: rules see it in REQBODY_ERROR
             if let Err(e) = processor.process_request(body, self, &options) {
-                // Log error but don't fail the transaction
-                eprintln!("Body processor error: {}", e);
+                self.reqbody_error.set("1");
+                self.reqbody_error_msg.set(e.to_string());
             }
         }
 
