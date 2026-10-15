@@ -39,7 +39,7 @@ pub mod transformation;
 pub mod variable;
 
 pub use action::{
-    RuleAction, execute_actions, execute_flow_and_disruptive_actions, execute_nondisruptive_actions,
+    execute_actions, execute_flow_and_disruptive_actions, execute_nondisruptive_actions,
 };
 pub use group::RuleGroup;
 pub use operator::RuleOperator;

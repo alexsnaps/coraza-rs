@@ -3,127 +3,13 @@
 
 //! Action execution for rule evaluation.
 //!
-//! This module handles action execution during rule evaluation. Actions are
-//! categorized by type and executed at different points in the rule flow.
+//! Actions run at different points in the rule flow depending on their
+//! [`ActionType`]; see [`crate::rules::Rule::evaluate`].
 
 use crate::actions::{Action, ActionType, RuleMetadata};
 use crate::transaction::Transaction;
 
-/// Named action wrapper for rule execution.
-///
-/// Stores an action along with its name for debugging and logging purposes.
-/// Actions are stored as trait objects (`Box<dyn Action>`) because there are
-/// 26 different action types with diverse behavior patterns.
-///
-/// # Why Box<dyn Action>?
-///
-/// Unlike operators (which use an enum), actions use dynamic dispatch because:
-/// - 26 different action types with unique behavior (enum would be unwieldy)
-/// - Actions initialized once at rule compile time (not per-request)
-/// - Overhead is negligible compared to action execution itself
-///
-/// # Examples
-///
-/// ```
-/// use coraza::rules::RuleAction;
-/// use coraza::actions::{Action, DenyAction, RuleMetadata};
-///
-/// let mut rule = RuleMetadata::new();
-/// let mut action: Box<dyn Action> = Box::new(DenyAction);
-/// action.init(&mut rule, "").unwrap();
-///
-/// let rule_action = RuleAction::new("deny", action);
-/// assert_eq!(rule_action.name(), "deny");
-/// ```
-pub struct RuleAction {
-    /// Action name (e.g., "deny", "log", "setvar")
-    name: String,
-
-    /// The action implementation
-    action: Box<dyn Action>,
-}
-
-impl RuleAction {
-    /// Create a new rule action.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Action name for logging/debugging
-    /// * `action` - Initialized action instance
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::rules::RuleAction;
-    /// use coraza::actions::DenyAction;
-    ///
-    /// let rule_action = RuleAction::new("deny", Box::new(DenyAction));
-    /// ```
-    pub fn new(name: impl Into<String>, action: Box<dyn Action>) -> Self {
-        Self {
-            name: name.into(),
-            action,
-        }
-    }
-
-    /// Get the action name.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// Get the action type category.
-    pub fn action_type(&self) -> ActionType {
-        self.action.action_type()
-    }
-
-    /// Evaluate the action during transaction processing.
-    ///
-    /// # Arguments
-    ///
-    /// * `rule` - Immutable reference to rule metadata
-    /// * `tx` - Mutable reference to transaction state
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::rules::RuleAction;
-    /// use coraza::actions::{DenyAction, RuleMetadata};
-    /// use coraza::transaction::Transaction;
-    ///
-    /// let rule = RuleMetadata::new();
-    /// let rule_action = RuleAction::new("deny", Box::new(DenyAction));
-    ///
-    /// let mut tx = Transaction::new("test");
-    /// rule_action.evaluate(&rule, &mut tx);
-    /// ```
-    pub fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
-        self.action.evaluate(rule, tx);
-    }
-}
-
-// Manual Debug impl since Box<dyn Action> doesn't auto-derive
-impl std::fmt::Debug for RuleAction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RuleAction")
-            .field("name", &self.name)
-            .field("action_type", &self.action.action_type())
-            .finish()
-    }
-}
-
-/// Execute actions based on their type and rule engine mode.
-///
-/// Actions are executed in three phases based on their type:
-/// 1. **Nondisruptive**: Executed immediately when rule matches
-/// 2. **Flow**: Executed after chain evaluation, always runs
-/// 3. **Disruptive**: Executed after chain evaluation, only if rule engine is On
-///
-/// # Arguments
-///
-/// * `actions` - Slice of actions to execute
-/// * `rule` - Rule metadata
-/// * `tx` - Transaction state
-/// * `action_filter` - Function to determine which actions to execute
+/// Runs, in order, the actions whose type `action_filter` accepts.
 ///
 /// # Examples
 ///
@@ -142,7 +28,7 @@ impl std::fmt::Debug for RuleAction {
 /// });
 /// ```
 pub fn execute_actions<F>(
-    actions: &[RuleAction],
+    actions: &[Action],
     rule: &RuleMetadata,
     tx: &mut Transaction,
     action_filter: F,
@@ -156,33 +42,9 @@ pub fn execute_actions<F>(
     }
 }
 
-/// Execute nondisruptive actions immediately when rule matches.
-///
-/// Nondisruptive actions perform operations without affecting rule flow,
-/// such as logging or variable modification. They execute regardless of
-/// SecRuleEngine mode.
-///
-/// # Arguments
-///
-/// * `actions` - Slice of rule actions
-/// * `rule` - Rule metadata
-/// * `tx` - Transaction state
-///
-/// # Examples
-///
-/// ```
-/// use coraza::rules::execute_nondisruptive_actions;
-/// use coraza::actions::RuleMetadata;
-/// use coraza::transaction::Transaction;
-///
-/// let actions = vec![];
-/// let rule = RuleMetadata::new();
-/// let mut tx = Transaction::new("test");
-///
-/// execute_nondisruptive_actions(&actions, &rule, &mut tx);
-/// ```
+/// Runs the non-disruptive actions, as done for each value a rule matches.
 pub fn execute_nondisruptive_actions(
-    actions: &[RuleAction],
+    actions: &[Action],
     rule: &RuleMetadata,
     tx: &mut Transaction,
 ) {
@@ -191,209 +53,80 @@ pub fn execute_nondisruptive_actions(
     });
 }
 
-/// Execute flow and disruptive actions after chain evaluation.
-///
-/// Flow actions control rule processing and always execute. Disruptive actions
-/// trigger WAF operations (blocking, etc.) and only execute if rule engine is On.
-///
-/// # Arguments
-///
-/// * `actions` - Slice of rule actions
-/// * `rule` - Rule metadata
-/// * `tx` - Transaction state
-/// * `rule_engine_on` - Whether the rule engine is in enforcement mode
-///
-/// # Examples
-///
-/// ```
-/// use coraza::rules::execute_flow_and_disruptive_actions;
-/// use coraza::actions::RuleMetadata;
-/// use coraza::transaction::Transaction;
-///
-/// let actions = vec![];
-/// let rule = RuleMetadata::new();
-/// let mut tx = Transaction::new("test");
-///
-/// // Rule engine is on - execute disruptive actions
-/// execute_flow_and_disruptive_actions(&actions, &rule, &mut tx, true);
-///
-/// // Rule engine is detection only - skip disruptive actions
-/// execute_flow_and_disruptive_actions(&actions, &rule, &mut tx, false);
-/// ```
+/// Runs the flow actions, and the disruptive ones if `rule_engine_on`, as done once a
+/// rule's whole chain matched.
 pub fn execute_flow_and_disruptive_actions(
-    actions: &[RuleAction],
+    actions: &[Action],
     rule: &RuleMetadata,
     tx: &mut Transaction,
     rule_engine_on: bool,
 ) {
-    execute_actions(actions, rule, tx, |action_type| {
-        // Flow actions always execute
-        if action_type == ActionType::Flow {
-            return true;
-        }
-
-        // Disruptive actions only execute if rule engine is On
-        if action_type == ActionType::Disruptive {
-            return rule_engine_on;
-        }
-
-        false
+    execute_actions(actions, rule, tx, |action_type| match action_type {
+        ActionType::Flow => true,
+        ActionType::Disruptive => rule_engine_on,
+        ActionType::Nondisruptive => false,
     });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actions::{DenyAction, LogAction, SkipAction};
+    use crate::RuleVariable;
 
-    // Helper to create a test action
-    fn create_deny_action() -> RuleAction {
-        let mut action = Box::new(DenyAction);
+    fn actions() -> Vec<Action> {
         let mut rule = RuleMetadata::new();
-        action.init(&mut rule, "").unwrap();
-        RuleAction::new("deny", action)
+        ["deny", "setvar:tx.hit=1", "skip:2"]
+            .into_iter()
+            .map(|spec| {
+                let (name, argument) = spec.split_once(':').unwrap_or((spec, ""));
+                Action::parse(name, argument, &mut rule).unwrap().unwrap()
+            })
+            .collect()
     }
 
-    fn create_log_action() -> RuleAction {
-        let mut action = Box::new(LogAction);
+    fn rule() -> RuleMetadata {
         let mut rule = RuleMetadata::new();
-        action.init(&mut rule, "").unwrap();
-        RuleAction::new("log", action)
-    }
-
-    fn create_skip_action() -> RuleAction {
-        let mut action = Box::new(SkipAction::new());
-        let mut rule = RuleMetadata::new();
-        action.init(&mut rule, "1").unwrap();
-        RuleAction::new("skip", action)
-    }
-
-    // Ported from: coraza/internal/corazawaf/rule.go - ruleActionParams
-    #[test]
-    fn test_rule_action_creation() {
-        let action = create_deny_action();
-
-        assert_eq!(action.name(), "deny");
-        assert_eq!(action.action_type(), ActionType::Disruptive);
+        rule.id = 1;
+        rule
     }
 
     #[test]
-    fn test_rule_action_types() {
-        let deny = create_deny_action();
-        let log = create_log_action();
-        let skip = create_skip_action();
+    fn test_execute_nondisruptive_actions_runs_only_those() {
+        let mut tx = Transaction::new("test");
+        execute_nondisruptive_actions(&actions(), &rule(), &mut tx);
 
-        assert_eq!(deny.action_type(), ActionType::Disruptive);
-        assert_eq!(log.action_type(), ActionType::Nondisruptive);
-        assert_eq!(skip.action_type(), ActionType::Flow);
+        assert_eq!(
+            tx.get_variable(RuleVariable::TX, Some("hit")).as_deref(),
+            Some("1")
+        );
+        assert_eq!(tx.skip(), 0);
+        assert!(tx.interruption().is_none());
     }
 
-    #[test]
-    fn test_execute_actions_filter() {
-        let actions = vec![
-            create_deny_action(),
-            create_log_action(),
-            create_skip_action(),
-        ];
-
-        let rule = RuleMetadata::new();
-        let mut tx = crate::transaction::Transaction::new("test");
-
-        // Test that filter works - execute only nondisruptive actions
-        execute_actions(&actions, &rule, &mut tx, |action_type| {
-            action_type == ActionType::Nondisruptive
-        });
-
-        // We can verify the action types are correct
-        assert_eq!(actions[0].action_type(), ActionType::Disruptive); // deny
-        assert_eq!(actions[1].action_type(), ActionType::Nondisruptive); // log
-        assert_eq!(actions[2].action_type(), ActionType::Flow); // skip
-    }
-
-    // Ported from: coraza/internal/corazawaf/rule.go::doEvaluate (lines 313-318)
-    #[test]
-    fn test_execute_nondisruptive_actions() {
-        let actions = vec![
-            create_deny_action(),
-            create_log_action(),
-            create_skip_action(),
-        ];
-
-        let rule = RuleMetadata::new();
-        let mut tx = crate::transaction::Transaction::new("test");
-
-        // This should execute only the log action
-        execute_nondisruptive_actions(&actions, &rule, &mut tx);
-
-        // We can't easily verify execution without more infrastructure,
-        // but we can verify no panic occurred
-    }
-
-    // Ported from: coraza/internal/corazawaf/rule.go::doEvaluate (lines 374-383)
     #[test]
     fn test_execute_flow_and_disruptive_with_engine_on() {
-        let actions = vec![
-            create_deny_action(),
-            create_log_action(),
-            create_skip_action(),
-        ];
+        let mut tx = Transaction::new("test");
+        execute_flow_and_disruptive_actions(&actions(), &rule(), &mut tx, true);
 
-        let rule = RuleMetadata::new();
-        let mut tx = crate::transaction::Transaction::new("test");
-
-        // Rule engine ON - both flow and disruptive should execute
-        execute_flow_and_disruptive_actions(&actions, &rule, &mut tx, true);
-
-        // We can't easily verify execution without more infrastructure,
-        // but we can verify no panic occurred
+        assert_eq!(tx.skip(), 2);
+        assert_eq!(tx.interruption().map(|i| i.action.as_str()), Some("deny"));
+        assert_eq!(tx.get_variable(RuleVariable::TX, Some("hit")), None);
     }
 
     #[test]
     fn test_execute_flow_and_disruptive_with_engine_off() {
-        let actions = vec![
-            create_deny_action(),
-            create_log_action(),
-            create_skip_action(),
-        ];
+        let mut tx = Transaction::new("test");
+        execute_flow_and_disruptive_actions(&actions(), &rule(), &mut tx, false);
 
-        let rule = RuleMetadata::new();
-        let mut tx = crate::transaction::Transaction::new("test");
-
-        // Rule engine OFF - only flow should execute, not disruptive
-        execute_flow_and_disruptive_actions(&actions, &rule, &mut tx, false);
-
-        // We can't easily verify execution without more infrastructure,
-        // but we can verify no panic occurred
-    }
-
-    #[test]
-    fn test_multiple_actions_same_type() {
-        let actions = vec![create_log_action(), create_log_action()];
-
-        let rule = RuleMetadata::new();
-        let mut tx = crate::transaction::Transaction::new("test");
-
-        // Both nondisruptive actions should execute
-        execute_nondisruptive_actions(&actions, &rule, &mut tx);
+        assert_eq!(tx.skip(), 2);
+        assert!(tx.interruption().is_none());
     }
 
     #[test]
     fn test_empty_actions() {
-        let actions = vec![];
-        let rule = RuleMetadata::new();
-        let mut tx = crate::transaction::Transaction::new("test");
-
-        // Should handle empty action list gracefully
-        execute_nondisruptive_actions(&actions, &rule, &mut tx);
-        execute_flow_and_disruptive_actions(&actions, &rule, &mut tx, true);
-    }
-
-    #[test]
-    fn test_action_debug() {
-        let action = create_deny_action();
-        let debug_str = format!("{:?}", action);
-
-        assert!(debug_str.contains("deny"));
-        assert!(debug_str.contains("Disruptive"));
+        let mut tx = Transaction::new("test");
+        execute_nondisruptive_actions(&[], &rule(), &mut tx);
+        execute_flow_and_disruptive_actions(&[], &rule(), &mut tx, true);
+        assert!(tx.interruption().is_none());
     }
 }

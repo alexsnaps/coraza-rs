@@ -7,9 +7,8 @@
 //! and audit logs. These actions are non-disruptive and do not affect transaction
 //! processing - they only control logging behavior.
 
-use crate::actions::{Action, ActionError, ActionType, RuleMetadata};
+use crate::actions::{ActionError, RuleMetadata};
 use crate::operators::Macro;
-use crate::transaction::Transaction;
 
 /// `log` action - Enables logging for the rule.
 ///
@@ -25,27 +24,14 @@ use crate::transaction::Transaction;
 /// ```text
 /// SecAction "phase:1,id:117,pass,initcol:ip=%{REMOTE_ADDR},log"
 /// ```
-#[derive(Debug)]
-pub struct LogAction;
-
-impl Action for LogAction {
-    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
-        if !data.is_empty() {
-            return Err(ActionError::UnexpectedArguments);
-        }
-
-        rule.log = true;
-        rule.audit_log = true;
-        Ok(())
+pub(super) fn log(rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
+    if !data.is_empty() {
+        return Err(ActionError::UnexpectedArguments);
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
-        // Logging actions don't execute at runtime
-    }
-
-    fn action_type(&self) -> ActionType {
-        ActionType::Nondisruptive
-    }
+    rule.log = true;
+    rule.audit_log = true;
+    Ok(())
 }
 
 /// `nolog` action - Disables logging for the rule.
@@ -63,27 +49,14 @@ impl Action for LogAction {
 /// ```text
 /// SecRule REQUEST_HEADERS:User-Agent "@streq Test" "allow,nolog,id:121"
 /// ```
-#[derive(Debug)]
-pub struct NologAction;
-
-impl Action for NologAction {
-    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
-        if !data.is_empty() {
-            return Err(ActionError::UnexpectedArguments);
-        }
-
-        rule.log = false;
-        rule.audit_log = false;
-        Ok(())
+pub(super) fn nolog(rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
+    if !data.is_empty() {
+        return Err(ActionError::UnexpectedArguments);
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
-        // Logging actions don't execute at runtime
-    }
-
-    fn action_type(&self) -> ActionType {
-        ActionType::Nondisruptive
-    }
+    rule.log = false;
+    rule.audit_log = false;
+    Ok(())
 }
 
 /// `auditlog` action - Enables audit logging for the rule.
@@ -100,26 +73,13 @@ impl Action for NologAction {
 /// ```text
 /// SecRule REMOTE_ADDR "^192\.168\.1\.100$" "auditlog,phase:1,id:100,allow"
 /// ```
-#[derive(Debug)]
-pub struct AuditlogAction;
-
-impl Action for AuditlogAction {
-    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
-        if !data.is_empty() {
-            return Err(ActionError::UnexpectedArguments);
-        }
-
-        rule.audit_log = true;
-        Ok(())
+pub(super) fn auditlog(rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
+    if !data.is_empty() {
+        return Err(ActionError::UnexpectedArguments);
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
-        // Logging actions don't execute at runtime
-    }
-
-    fn action_type(&self) -> ActionType {
-        ActionType::Nondisruptive
-    }
+    rule.audit_log = true;
+    Ok(())
 }
 
 /// `noauditlog` action - Disables audit logging for the rule.
@@ -143,26 +103,13 @@ impl Action for AuditlogAction {
 /// ```text
 /// SecRule REQUEST_HEADERS:User-Agent "@streq Test" "allow,noauditlog,id:120"
 /// ```
-#[derive(Debug)]
-pub struct NoauditlogAction;
-
-impl Action for NoauditlogAction {
-    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
-        if !data.is_empty() {
-            return Err(ActionError::UnexpectedArguments);
-        }
-
-        rule.audit_log = false;
-        Ok(())
+pub(super) fn noauditlog(rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
+    if !data.is_empty() {
+        return Err(ActionError::UnexpectedArguments);
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
-        // Logging actions don't execute at runtime
-    }
-
-    fn action_type(&self) -> ActionType {
-        ActionType::Nondisruptive
-    }
+    rule.audit_log = false;
+    Ok(())
 }
 
 /// `logdata` action - Logs additional data with the alert.
@@ -181,28 +128,14 @@ impl Action for NoauditlogAction {
 /// ```text
 /// SecRule ARGS:p "@rx <script>" "phase:2,id:118,log,pass,logdata:%{MATCHED_VAR}"
 /// ```
-#[derive(Debug)]
-pub struct LogdataAction;
-
-impl Action for LogdataAction {
-    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
-        if data.is_empty() {
-            return Err(ActionError::MissingArguments);
-        }
-
-        let log_data = Macro::new(data)?;
-        rule.log_data = Some(log_data);
-        Ok(())
+pub(super) fn logdata(rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
+    if data.is_empty() {
+        return Err(ActionError::MissingArguments);
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
-        // logdata macro expansion is performed after all other actions have been
-        // evaluated (and potentially all the needed variables have been set)
-    }
-
-    fn action_type(&self) -> ActionType {
-        ActionType::Nondisruptive
-    }
+    let log_data = Macro::new(data)?;
+    rule.log_data = Some(log_data);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -213,8 +146,7 @@ mod tests {
     #[test]
     fn test_log_init() {
         let mut rule = RuleMetadata::new();
-        let mut action = LogAction;
-        assert!(action.init(&mut rule, "").is_ok());
+        assert!(log(&mut rule, "").is_ok());
         assert!(rule.log, "log should be enabled");
         assert!(rule.audit_log, "audit should be enabled");
     }
@@ -222,9 +154,8 @@ mod tests {
     #[test]
     fn test_log_unexpected_arguments() {
         let mut rule = RuleMetadata::new();
-        let mut action = LogAction;
         assert_eq!(
-            action.init(&mut rule, "unexpected"),
+            log(&mut rule, "unexpected"),
             Err(ActionError::UnexpectedArguments)
         );
     }
@@ -233,8 +164,7 @@ mod tests {
     #[test]
     fn test_nolog_no_arguments() {
         let mut rule = RuleMetadata::new();
-        let mut action = NologAction;
-        assert!(action.init(&mut rule, "").is_ok());
+        assert!(nolog(&mut rule, "").is_ok());
         assert!(!rule.log, "log should be disabled");
         assert!(!rule.audit_log, "audit should be disabled");
     }
@@ -242,9 +172,8 @@ mod tests {
     #[test]
     fn test_nolog_unexpected_arguments() {
         let mut rule = RuleMetadata::new();
-        let mut action = NologAction;
         assert_eq!(
-            action.init(&mut rule, "abc"),
+            nolog(&mut rule, "abc"),
             Err(ActionError::UnexpectedArguments)
         );
     }
@@ -253,17 +182,15 @@ mod tests {
     #[test]
     fn test_auditlog_no_arguments() {
         let mut rule = RuleMetadata::new();
-        let mut action = AuditlogAction;
-        assert!(action.init(&mut rule, "").is_ok());
+        assert!(auditlog(&mut rule, "").is_ok());
         assert!(rule.audit_log, "audit should be enabled");
     }
 
     #[test]
     fn test_auditlog_unexpected_arguments() {
         let mut rule = RuleMetadata::new();
-        let mut action = AuditlogAction;
         assert_eq!(
-            action.init(&mut rule, "unexpected"),
+            auditlog(&mut rule, "unexpected"),
             Err(ActionError::UnexpectedArguments)
         );
     }
@@ -272,17 +199,15 @@ mod tests {
     #[test]
     fn test_noauditlog_no_arguments() {
         let mut rule = RuleMetadata::new();
-        let mut action = NoauditlogAction;
-        assert!(action.init(&mut rule, "").is_ok());
+        assert!(noauditlog(&mut rule, "").is_ok());
         assert!(!rule.audit_log, "audit should be disabled");
     }
 
     #[test]
     fn test_noauditlog_unexpected_arguments() {
         let mut rule = RuleMetadata::new();
-        let mut action = NoauditlogAction;
         assert_eq!(
-            action.init(&mut rule, "abc"),
+            noauditlog(&mut rule, "abc"),
             Err(ActionError::UnexpectedArguments)
         );
     }
@@ -291,38 +216,23 @@ mod tests {
     #[test]
     fn test_logdata_empty() {
         let mut rule = RuleMetadata::new();
-        let mut action = LogdataAction;
-        assert_eq!(
-            action.init(&mut rule, ""),
-            Err(ActionError::MissingArguments)
-        );
+        assert_eq!(logdata(&mut rule, ""), Err(ActionError::MissingArguments));
     }
 
     #[test]
     fn test_logdata_valid() {
         let mut rule = RuleMetadata::new();
-        let mut action = LogdataAction;
-        assert!(action.init(&mut rule, "%{tx.count}").is_ok());
+        assert!(logdata(&mut rule, "%{tx.count}").is_ok());
         assert!(rule.log_data.is_some());
     }
 
     #[test]
     fn test_logdata_invalid_macro() {
         let mut rule = RuleMetadata::new();
-        let mut action = LogdataAction;
         // Invalid macro syntax (unclosed brace)
         assert!(matches!(
-            action.init(&mut rule, "%{tx.count"),
+            logdata(&mut rule, "%{tx.count"),
             Err(ActionError::MacroError(_))
         ));
-    }
-
-    #[test]
-    fn test_action_types() {
-        assert_eq!(LogAction.action_type(), ActionType::Nondisruptive);
-        assert_eq!(NologAction.action_type(), ActionType::Nondisruptive);
-        assert_eq!(AuditlogAction.action_type(), ActionType::Nondisruptive);
-        assert_eq!(NoauditlogAction.action_type(), ActionType::Nondisruptive);
-        assert_eq!(LogdataAction.action_type(), ActionType::Nondisruptive);
     }
 }

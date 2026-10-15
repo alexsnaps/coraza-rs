@@ -6,7 +6,7 @@
 //! Flow actions control the execution flow of rules, such as chaining rules
 //! together or skipping over rules based on conditions.
 
-use crate::actions::{Action, ActionError, ActionType, RuleMetadata};
+use crate::actions::{ActionError, RuleMetadata};
 use crate::transaction::Transaction;
 
 /// `chain` action - Links rules together in an AND condition.
@@ -37,26 +37,13 @@ use crate::transaction::Transaction;
 /// SecRule REQUEST_METHOD "^POST$" "phase:1,chain,t:none,id:105"
 ///     SecRule &REQUEST_HEADERS:Content-Length "@eq 0" "t:none"
 /// ```
-#[derive(Debug)]
-pub struct ChainAction;
-
-impl Action for ChainAction {
-    fn init(&mut self, rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
-        if !data.is_empty() {
-            return Err(ActionError::UnexpectedArguments);
-        }
-
-        rule.has_chain = true;
-        Ok(())
+pub(super) fn chain(rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
+    if !data.is_empty() {
+        return Err(ActionError::UnexpectedArguments);
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
-        // Chain is a metadata action - doesn't execute at runtime
-    }
-
-    fn action_type(&self) -> ActionType {
-        ActionType::Flow
-    }
+    rule.has_chain = true;
+    Ok(())
 }
 
 /// `skip` action - Skips over the next N rules on match.
@@ -80,25 +67,14 @@ impl Action for ChainAction {
 /// # This rule is skipped when REMOTE_ADDR is 127.0.0.1
 /// SecRule &REQUEST_HEADERS:Accept "@eq 0" "phase:1,id:142,deny,msg:'Missing Accept Header'"
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkipAction {
     count: i32,
 }
 
 impl SkipAction {
-    pub fn new() -> Self {
-        Self { count: 0 }
-    }
-}
-
-impl Default for SkipAction {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Action for SkipAction {
-    fn init(&mut self, _rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
+    /// Parses the number of rules to skip (at least 1).
+    pub fn parse(data: &str) -> Result<Self, ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
@@ -114,16 +90,11 @@ impl Action for SkipAction {
             )));
         }
 
-        self.count = count;
-        Ok(())
+        Ok(Self { count })
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut Transaction) {
+    pub fn evaluate(&self, tx: &mut Transaction) {
         tx.set_skip(self.count);
-    }
-
-    fn action_type(&self) -> ActionType {
-        ActionType::Flow
     }
 }
 
@@ -151,42 +122,25 @@ impl Action for SkipAction {
 ///
 /// # Execution resumes here for localhost
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkipAfterAction {
     marker: String,
 }
 
 impl SkipAfterAction {
-    pub fn new() -> Self {
-        Self {
-            marker: String::new(),
-        }
-    }
-}
-
-impl Default for SkipAfterAction {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Action for SkipAfterAction {
-    fn init(&mut self, _rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
+    /// Parses the label of the `SecMarker` to skip to.
+    pub fn parse(data: &str) -> Result<Self, ActionError> {
         let marker = crate::utils::strings::maybe_remove_quotes(data);
         if marker.is_empty() {
             return Err(ActionError::MissingArguments);
         }
-
-        self.marker = marker.to_string();
-        Ok(())
+        Ok(Self {
+            marker: marker.to_string(),
+        })
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut Transaction) {
+    pub fn evaluate(&self, tx: &mut Transaction) {
         tx.set_skip_after(&self.marker);
-    }
-
-    fn action_type(&self) -> ActionType {
-        ActionType::Flow
     }
 }
 
@@ -198,125 +152,92 @@ mod tests {
     #[test]
     fn test_chain_no_arguments() {
         let mut rule = RuleMetadata::new();
-        let mut action = ChainAction;
-        assert!(action.init(&mut rule, "").is_ok());
+        assert!(chain(&mut rule, "").is_ok());
         assert!(rule.has_chain, "has_chain should be true");
     }
 
     #[test]
     fn test_chain_unexpected_arguments() {
         let mut rule = RuleMetadata::new();
-        let mut action = ChainAction;
         assert_eq!(
-            action.init(&mut rule, "unexpected"),
+            chain(&mut rule, "unexpected"),
             Err(ActionError::UnexpectedArguments)
         );
     }
 
     #[test]
-    fn test_chain_action_type() {
-        assert_eq!(ChainAction.action_type(), ActionType::Flow);
-    }
-
-    // SkipAction Tests
-    #[test]
     fn test_skip_no_arguments() {
-        let mut action = SkipAction::new();
         assert_eq!(
-            action.init(&mut RuleMetadata::new(), ""),
+            SkipAction::parse("").map(|_| ()),
             Err(ActionError::MissingArguments)
         );
     }
 
     #[test]
     fn test_skip_non_numeric() {
-        let mut action = SkipAction::new();
         assert!(matches!(
-            action.init(&mut RuleMetadata::new(), "abc"),
+            SkipAction::parse("abc").map(|_| ()),
             Err(ActionError::InvalidArguments(_))
         ));
     }
 
     #[test]
     fn test_skip_negative() {
-        let mut action = SkipAction::new();
         assert!(matches!(
-            action.init(&mut RuleMetadata::new(), "-10"),
+            SkipAction::parse("-10").map(|_| ()),
             Err(ActionError::InvalidArguments(_))
         ));
     }
 
     #[test]
     fn test_skip_zero() {
-        let mut action = SkipAction::new();
         assert!(matches!(
-            action.init(&mut RuleMetadata::new(), "0"),
+            SkipAction::parse("0").map(|_| ()),
             Err(ActionError::InvalidArguments(_))
         ));
     }
 
     #[test]
     fn test_skip_valid() {
-        let mut action = SkipAction::new();
-        assert!(action.init(&mut RuleMetadata::new(), "5").is_ok());
+        let action = SkipAction::parse("5").unwrap();
         assert_eq!(action.count, 5);
     }
 
     #[test]
     fn test_skip_evaluate() {
-        let mut action = SkipAction::new();
-        action.init(&mut RuleMetadata::new(), "3").unwrap();
+        let action = SkipAction::parse("3").unwrap();
 
         let mut tx = Transaction::new("action-test");
-        action.evaluate(&RuleMetadata::new(), &mut tx);
+        action.evaluate(&mut tx);
         assert_eq!(tx.skip(), 3);
     }
 
     #[test]
-    fn test_skip_action_type() {
-        assert_eq!(SkipAction::new().action_type(), ActionType::Flow);
-    }
-
-    // SkipAfterAction Tests
-    #[test]
     fn test_skipafter_no_arguments() {
-        let mut action = SkipAfterAction::new();
         assert_eq!(
-            action.init(&mut RuleMetadata::new(), ""),
+            SkipAfterAction::parse("").map(|_| ()),
             Err(ActionError::MissingArguments)
         );
     }
 
     #[test]
     fn test_skipafter_valid() {
-        let mut action = SkipAfterAction::new();
-        assert!(action.init(&mut RuleMetadata::new(), "MARKER_NAME").is_ok());
+        let action = SkipAfterAction::parse("MARKER_NAME").unwrap();
         assert_eq!(action.marker, "MARKER_NAME");
     }
 
     #[test]
     fn test_skipafter_with_quotes() {
-        let mut action = SkipAfterAction::new();
-        assert!(
-            action
-                .init(&mut RuleMetadata::new(), "'MARKER_NAME'")
-                .is_ok()
-        );
+        let action = SkipAfterAction::parse("'MARKER_NAME'").unwrap();
         assert_eq!(action.marker, "MARKER_NAME");
     }
 
     #[test]
     fn test_skipafter_evaluate() {
-        let mut action = SkipAfterAction::new();
-        action.init(&mut RuleMetadata::new(), "END_CHECK").unwrap();
+        let action = SkipAfterAction::parse("END_CHECK").unwrap();
 
         let mut tx = Transaction::new("action-test");
-        action.evaluate(&RuleMetadata::new(), &mut tx);
+        action.evaluate(&mut tx);
         assert_eq!(tx.skip_after(), "END_CHECK");
-    }
-
-    #[test]
-    fn test_skipafter_action_type() {
-        assert_eq!(SkipAfterAction::new().action_type(), ActionType::Flow);
     }
 }

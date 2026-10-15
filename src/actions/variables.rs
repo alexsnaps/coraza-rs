@@ -8,7 +8,7 @@
 //! passing data between rules.
 
 use crate::RuleVariable;
-use crate::actions::{Action, ActionError, ActionType, RuleMetadata};
+use crate::actions::ActionError;
 use crate::operators::Macro;
 use crate::transaction::{Transaction, VariableCollection};
 
@@ -60,7 +60,7 @@ use crate::transaction::{Transaction, VariableCollection};
 /// SecRule ARGS:id "@gt 100" "id:105,setvar:TX.high_id=%{MATCHED_VAR}"
 /// SecRule REQUEST_METHOD "POST" "id:106,setvar:TX.score=+%{TX.critical_score}"
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SetvarAction {
     key: Macro,
     value: Macro,
@@ -69,51 +69,30 @@ pub struct SetvarAction {
 }
 
 impl SetvarAction {
-    pub fn new() -> Self {
-        Self {
-            key: Macro::empty(),
-            value: Macro::empty(),
-            collection: RuleVariable::TX,
-            is_remove: false,
-        }
-    }
-}
-
-impl Default for SetvarAction {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Action for SetvarAction {
-    fn init(&mut self, _rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
+    /// Parses `TX.key=value`, `TX.key` or `!TX.key`; key and value may contain macros.
+    pub fn parse(data: &str) -> Result<Self, ActionError> {
         if data.is_empty() {
             return Err(ActionError::MissingArguments);
         }
 
-        let mut data = data;
-
         // Check for removal prefix
-        if data.starts_with('!') {
-            self.is_remove = true;
-            data = &data[1..];
-        }
+        let (is_remove, data) = match data.strip_prefix('!') {
+            Some(rest) => (true, rest),
+            None => (false, data),
+        };
 
         // Split on '=' to get key and optional value
-        let (key_part, value_part) = if let Some(pos) = data.find('=') {
-            (&data[..pos], Some(&data[pos + 1..]))
-        } else {
-            (data, None)
+        let (key_part, value_part) = match data.split_once('=') {
+            Some((key, value)) => (key, Some(value)),
+            None => (data, None),
         };
 
         // Parse collection and key (e.g., "TX.score")
-        let (col_name, key_name) = if let Some(pos) = key_part.find('.') {
-            (&key_part[..pos], &key_part[pos + 1..])
-        } else {
-            return Err(ActionError::InvalidArguments(
+        let (col_name, key_name) = key_part.split_once('.').ok_or_else(|| {
+            ActionError::InvalidArguments(
                 "invalid arguments, expected syntax TX.{key}={value}".to_string(),
-            ));
-        };
+            )
+        })?;
 
         // Validate collection is TX
         if col_name.to_uppercase() != "TX" {
@@ -129,23 +108,20 @@ impl Action for SetvarAction {
             ));
         }
 
-        // Parse collection
-        self.collection = col_name
-            .parse::<RuleVariable>()
-            .map_err(|e| ActionError::InvalidArguments(e.to_string()))?;
-
-        // Parse key with macro expansion support
-        self.key = Macro::new(key_name)?;
-
-        // Parse value if present
-        if let Some(val) = value_part {
-            self.value = Macro::new(val)?;
-        }
-
-        Ok(())
+        Ok(Self {
+            key: Macro::new(key_name)?,
+            value: match value_part {
+                Some(value) => Macro::new(value)?,
+                None => Macro::empty(),
+            },
+            collection: col_name
+                .parse::<RuleVariable>()
+                .map_err(|e| ActionError::InvalidArguments(e.to_string()))?,
+            is_remove,
+        })
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut Transaction) {
+    pub fn evaluate(&self, tx: &mut Transaction) {
         let key = self.key.expand(Some(tx)).to_lowercase();
         let value = self.value.expand(Some(tx));
 
@@ -199,10 +175,6 @@ impl Action for SetvarAction {
         // Default: set to literal value
         collection.set(&key, vec![value]);
     }
-
-    fn action_type(&self) -> ActionType {
-        ActionType::Nondisruptive
-    }
 }
 
 #[cfg(test)]
@@ -216,46 +188,37 @@ mod tests {
     // Init Tests
     #[test]
     fn test_setvar_no_arguments() {
-        let mut action = SetvarAction::new();
         assert_eq!(
-            action.init(&mut RuleMetadata::new(), ""),
+            SetvarAction::parse("").map(|_| ()),
             Err(ActionError::MissingArguments)
         );
     }
 
     #[test]
     fn test_setvar_non_tx_variable() {
-        let mut action = SetvarAction::new();
         assert!(matches!(
-            action.init(&mut RuleMetadata::new(), "PATH_INFO=test"),
+            SetvarAction::parse("PATH_INFO=test").map(|_| ()),
             Err(ActionError::InvalidArguments(_))
         ));
     }
 
     #[test]
     fn test_setvar_tx_set_ok() {
-        let mut action = SetvarAction::new();
-        assert!(
-            action
-                .init(&mut RuleMetadata::new(), "TX.some=test")
-                .is_ok()
-        );
+        assert!(SetvarAction::parse("TX.some=test").map(|_| ()).is_ok());
     }
 
     #[test]
     fn test_setvar_tx_without_key_fails() {
-        let mut action = SetvarAction::new();
         assert!(matches!(
-            action.init(&mut RuleMetadata::new(), "TX=test"),
+            SetvarAction::parse("TX=test").map(|_| ()),
             Err(ActionError::InvalidArguments(_))
         ));
     }
 
     #[test]
     fn test_setvar_tx_with_empty_key_fails() {
-        let mut action = SetvarAction::new();
         assert!(matches!(
-            action.init(&mut RuleMetadata::new(), "TX. =test"),
+            SetvarAction::parse("TX. =test").map(|_| ()),
             Err(ActionError::InvalidArguments(_))
         ));
     }
@@ -263,24 +226,20 @@ mod tests {
     // Evaluate Tests
     #[test]
     fn test_setvar_set_simple_value() {
-        let mut action = SetvarAction::new();
-        action
-            .init(&mut RuleMetadata::new(), "TX.key=value")
-            .unwrap();
+        let action = SetvarAction::parse("TX.key=value").unwrap();
 
         let mut tx = Transaction::new("setvar-test");
-        action.evaluate(&RuleMetadata::new(), &mut tx);
+        action.evaluate(&mut tx);
 
         assert_eq!(tx_value(&tx, "key"), Some("value".to_string()));
     }
 
     #[test]
     fn test_setvar_set_empty_value() {
-        let mut action = SetvarAction::new();
-        action.init(&mut RuleMetadata::new(), "TX.key").unwrap();
+        let action = SetvarAction::parse("TX.key").unwrap();
 
         let mut tx = Transaction::new("setvar-test");
-        action.evaluate(&RuleMetadata::new(), &mut tx);
+        action.evaluate(&mut tx);
 
         assert_eq!(tx_value(&tx, "key"), Some("".to_string()));
     }
@@ -290,18 +249,12 @@ mod tests {
         let mut tx = Transaction::new("setvar-test");
 
         // Set initial value
-        let mut action1 = SetvarAction::new();
-        action1
-            .init(&mut RuleMetadata::new(), "TX.score=5")
-            .unwrap();
-        action1.evaluate(&RuleMetadata::new(), &mut tx);
+        let action1 = SetvarAction::parse("TX.score=5").unwrap();
+        action1.evaluate(&mut tx);
 
         // Add 3
-        let mut action2 = SetvarAction::new();
-        action2
-            .init(&mut RuleMetadata::new(), "TX.score=+3")
-            .unwrap();
-        action2.evaluate(&RuleMetadata::new(), &mut tx);
+        let action2 = SetvarAction::parse("TX.score=+3").unwrap();
+        action2.evaluate(&mut tx);
 
         assert_eq!(tx_value(&tx, "score"), Some("8".to_string()));
     }
@@ -311,18 +264,12 @@ mod tests {
         let mut tx = Transaction::new("setvar-test");
 
         // Set initial value
-        let mut action1 = SetvarAction::new();
-        action1
-            .init(&mut RuleMetadata::new(), "TX.score=10")
-            .unwrap();
-        action1.evaluate(&RuleMetadata::new(), &mut tx);
+        let action1 = SetvarAction::parse("TX.score=10").unwrap();
+        action1.evaluate(&mut tx);
 
         // Subtract 3
-        let mut action2 = SetvarAction::new();
-        action2
-            .init(&mut RuleMetadata::new(), "TX.score=-3")
-            .unwrap();
-        action2.evaluate(&RuleMetadata::new(), &mut tx);
+        let action2 = SetvarAction::parse("TX.score=-3").unwrap();
+        action2.evaluate(&mut tx);
 
         assert_eq!(tx_value(&tx, "score"), Some("7".to_string()));
     }
@@ -332,11 +279,8 @@ mod tests {
         let mut tx = Transaction::new("setvar-test");
 
         // Add to non-existent variable (should start at 0)
-        let mut action = SetvarAction::new();
-        action
-            .init(&mut RuleMetadata::new(), "TX.score=+5")
-            .unwrap();
-        action.evaluate(&RuleMetadata::new(), &mut tx);
+        let action = SetvarAction::parse("TX.score=+5").unwrap();
+        action.evaluate(&mut tx);
 
         assert_eq!(tx_value(&tx, "score"), Some("5".to_string()));
     }
@@ -346,31 +290,22 @@ mod tests {
         let mut tx = Transaction::new("setvar-test");
 
         // Set to -5
-        let mut action1 = SetvarAction::new();
-        action1
-            .init(&mut RuleMetadata::new(), "TX.score=-5")
-            .unwrap();
-        action1.evaluate(&RuleMetadata::new(), &mut tx);
+        let action1 = SetvarAction::parse("TX.score=-5").unwrap();
+        action1.evaluate(&mut tx);
 
         // Add 5 (should be 0)
-        let mut action2 = SetvarAction::new();
-        action2
-            .init(&mut RuleMetadata::new(), "TX.score=+5")
-            .unwrap();
-        action2.evaluate(&RuleMetadata::new(), &mut tx);
+        let action2 = SetvarAction::parse("TX.score=+5").unwrap();
+        action2.evaluate(&mut tx);
 
         assert_eq!(tx_value(&tx, "score"), Some("0".to_string()));
     }
 
     #[test]
     fn test_setvar_non_numeric_plus_literal() {
-        let mut action = SetvarAction::new();
-        action
-            .init(&mut RuleMetadata::new(), "TX.key=+++expected_value")
-            .unwrap();
+        let action = SetvarAction::parse("TX.key=+++expected_value").unwrap();
 
         let mut tx = Transaction::new("setvar-test");
-        action.evaluate(&RuleMetadata::new(), &mut tx);
+        action.evaluate(&mut tx);
 
         // Non-numeric value after + should be treated as literal
         assert_eq!(tx_value(&tx, "key"), Some("+++expected_value".to_string()));
@@ -378,13 +313,10 @@ mod tests {
 
     #[test]
     fn test_setvar_non_numeric_minus_literal() {
-        let mut action = SetvarAction::new();
-        action
-            .init(&mut RuleMetadata::new(), "TX.key=----expected_value")
-            .unwrap();
+        let action = SetvarAction::parse("TX.key=----expected_value").unwrap();
 
         let mut tx = Transaction::new("setvar-test");
-        action.evaluate(&RuleMetadata::new(), &mut tx);
+        action.evaluate(&mut tx);
 
         // Non-numeric value after - should be treated as literal
         assert_eq!(tx_value(&tx, "key"), Some("----expected_value".to_string()));
@@ -395,38 +327,25 @@ mod tests {
         let mut tx = Transaction::new("setvar-test");
 
         // Set value
-        let mut action1 = SetvarAction::new();
-        action1
-            .init(&mut RuleMetadata::new(), "TX.key=value")
-            .unwrap();
-        action1.evaluate(&RuleMetadata::new(), &mut tx);
+        let action1 = SetvarAction::parse("TX.key=value").unwrap();
+        action1.evaluate(&mut tx);
         assert_eq!(tx_value(&tx, "key"), Some("value".to_string()));
 
         // Remove it
-        let mut action2 = SetvarAction::new();
-        action2.init(&mut RuleMetadata::new(), "!TX.key").unwrap();
-        action2.evaluate(&RuleMetadata::new(), &mut tx);
+        let action2 = SetvarAction::parse("!TX.key").unwrap();
+        action2.evaluate(&mut tx);
         assert_eq!(tx_value(&tx, "key"), None);
     }
 
     #[test]
     fn test_setvar_case_insensitive_key() {
-        let mut action = SetvarAction::new();
-        action
-            .init(&mut RuleMetadata::new(), "TX.MyKey=value")
-            .unwrap();
+        let action = SetvarAction::parse("TX.MyKey=value").unwrap();
 
         let mut tx = Transaction::new("setvar-test");
-        action.evaluate(&RuleMetadata::new(), &mut tx);
+        action.evaluate(&mut tx);
 
         // Keys are lowercased
         assert_eq!(tx_value(&tx, "mykey"), Some("value".to_string()));
         assert_eq!(tx_value(&tx, "MyKey"), Some("value".to_string()));
-    }
-
-    #[test]
-    fn test_setvar_action_type() {
-        let action = SetvarAction::new();
-        assert_eq!(action.action_type(), ActionType::Nondisruptive);
     }
 }

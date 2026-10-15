@@ -29,10 +29,10 @@
 //! Note: Full E2E rule evaluation tests require transaction-level rule
 //! execution, which will be added in a future phase.
 
-use coraza::actions::DenyAction;
+use coraza::actions::{Action, DenyAction};
 use coraza::config::WafConfig;
 use coraza::operators::rx;
-use coraza::rules::{Rule, RuleAction, RuleOperator, VariableSpec};
+use coraza::rules::{Rule, RuleOperator, VariableSpec};
 use coraza::seclang::Parser;
 use coraza::types::{RulePhase, RuleVariable};
 use coraza::waf::WafBuilder;
@@ -116,7 +116,7 @@ fn test_crs_path_traversal_rule_loading() {
             "@rx",
             "path traversal pattern".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 403;
@@ -152,7 +152,7 @@ fn test_crs_command_injection_rule_loading() {
             "@rx",
             "command injection pattern".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
@@ -184,7 +184,7 @@ fn test_crs_scanner_detection_rule_loading() {
             "@rx",
             "scanner user agent".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 403;
@@ -221,7 +221,7 @@ fn test_crs_multi_rule_loading() {
             "@rx",
             "scanner".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
     scanner_rule.metadata_mut().phase = RulePhase::RequestHeaders;
     scanner_rule.metadata_mut().status = 403;
 
@@ -234,7 +234,7 @@ fn test_crs_multi_rule_loading() {
             "@rx",
             "traversal".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
     traversal_rule.metadata_mut().phase = RulePhase::RequestHeaders;
     traversal_rule.metadata_mut().status = 403;
 
@@ -282,7 +282,7 @@ fn test_crs_http_request_smuggling_detection() {
             "@rx",
             "GET/HEAD with body".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 400;
@@ -308,7 +308,7 @@ fn test_crs_invalid_http_method() {
             "@rx",
             "non-numeric Content-Length".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 400;
@@ -334,7 +334,7 @@ fn test_crs_missing_host_header() {
             "@rx",
             "missing Host header".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 400;
@@ -365,7 +365,7 @@ fn test_crs_path_traversal_unix_variants() {
             "@rx",
             "path traversal variants".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 403;
@@ -390,7 +390,7 @@ fn test_crs_path_traversal_windows_variants() {
             "@rx",
             "windows path traversal".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
@@ -416,7 +416,7 @@ fn test_crs_restricted_file_access() {
             "@rx",
             "restricted file access".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 403;
@@ -445,7 +445,7 @@ fn test_crs_local_file_inclusion() {
             "@rx",
             "LFI pattern".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
@@ -470,7 +470,7 @@ fn test_crs_remote_file_inclusion() {
             "@rx",
             "RFI pattern".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
@@ -499,7 +499,7 @@ fn test_crs_unix_command_injection() {
             "@rx",
             "unix command injection".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
@@ -524,7 +524,7 @@ fn test_crs_windows_command_injection() {
             "@rx",
             "windows command injection".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
@@ -547,7 +547,7 @@ fn test_crs_shellshock_attack() {
             "@rx",
             "shellshock pattern".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 403;
@@ -576,7 +576,7 @@ fn test_crs_php_injection_attack() {
             "@rx",
             "php injection".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
@@ -601,7 +601,7 @@ fn test_crs_php_variable_injection() {
             "@rx",
             "php variable function".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
@@ -630,7 +630,7 @@ fn test_crs_session_fixation_attack() {
             "@rx",
             "session fixation".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 403;
@@ -657,7 +657,7 @@ fn test_crs_java_deserialization_attack() {
             "@rx",
             "java serialization magic bytes".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
 
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
@@ -691,7 +691,7 @@ fn test_crs_comprehensive_rule_loading() {
             "@rx",
             "GET/HEAD with body".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
     rule_920170.metadata_mut().phase = RulePhase::RequestHeaders;
     rule_920170.metadata_mut().status = 400;
 
@@ -704,7 +704,7 @@ fn test_crs_comprehensive_rule_loading() {
             "@rx",
             "path traversal".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
     rule_930100.metadata_mut().phase = RulePhase::RequestHeaders;
     rule_930100.metadata_mut().status = 403;
 
@@ -717,7 +717,7 @@ fn test_crs_comprehensive_rule_loading() {
             "@rx",
             "command injection".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
     rule_932160.metadata_mut().phase = RulePhase::RequestBody;
     rule_932160.metadata_mut().status = 403;
 
@@ -730,7 +730,7 @@ fn test_crs_comprehensive_rule_loading() {
             "@rx",
             "php injection".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
     rule_933100.metadata_mut().phase = RulePhase::RequestBody;
     rule_933100.metadata_mut().status = 403;
 
@@ -746,7 +746,7 @@ fn test_crs_comprehensive_rule_loading() {
             "@rx",
             "scanner detection".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)));
+        .add_action(Action::Deny(DenyAction));
     rule_913100.metadata_mut().phase = RulePhase::RequestHeaders;
     rule_913100.metadata_mut().status = 403;
 

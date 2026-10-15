@@ -7,10 +7,10 @@
 //! to transaction processing, including rule management, phase processing,
 //! and configuration inheritance.
 
-use coraza::actions::{DenyAction, StatusAction};
+use coraza::actions::{Action, DenyAction, PassAction};
 use coraza::config::WafConfig;
 use coraza::operators::streq;
-use coraza::rules::{Rule, RuleAction, RuleOperator, VariableSpec};
+use coraza::rules::{Rule, RuleOperator, VariableSpec};
 use coraza::types::{RuleEngineStatus, RulePhase, RuleVariable};
 use coraza::waf::{Waf, WafBuilder};
 
@@ -513,7 +513,7 @@ fn test_waf_large_rule_set() {
 fn test_waf_set_default_actions() {
     let mut builder = WafBuilder::new(WafConfig::new());
 
-    let default_action = RuleAction::new("deny", Box::new(DenyAction));
+    let default_action = Action::Deny(DenyAction);
     builder.set_default_actions(RulePhase::RequestHeaders, vec![default_action]);
 
     let waf = builder.build().expect("Failed to build WAF");
@@ -526,7 +526,7 @@ fn test_waf_set_default_actions() {
 fn test_waf_overwrite_default_actions() {
     let mut builder = WafBuilder::new(WafConfig::new());
 
-    let action1 = RuleAction::new("deny", Box::new(DenyAction));
+    let action1 = Action::Deny(DenyAction);
     builder.set_default_actions(RulePhase::RequestHeaders, vec![action1]);
 
     // Overwrite with empty vector
@@ -540,17 +540,11 @@ fn test_waf_default_actions_per_phase() {
     let mut builder = WafBuilder::new(WafConfig::new());
 
     // Set different defaults for different phases
-    builder.set_default_actions(
-        RulePhase::RequestHeaders,
-        vec![RuleAction::new("deny", Box::new(DenyAction))],
-    );
+    builder.set_default_actions(RulePhase::RequestHeaders, vec![Action::Deny(DenyAction)]);
 
     builder.set_default_actions(
         RulePhase::RequestBody,
-        vec![
-            RuleAction::new("deny", Box::new(DenyAction)),
-            RuleAction::new("status", Box::new(StatusAction)),
-        ],
+        vec![Action::Deny(DenyAction), Action::Pass(PassAction)],
     );
 
     let waf = builder.build().expect("Failed to build WAF");

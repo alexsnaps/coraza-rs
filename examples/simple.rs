@@ -11,10 +11,10 @@
 //!
 //! Run with: cargo run --example simple
 
-use coraza::actions::{DenyAction, StatusAction};
+use coraza::actions::{Action, DenyAction};
 use coraza::config::WafConfig;
 use coraza::operators::contains;
-use coraza::rules::{Rule, RuleAction, RuleOperator, VariableSpec};
+use coraza::rules::{Rule, RuleOperator, VariableSpec};
 use coraza::types::{RuleEngineStatus, RulePhase, RuleVariable};
 use coraza::waf::{Waf, WafBuilder};
 
@@ -47,8 +47,7 @@ fn main() {
             "@contains",
             "malicious".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)))
-        .add_action(RuleAction::new("status", Box::new(StatusAction)));
+        .add_action(Action::Deny(DenyAction));
     rule1.metadata_mut().phase = RulePhase::RequestHeaders;
     rule1.metadata_mut().status = 403;
 
@@ -61,8 +60,7 @@ fn main() {
             "@contains",
             "attack".to_string(),
         ))
-        .add_action(RuleAction::new("deny", Box::new(DenyAction)))
-        .add_action(RuleAction::new("status", Box::new(StatusAction)));
+        .add_action(Action::Deny(DenyAction));
     rule2.metadata_mut().phase = RulePhase::RequestBody;
     rule2.metadata_mut().status = 403;
 

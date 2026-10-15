@@ -105,10 +105,14 @@ probed bugs.
 - [x] **Parse `ctl` once.** `CtlAction` validates its value, stores the raw string, and re-parses it in `evaluate`
   (`src/actions/ctl.rs:263`). **(probe)** `ctl:ruleEngine=bogus` compiles and is silently ignored. Use data-carrying
   variants such as `CtlCommand::RuleEngine(RuleEngineStatus)`.
-- [ ] **Decide: `enum Action` instead of `Box<dyn Action>`.** 20 of 33 action types have an empty `evaluate`; they
+- [x] **Decide: `enum Action` instead of `Box<dyn Action>`.** 20 of 33 action types have an empty `evaluate`; they
   only edit metadata in `init`. `parse(name, arg, &mut RuleMetadata) -> Result<Option<Action>, ActionError>` would
   remove the placeholder `new()` + `init` two-step. This reverses the documented "Why `Box<dyn Action>`?" decision
   at `src/rules/action.rs:18`, so it needs a call first.
+  - Done (taken as decided by "work through all of them"): `Action` is an enum of the 11 runtime actions, built
+    by `Action::parse(name, arg, &mut RuleMetadata)`; the 21 metadata-only actions (including the `exec`,
+    `expirevar`, `initcol` stubs) are functions applied at compile time. `RuleAction` and `actions::get` are gone;
+    "last disruptive wins" moved from the SecLang action parser into `Rule::add_action`.
 
 ## 6. Smaller duplicates
 

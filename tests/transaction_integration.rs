@@ -12,7 +12,7 @@
 //! - Deferred actions (exec, expirevar, setenv, initcol)
 
 use coraza::RulePhase;
-use coraza::actions::{ActionType, RuleMetadata};
+use coraza::actions::{Action, ActionType, RuleMetadata};
 use coraza::body_processors::{BodyProcessorKind, BodyProcessorOptions};
 use coraza::rules::{Rule, RuleGroup};
 use coraza::transaction::{Interruption, Transaction};
@@ -279,13 +279,10 @@ fn test_skipafter_finds_marker() {
 
 #[test]
 fn test_setenv_action_execution() {
-    use coraza::actions::get;
-
-    let mut action = get("setenv").unwrap();
     let mut rule = RuleMetadata::new();
-
-    // Initialize with key=value
-    action.init(&mut rule, "TEST_VAR=test_value").unwrap();
+    let action = Action::parse("setenv", "TEST_VAR=test_value", &mut rule)
+        .unwrap()
+        .expect("setenv runs when the rule matches");
     assert_eq!(action.action_type(), ActionType::Nondisruptive);
 
     // Execute (sets environment variable)
@@ -302,19 +299,11 @@ fn test_setenv_action_execution() {
 }
 
 #[test]
-fn test_exec_action_is_safe_stub() {
-    use coraza::actions::get;
-
-    // Exec should be registered but not execute anything
-    let mut action = get("exec").unwrap();
+fn test_exec_action_is_never_run() {
+    // exec is accepted, but has no runtime part: scripts are never executed
     let mut rule = RuleMetadata::new();
-
-    // Should parse script path
-    action.init(&mut rule, "/usr/bin/test.sh").unwrap();
-
-    // Execute should be safe (no-op)
-    let mut tx = Transaction::new("action-test");
-    action.evaluate(&rule, &mut tx); // Should not crash or execute anything
+    let action = Action::parse("exec", "/usr/bin/test.sh", &mut rule).unwrap();
+    assert!(action.is_none());
 }
 
 // ===== Combined Scenario Tests =====

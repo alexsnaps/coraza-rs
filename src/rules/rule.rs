@@ -11,11 +11,10 @@
 //! - Rule chaining (AND logic)
 
 use crate::RulePhase;
-use crate::actions::RuleMetadata;
+use crate::actions::{Action, ActionType, RuleMetadata};
 use crate::collection::MatchData;
 use crate::rules::{
-    RuleAction, RuleOperator, VariableSpec, execute_flow_and_disruptive_actions,
-    execute_nondisruptive_actions,
+    RuleOperator, VariableSpec, execute_flow_and_disruptive_actions, execute_nondisruptive_actions,
 };
 use crate::transaction::Transaction;
 
@@ -59,7 +58,7 @@ pub struct Rule {
     operator: Option<RuleOperator>,
 
     /// Actions to execute when rule matches
-    actions: Vec<RuleAction>,
+    actions: Vec<Action>,
 
     /// Rules chained to this one (AND logic), in order; empty unless this rule starts a chain
     pub(crate) chain: Vec<Rule>,
@@ -95,8 +94,13 @@ impl Rule {
         self
     }
 
-    /// Add an action.
-    pub fn add_action(mut self, action: RuleAction) -> Self {
+    /// Adds an action. A rule has at most one disruptive action: adding one replaces
+    /// the previous (the last one wins, as in SecLang).
+    pub fn add_action(mut self, action: Action) -> Self {
+        if action.action_type() == ActionType::Disruptive {
+            self.actions
+                .retain(|existing| existing.action_type() != ActionType::Disruptive);
+        }
         self.actions.push(action);
         self
     }
@@ -123,7 +127,7 @@ impl Rule {
     }
 
     /// Get the actions.
-    pub fn actions(&self) -> &[RuleAction] {
+    pub fn actions(&self) -> &[Action] {
         &self.actions
     }
 
@@ -137,7 +141,7 @@ impl Rule {
     /// Set the rule's actions (replaces existing actions).
     ///
     /// This is used by SecLang directives like `SecRuleUpdateActionById`.
-    pub fn set_actions(&mut self, actions: Vec<RuleAction>) {
+    pub fn set_actions(&mut self, actions: Vec<Action>) {
         self.actions = actions;
     }
 

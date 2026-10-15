@@ -9,8 +9,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::actions::Action;
 use crate::config::WafConfig;
-use crate::rules::{Rule, RuleAction, RuleGroup, VariableSpec};
+use crate::rules::{Rule, RuleGroup, VariableSpec};
 use crate::transaction::Transaction;
 use crate::types::RulePhase;
 use crate::utils::strings::random_string;
@@ -92,7 +93,7 @@ pub struct Waf {
     rules: Arc<RuleGroup>,
 
     /// Default actions per phase
-    default_actions: HashMap<RulePhase, Vec<RuleAction>>,
+    default_actions: HashMap<RulePhase, Vec<Action>>,
 }
 
 impl Waf {
@@ -205,7 +206,7 @@ impl Waf {
     /// Gets default actions for a specific phase.
     ///
     /// Returns an empty slice if no default actions are set for the phase.
-    pub fn get_default_actions(&self, phase: RulePhase) -> &[RuleAction] {
+    pub fn get_default_actions(&self, phase: RulePhase) -> &[Action] {
         self.default_actions
             .get(&phase)
             .map(|v| v.as_slice())
@@ -242,7 +243,7 @@ impl Default for Waf {
 pub struct WafBuilder {
     config: WafConfig,
     rules: RuleGroup,
-    default_actions: HashMap<RulePhase, Vec<RuleAction>>,
+    default_actions: HashMap<RulePhase, Vec<Action>>,
 }
 
 impl WafBuilder {
@@ -409,7 +410,7 @@ impl WafBuilder {
     ///
     /// Default actions are applied to all rules in the phase that don't have
     /// explicit actions defined.
-    pub fn set_default_actions(&mut self, phase: RulePhase, actions: Vec<RuleAction>) {
+    pub fn set_default_actions(&mut self, phase: RulePhase, actions: Vec<Action>) {
         self.default_actions.insert(phase, actions);
     }
 
@@ -449,7 +450,7 @@ impl WafBuilder {
     pub fn update_rule_actions_by_id(
         &mut self,
         id: i32,
-        actions: Vec<RuleAction>,
+        actions: Vec<Action>,
     ) -> Result<(), WafError> {
         self.rule_mut(id)?.set_actions(actions);
         Ok(())
@@ -880,7 +881,6 @@ mod tests {
 
         let mut builder = WafBuilder::default();
 
-        // Set default actions for phase 1 (empty for now since RuleAction can't be easily constructed in tests)
         builder.set_default_actions(RulePhase::RequestHeaders, vec![]);
         let waf = builder.build().unwrap();
 

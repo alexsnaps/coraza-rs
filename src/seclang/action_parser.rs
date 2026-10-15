@@ -10,8 +10,6 @@
 //! - `msg:'Attack detected'` - Quoted value
 //! - `msg:'O\'Reilly'` - Escaped quotes
 
-use crate::actions::{self, Action, ActionType};
-
 /// Parse error for action syntax
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionParseError {
@@ -34,21 +32,14 @@ impl ActionParseError {
 
 type ParseResult<T> = Result<T, ActionParseError>;
 
-/// Parsed action result
-///
-/// Contains the action information needed to create a RuleAction.
+/// One action of a rule's action list, as written; see [`crate::actions::Action::parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedAction {
     /// Action key/name (lowercase, trimmed)
     pub key: String,
 
-    /// Action value (trimmed, quotes removed)
+    /// Action value (trimmed, quotes removed); empty if the action has none
     pub value: String,
-
-    /// Action instance
-    pub action: Box<dyn Action>,
-
-    /// Action type (for disruptive action handling)
-    pub action_type: ActionType,
 }
 
 /// Parse actions from SecRule syntax
@@ -66,11 +57,11 @@ pub struct ParsedAction {
 ///
 /// # Returns
 ///
-/// Vector of ParsedAction objects with initialized action instances.
+/// The actions in order, as name/value pairs; whether each name is a known action is
+/// checked when the rule is compiled.
 ///
 /// # Special handling
 ///
-/// - Only one disruptive action allowed per rule (last one wins)
 /// - Keys are lowercased and trimmed
 /// - Values are trimmed and quotes removed
 /// - Unclosed quotes result in an error
@@ -91,7 +82,9 @@ pub struct ParsedAction {
 /// ```
 pub fn parse_actions(input: &str) -> ParseResult<Vec<ParsedAction>> {
     let mut result = Vec::new();
-    let mut disruptive_action_index: Option<usize> = None;
+    if input.trim().is_empty() {
+        return Ok(result);
+    }
 
     let bytes = input.as_bytes();
     let mut before_key = -1_isize; // index before first char of key
@@ -149,7 +142,7 @@ pub fn parse_actions(input: &str) -> ParseResult<Vec<ParsedAction>> {
                 let key = String::from_utf8_lossy(&bytes[key_start..key_end]).to_string();
 
                 // Append action
-                append_action(&mut result, &mut disruptive_action_index, key, val)?;
+                append_action(&mut result, key, val)?;
 
                 // Reset state
                 before_key = i as isize;
@@ -183,64 +176,17 @@ pub fn parse_actions(input: &str) -> ParseResult<Vec<ParsedAction>> {
     let key_end = after_key as usize;
     let key = String::from_utf8_lossy(&bytes[key_start..key_end]).to_string();
 
-    append_action(&mut result, &mut disruptive_action_index, key, val)?;
+    append_action(&mut result, key, val)?;
 
     Ok(result)
 }
 
-/// Append action to result list with disruptive action handling
-///
-/// - Only one disruptive action allowed per rule (last one wins)
-/// - Keys are lowercased and trimmed
-/// - Values are trimmed and quotes removed
-fn append_action(
-    result: &mut Vec<ParsedAction>,
-    disruptive_action_index: &mut Option<usize>,
-    key: String,
-    value: String,
-) -> ParseResult<()> {
-    // Trim and lowercase key
-    let key = key.trim().to_lowercase();
-
-    // Trim and remove quotes from value
-    let value = maybe_remove_quotes(value.trim());
-
-    // Look up action from registry
-    let action = actions::get(&key)
-        .map_err(|e| ActionParseError::new(format!("failed to get action '{}': {}", key, e)))?;
-
-    let action_type = action.action_type();
-
-    // Handle disruptive actions (only one allowed per rule)
-    if action_type == ActionType::Disruptive {
-        if let Some(idx) = *disruptive_action_index {
-            // Replace previous disruptive action (last one wins)
-            result[idx] = ParsedAction {
-                key,
-                value,
-                action,
-                action_type,
-            };
-        } else {
-            // First disruptive action
-            *disruptive_action_index = Some(result.len());
-            result.push(ParsedAction {
-                key,
-                value,
-                action,
-                action_type,
-            });
-        }
-    } else {
-        // Non-disruptive action
-        result.push(ParsedAction {
-            key,
-            value,
-            action,
-            action_type,
-        });
-    }
-
+/// Appends an action, with its key trimmed and lowercased and its value trimmed and unquoted.
+fn append_action(result: &mut Vec<ParsedAction>, key: String, value: String) -> ParseResult<()> {
+    result.push(ParsedAction {
+        key: key.trim().to_lowercase(),
+        value: maybe_remove_quotes(value.trim()),
+    });
     Ok(())
 }
 
@@ -391,34 +337,9 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_unknown_action() {
-        let result = parse_actions("unknownaction");
-        assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(e.message.to_lowercase().contains("unknown"));
-        }
-    }
-
-    #[test]
-    fn test_parse_multiple_disruptive_actions_last_wins() {
-        // deny and drop are both disruptive - last one (drop) should win
-        let actions = parse_actions("id:1,deny,drop").unwrap();
-        // Should have 2 actions: id (metadata) and drop (disruptive)
-        // deny should be replaced by drop
-        assert_eq!(actions.len(), 2);
-        assert_eq!(actions[0].key, "id");
-        assert_eq!(actions[1].key, "drop");
-    }
-
-    #[test]
     fn test_parse_empty_action_string() {
-        // Empty string should parse as single empty action
-        let result = parse_actions("");
-        // Go implementation would try to parse this and likely error
-        // Let's check what happens
-        if let Ok(actions) = result {
-            assert!(actions.is_empty())
-        }
+        assert!(parse_actions("").unwrap().is_empty());
+        assert!(parse_actions("  ").unwrap().is_empty());
     }
 
     #[test]
