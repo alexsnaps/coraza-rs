@@ -1313,39 +1313,9 @@ impl Transaction {
         self.interruption.clone()
     }
 
-    /// Process request body with appropriate body processor.
-    ///
-    /// This method:
-    /// 1. Stores the raw body in REQUEST_BODY and REQUEST_BODY_LENGTH
-    /// 2. Determines the body processor from Content-Type
-    /// 3. Calls the appropriate body processor to parse the body
-    /// 4. Updates last_phase to RequestBody
-    ///
-    /// Returns an interruption if a disruptive action was triggered.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use coraza::transaction::Transaction;
-    ///
-    /// let mut tx = Transaction::new("tx-1");
-    /// tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
-    ///
-    /// let body = b"username=admin&password=secret";
-    /// let result = tx.process_request_body(body);
-    ///
-    /// // Body is parsed and ARGS_POST is populated
-    /// assert_eq!(tx.args_post().get("username"), vec!["admin"]);
-    /// assert_eq!(tx.args_post().get("password"), vec!["secret"]);
-    /// ```
-    pub fn process_request_body(&mut self, body: &[u8]) -> Result<Option<Interruption>, String> {
-        // Check if already processed
-        if let Some(phase) = self.last_phase
-            && phase >= RulePhase::RequestBody
-        {
-            return Ok(None);
-        }
-
+    /// Stores the request body in REQUEST_BODY and parses it with the processor
+    /// REQBODY_PROCESSOR names, if any.
+    fn inspect_request_body(&mut self, body: &[u8]) {
         // Store raw body
         let body_str = String::from_utf8_lossy(body).to_string();
         self.request_body.set(&body_str);
@@ -1383,6 +1353,45 @@ impl Transaction {
                 self.reqbody_processor_error.set("1");
                 self.reqbody_processor_error_msg.set(e.to_string());
             }
+        }
+    }
+
+    /// Process request body with appropriate body processor.
+    ///
+    /// This method:
+    /// 1. Stores the raw body in REQUEST_BODY and REQUEST_BODY_LENGTH
+    /// 2. Determines the body processor from Content-Type
+    /// 3. Calls the appropriate body processor to parse the body
+    /// 4. Updates last_phase to RequestBody
+    ///
+    /// Returns an interruption if a disruptive action was triggered.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use coraza::transaction::Transaction;
+    ///
+    /// let mut tx = Transaction::new("tx-1");
+    /// tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+    ///
+    /// let body = b"username=admin&password=secret";
+    /// let result = tx.process_request_body(body);
+    ///
+    /// // Body is parsed and ARGS_POST is populated
+    /// assert_eq!(tx.args_post().get("username"), vec!["admin"]);
+    /// assert_eq!(tx.args_post().get("password"), vec!["secret"]);
+    /// ```
+    pub fn process_request_body(&mut self, body: &[u8]) -> Result<Option<Interruption>, String> {
+        // Check if already processed
+        if let Some(phase) = self.last_phase
+            && phase >= RulePhase::RequestBody
+        {
+            return Ok(None);
+        }
+
+        // As in Go Coraza, an empty body or one without access is left alone
+        if self.request_body_access && !body.is_empty() {
+            self.inspect_request_body(body);
         }
 
         // Update phase
@@ -1440,9 +1449,9 @@ impl Transaction {
         self.interruption.clone()
     }
 
-    /// Whether [`Transaction::process_response_body`] inspects the body: its content
-    /// type, as set by the `Content-Type` response header, is one of
-    /// `SecResponseBodyMimeType`, or `ctl:forceResponseBodyVariable` is on.
+    /// Whether [`Transaction::process_response_body`] inspects the body, given response
+    /// body access: its content type, as set by the `Content-Type` response header, is
+    /// one of `SecResponseBodyMimeType`, or `ctl:forceResponseBodyVariable` is on.
     ///
     /// A connector can use it to stream other responses rather than buffer them.
     pub fn is_response_body_processable(&self) -> bool {
@@ -1476,7 +1485,7 @@ impl Transaction {
             return None;
         }
 
-        if self.is_response_body_processable() {
+        if self.response_body_access && self.is_response_body_processable() {
             match self.res_body_processor.get().parse::<BodyProcessorKind>() {
                 Ok(processor) => {
                     let options = BodyProcessorOptions {
@@ -2093,6 +2102,7 @@ value1\r\n\
     fn json_response_transaction(id: &str) -> Transaction {
         let mut tx = Transaction::new(id);
         tx.set_config(Arc::new(WafConfig {
+            response_body_access: true,
             response_body_mime_types: vec!["application/json".to_string()],
             ..WafConfig::default()
         }));

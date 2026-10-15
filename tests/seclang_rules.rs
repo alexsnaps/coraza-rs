@@ -165,7 +165,10 @@ fn allow_request_skips_the_request_phases_only() {
 
 #[test]
 fn rules_can_inspect_the_request_body() {
-    let waf = waf(r#"SecRule REQUEST_BODY "@contains attack" "id:1,phase:2,deny,status:403""#);
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule REQUEST_BODY "@contains attack" "id:1,phase:2,deny,status:403"
+    "#);
 
     let mut tx = waf.new_transaction();
     tx.process_request_headers();
@@ -781,5 +784,40 @@ fn invalid_ctl_audit_and_debug_values_are_parse_errors() {
         let mut parser = Parser::new();
         let rule = format!(r#"SecAction "id:1,phase:1,pass,ctl:{ctl}""#);
         assert!(parser.from_string(&rule).is_err(), "{ctl}");
+    }
+}
+
+#[test]
+fn bodies_are_inspected_only_with_body_access() {
+    for (access, inspected) in [("Off", false), ("On", true)] {
+        let waf = waf(&format!(
+            r#"
+            SecRequestBodyAccess {access}
+            SecResponseBodyAccess {access}
+            SecResponseBodyMimeType text/plain
+            SecRule REQUEST_BODY "@contains secret" "id:1,phase:2,deny,status:403"
+            SecRule RESPONSE_BODY "@contains secret" "id:2,phase:4,deny,status:403"
+            "#
+        ));
+
+        let mut tx = waf.new_transaction();
+        tx.add_request_header("Content-Type", "text/plain");
+        tx.process_request_headers();
+        let interruption = tx.process_request_body(b"a secret").unwrap();
+        assert_eq!(
+            interruption.is_some(),
+            inspected,
+            "request, access {access}"
+        );
+
+        let mut tx = waf.new_transaction();
+        tx.add_response_header("Content-Type", "text/plain");
+        tx.process_response_headers(200, "HTTP/1.1");
+        let interruption = tx.process_response_body(b"a secret");
+        assert_eq!(
+            interruption.is_some(),
+            inspected,
+            "response, access {access}"
+        );
     }
 }

@@ -311,6 +311,8 @@ fn test_exec_action_is_never_run() {
 #[test]
 fn test_complete_transaction_flow() {
     let waf = coraza::waf::Waf::new(coraza::config::WafConfig {
+        request_body_access: true,
+        response_body_access: true,
         response_body_mime_types: vec!["application/json".to_string()],
         ..Default::default()
     })

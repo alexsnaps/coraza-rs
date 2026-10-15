@@ -101,8 +101,11 @@ Suggested order: 1 → 2 → 3 → 6, then 4 and 5. The first three items of 1 a
     the WAF's setting (`Transaction::audit_engine`, `audit_log_parts`, `debug_log_level`), which an embedder's
     logger can read; the library itself writes neither log. `hashEngine` and `hashEnforcement` have no effect, as in
     Go ("not supported yet"). A transaction now takes all its `ctl`-changeable settings from the WAF in one place.
-- [ ] **`SecRequestBodyAccess` and `SecResponseBodyAccess` are not enforced.** Found while working on 1.6: bodies are
+- [x] **`SecRequestBodyAccess` and `SecResponseBodyAccess` are not enforced.** Found while working on 1.6: bodies are
   stored and processed whatever the setting, while Go skips them (and defaults both to `Off`, as `WafConfig` does).
+  - Done: as in Go, a request body is stored and parsed only with request body access and when not empty, and a
+    response body only with response body access and a processable content type; the phase's rules run either way.
+    A transaction made with `Transaction::new`, outside a WAF, keeps request body access on.
 
 ## 3. Variables that parse but are never set
 
