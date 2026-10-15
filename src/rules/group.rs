@@ -282,6 +282,11 @@ impl RuleGroup {
                 return true; // Transaction was disrupted
             }
 
+            // An earlier `allow` skips the rest of this phase
+            if tx.is_allowed(phase) {
+                break;
+            }
+
             // Phase filtering: skip rules that don't match current phase
             // Rules with phase Unknown (0) always run (phase-agnostic rules)
             if rule.phase() != RulePhase::Unknown && rule.phase() != phase {
@@ -314,6 +319,8 @@ impl RuleGroup {
             // Evaluate the rule
             let _matches = rule.evaluate(tx, rule_engine_on);
         }
+
+        tx.end_phase_allow();
 
         // Return true if an interruption occurred
         tx.interruption.is_some()

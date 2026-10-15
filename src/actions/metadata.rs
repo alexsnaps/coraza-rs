@@ -7,8 +7,9 @@
 //! versioning, and classification. These actions do not affect transaction
 //! processing - they only store information that appears in logs and alerts.
 
-use crate::actions::{Action, ActionError, ActionType, RuleMetadata, TransactionState};
+use crate::actions::{Action, ActionError, ActionType, RuleMetadata};
 use crate::operators::Macro;
+use crate::transaction::Transaction;
 use crate::{RulePhase, RuleSeverity};
 use std::str::FromStr;
 
@@ -50,7 +51,7 @@ impl Action for IdAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Metadata actions don't execute at runtime
     }
 
@@ -91,7 +92,7 @@ impl Action for MsgAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Metadata actions don't execute at runtime
     }
 
@@ -128,7 +129,7 @@ impl Action for TagAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Metadata actions don't execute at runtime
     }
 
@@ -180,7 +181,7 @@ impl Action for SeverityAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Metadata actions don't execute at runtime
     }
 
@@ -216,7 +217,7 @@ impl Action for RevAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Metadata actions don't execute at runtime
     }
 
@@ -252,7 +253,7 @@ impl Action for VerAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Metadata actions don't execute at runtime
     }
 
@@ -297,7 +298,7 @@ impl Action for MaturityAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Metadata actions don't execute at runtime
     }
 
@@ -346,7 +347,7 @@ impl Action for PhaseAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Metadata actions don't execute at runtime
     }
 

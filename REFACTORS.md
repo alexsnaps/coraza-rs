@@ -61,12 +61,14 @@ probed bugs.
 
 ## 3. `TransactionState` trait
 
-- [ ] **Remove the trait, or at least its default bodies.** Defined in `src/operators/macros.rs:16`, about 20
+- [x] **Remove the trait, or at least its default bodies.** Defined in `src/operators/macros.rs:16`, about 20
   methods, mostly no-op defaults, one production impl, 14 test mocks. The defaults hide gaps: `Transaction` never
   implements `set_allow_type`, so `allow` does nothing (`src/actions/disruptive.rs:180`). **(probe)** `allow` then
   `deny` in phase 1 still denies with 403.
   - Preferred: actions and operators take `&mut Transaction` (`Transaction::new` is cheap for tests).
   - Minimum: no default bodies, and move the trait into `transaction`.
+  - Done (preferred option): operators and actions take `Transaction`; the trait, its `ctl_*` wrappers and the
+    test mocks are gone. `allow`, `allow:phase` and `allow:request` now skip rules as ModSecurity documents.
 
 ## 4. `RuleVariable` → transaction data mapped three times
 

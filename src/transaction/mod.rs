@@ -8,8 +8,8 @@ pub mod variables;
 use std::sync::Arc;
 
 use crate::RuleVariable;
+use crate::actions::AllowType;
 use crate::collection::{Keyed, Map, MapCollection, Single, SingleCollection};
-use crate::operators::TransactionState;
 use crate::rules::RuleGroup;
 use crate::types::{RuleEngineStatus, RulePhase};
 
@@ -259,6 +259,9 @@ pub struct Transaction {
     /// Reference to WAF's rule group for CTL tag/msg-based exclusions
     /// Optional because transactions created via Transaction::new() don't have a WAF reference
     rules: Option<Arc<RuleGroup>>,
+
+    /// Rules skipped because of an `allow` action
+    allow_type: AllowType,
 }
 
 impl Default for Transaction {
@@ -325,6 +328,7 @@ impl Transaction {
             rule_remove_target_by_id: std::collections::BTreeMap::new(),
             matched_rules: Vec::new(),
             rules: None, // No WAF reference for standalone transactions
+            allow_type: AllowType::Unset,
         }
     }
 
@@ -1327,8 +1331,12 @@ impl Transaction {
     }
 }
 
-impl TransactionState for Transaction {
-    fn get_variable(&self, variable: RuleVariable, key: Option<&str>) -> Option<String> {
+/// State that operators and actions read and change while a rule is evaluated.
+impl Transaction {
+    /// Value of a variable, as macros (`%{VAR.key}`) expand it: the value of a
+    /// single-value variable (with `key` `None`), or the first value of `key` in a
+    /// collection. `None` if the variable isn't set or not available.
+    pub fn get_variable(&self, variable: RuleVariable, key: Option<&str>) -> Option<String> {
         match (variable, key) {
             // Single-value variables
             (RuleVariable::RequestURI, None) => Some(self.request_uri.get().to_string()),
@@ -1358,17 +1366,20 @@ impl TransactionState for Transaction {
         }
     }
 
-    fn capturing(&self) -> bool {
+    /// Whether operators currently store their captures (see [`Transaction::set_capturing`]).
+    pub fn capturing(&self) -> bool {
         self.capturing
     }
 
-    fn capture_field(&mut self, index: usize, value: &str) {
+    /// Stores capture `index` (0-9) in `TX.<index>` if capturing is on; otherwise does nothing.
+    pub fn capture_field(&mut self, index: usize, value: &str) {
         if self.capturing {
             self.tx.set(&index.to_string(), vec![value.to_string()]);
         }
     }
 
-    fn interrupt(&mut self, rule_id: i32, action: &str, status: i32, data: &str) {
+    /// Interrupts the transaction on behalf of a disruptive action of `rule_id`.
+    pub(crate) fn interrupt(&mut self, rule_id: i32, action: &str, status: i32, data: &str) {
         self.interruption = Some(Interruption {
             rule_id: rule_id as usize,
             action: action.to_string(),
@@ -1377,63 +1388,38 @@ impl TransactionState for Transaction {
         });
     }
 
-    // ===== CTL Action Methods =====
-
-    fn ctl_set_rule_engine(&mut self, status: RuleEngineStatus) {
-        self.set_rule_engine(status);
+    /// Records an `allow` action; see [`AllowType`] for which rules it skips.
+    pub(crate) fn set_allow_type(&mut self, allow_type: AllowType) {
+        self.allow_type = allow_type;
     }
 
-    fn ctl_set_request_body_access(&mut self, enabled: bool) {
-        self.set_request_body_access(enabled);
+    /// Whether an earlier `allow` action skips the rules of `phase` still to be evaluated.
+    pub(crate) fn is_allowed(&self, phase: RulePhase) -> bool {
+        match self.allow_type {
+            AllowType::Unset => false,
+            AllowType::All | AllowType::Phase => phase != RulePhase::Logging,
+            AllowType::Request => {
+                matches!(phase, RulePhase::RequestHeaders | RulePhase::RequestBody)
+            }
+        }
     }
 
-    fn ctl_set_request_body_limit(&mut self, limit: i64) {
-        self.set_request_body_limit(limit);
+    /// Ends an `allow:phase` once the phase that triggered it has been evaluated.
+    pub(crate) fn end_phase_allow(&mut self) {
+        if self.allow_type == AllowType::Phase {
+            self.allow_type = AllowType::Unset;
+        }
     }
 
-    fn ctl_set_force_request_body_variable(&mut self, enabled: bool) {
-        self.set_force_request_body_variable(enabled);
-    }
-
-    fn ctl_set_response_body_access(&mut self, enabled: bool) {
-        self.set_response_body_access(enabled);
-    }
-
-    fn ctl_set_response_body_limit(&mut self, limit: i64) {
-        self.set_response_body_limit(limit);
-    }
-
-    fn ctl_set_force_response_body_variable(&mut self, enabled: bool) {
-        self.set_force_response_body_variable(enabled);
-    }
-
-    fn ctl_last_phase(&self) -> Option<RulePhase> {
-        self.last_phase
-    }
-
-    fn ctl_remove_rule_by_id(&mut self, rule_id: i32) {
-        self.remove_rule_by_id(rule_id);
-    }
-
-    fn ctl_remove_rule_target_by_id(&mut self, rule_id: i32, variable: RuleVariable, key: &str) {
-        self.remove_rule_target_by_id(rule_id, variable, key);
-    }
-
-    fn ctl_get_rules(&self) -> Option<&Arc<RuleGroup>> {
+    /// The WAF's rules, for `ctl` actions that exclude rules by tag or message; `None`
+    /// for a transaction not created by a WAF.
+    pub(crate) fn rules(&self) -> Option<&Arc<RuleGroup>> {
         self.rules.as_ref()
     }
 
-    // ===== Flow Control Methods =====
-
-    fn set_skip(&mut self, count: i32) {
-        self.skip = count;
-    }
-
-    fn set_skip_after(&mut self, marker: &str) {
-        self.skip_after = marker.to_string();
-    }
-
-    fn collection_mut(
+    /// Writable collection for `variable`, for actions such as `setvar`; `None` if the
+    /// variable isn't a writable collection.
+    pub fn collection_mut(
         &mut self,
         variable: RuleVariable,
     ) -> Option<&mut dyn crate::collection::MapCollection> {

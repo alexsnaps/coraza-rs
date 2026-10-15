@@ -6,159 +6,9 @@
 //! Macros allow operators to reference variables at runtime using the syntax
 //! `%{VARIABLE.key}`. For example: `%{TX.score}` or `%{ARGS.id}`.
 
+use crate::transaction::Transaction;
 use crate::types::RuleVariable;
 use std::fmt;
-
-/// Transaction state for variable lookups and capturing.
-///
-/// This trait provides access to variable collections during rule evaluation
-/// and supports capturing regex groups for use in rule actions.
-pub trait TransactionState {
-    /// Get a variable value by variable type and optional key.
-    ///
-    /// Returns the first value if the variable contains multiple values.
-    fn get_variable(&self, variable: RuleVariable, key: Option<&str>) -> Option<String>;
-
-    /// Check if capturing is enabled for this evaluation.
-    ///
-    /// When capturing is enabled, operators like `@rx` will store matched
-    /// groups for later use in rule actions. Returns false by default.
-    fn capturing(&self) -> bool {
-        false
-    }
-
-    /// Capture a field value at the given index.
-    ///
-    /// Used by regex operators to store captured groups. Index 0 is the full match,
-    /// indices 1-9 are capturing groups. ModSecurity limits captures to 9 groups.
-    ///
-    /// # Arguments
-    /// * `index` - Capture index (0 = full match, 1-9 = groups)
-    /// * `value` - The captured string value
-    fn capture_field(&mut self, index: usize, value: &str) {
-        let _ = (index, value); // Suppress unused warnings for default impl
-    }
-
-    /// Interrupt the transaction with the given action.
-    ///
-    /// Called by disruptive actions like `deny`, `drop`, and `redirect` to
-    /// stop transaction processing.
-    ///
-    /// # Arguments
-    /// * `rule_id` - ID of the rule that triggered the interruption
-    /// * `action` - Action name (e.g., "deny", "drop", "redirect")
-    /// * `status` - HTTP status code
-    /// * `data` - Additional data (e.g., redirect URL)
-    fn interrupt(&mut self, rule_id: i32, action: &str, status: i32, data: &str) {
-        let _ = (rule_id, action, status, data); // Suppress unused warnings for default impl
-    }
-
-    /// Set the allow type for the transaction.
-    ///
-    /// Called by the `allow` action to control which phases are skipped.
-    ///
-    /// # Arguments
-    /// * `allow_type` - The type of allow (All, Phase, or Request)
-    fn set_allow_type(&mut self, allow_type: crate::actions::AllowType) {
-        let _ = allow_type; // Suppress unused warnings for default impl
-    }
-
-    /// Get a mutable reference to a collection by variable.
-    ///
-    /// Used by variable manipulation actions like `setvar` to modify collections.
-    ///
-    /// # Arguments
-    /// * `variable` - The variable identifying which collection to retrieve
-    ///
-    /// # Returns
-    /// A mutable reference to the collection, or None if not available
-    fn collection_mut(
-        &mut self,
-        variable: RuleVariable,
-    ) -> Option<&mut dyn crate::collection::MapCollection> {
-        let _ = variable; // Suppress unused warnings for default impl
-        None
-    }
-
-    /// Set the number of rules to skip.
-    ///
-    /// Called by the `skip` action to skip the next N rules in the current phase.
-    ///
-    /// # Arguments
-    /// * `count` - Number of rules to skip (must be >= 1)
-    fn set_skip(&mut self, count: i32) {
-        let _ = count; // Suppress unused warnings for default impl
-    }
-
-    /// Set the marker to skip to.
-    ///
-    /// Called by the `skipAfter` action to skip rules until reaching a marker.
-    ///
-    /// # Arguments
-    /// * `marker` - Marker ID to skip to
-    fn set_skip_after(&mut self, marker: &str) {
-        let _ = marker; // Suppress unused warnings for default impl
-    }
-
-    // ===== CTL Action Methods =====
-
-    /// Set rule engine status (called by ctl:ruleEngine).
-    fn ctl_set_rule_engine(&mut self, status: crate::RuleEngineStatus) {
-        let _ = status;
-    }
-
-    /// Set request body access (called by ctl:requestBodyAccess).
-    fn ctl_set_request_body_access(&mut self, enabled: bool) {
-        let _ = enabled;
-    }
-
-    /// Set request body limit (called by ctl:requestBodyLimit).
-    fn ctl_set_request_body_limit(&mut self, limit: i64) {
-        let _ = limit;
-    }
-
-    /// Set force request body variable (called by ctl:forceRequestBodyVariable).
-    fn ctl_set_force_request_body_variable(&mut self, enabled: bool) {
-        let _ = enabled;
-    }
-
-    /// Set response body access (called by ctl:responseBodyAccess).
-    fn ctl_set_response_body_access(&mut self, enabled: bool) {
-        let _ = enabled;
-    }
-
-    /// Set response body limit (called by ctl:responseBodyLimit).
-    fn ctl_set_response_body_limit(&mut self, limit: i64) {
-        let _ = limit;
-    }
-
-    /// Set force response body variable (called by ctl:forceResponseBodyVariable).
-    fn ctl_set_force_response_body_variable(&mut self, enabled: bool) {
-        let _ = enabled;
-    }
-
-    /// Get last processed phase (used by CTL to check phase restrictions).
-    fn ctl_last_phase(&self) -> Option<crate::types::RulePhase> {
-        None
-    }
-
-    /// Remove a rule by ID for this transaction (called by ctl:ruleRemoveById).
-    fn ctl_remove_rule_by_id(&mut self, rule_id: i32) {
-        let _ = rule_id;
-    }
-
-    /// Remove a specific variable target from a rule (called by ctl:ruleRemoveTargetById).
-    fn ctl_remove_rule_target_by_id(&mut self, rule_id: i32, variable: RuleVariable, key: &str) {
-        let _ = (rule_id, variable, key);
-    }
-
-    /// Get access to the WAF's rules for tag/msg-based CTL actions.
-    ///
-    /// Returns None for standalone transactions (not created from a WAF).
-    fn ctl_get_rules(&self) -> Option<&std::sync::Arc<crate::rules::RuleGroup>> {
-        None
-    }
-}
 
 /// A macro that can expand variable references at runtime.
 ///
@@ -256,7 +106,7 @@ impl Macro {
     ///
     /// This method uses static dispatch (generics) for zero-overhead abstraction.
     /// The compiler can inline the entire expansion path.
-    pub fn expand<TX: TransactionState + ?Sized>(&self, tx: Option<&TX>) -> String {
+    pub fn expand(&self, tx: Option<&Transaction>) -> String {
         // Handle empty macros
         if self.tokens.is_empty() {
             return String::new();
@@ -278,7 +128,7 @@ impl Macro {
         }
     }
 
-    fn expand_token<TX: TransactionState + ?Sized>(tx: &TX, token: &MacroToken) -> String {
+    fn expand_token(tx: &Transaction, token: &MacroToken) -> String {
         match (&token.variable, &token.key) {
             (Some(var), key) => {
                 let key_str = key.as_deref();
@@ -494,38 +344,35 @@ mod tests {
         assert_eq!(m.expand(None::<&Transaction>), "%{TX.score}");
     }
 
-    // Mock transaction state for testing
-    struct MockTx;
+    fn mock_tx() -> Transaction {
+        use crate::collection::MapCollection;
 
-    impl TransactionState for MockTx {
-        fn get_variable(&self, variable: RuleVariable, key: Option<&str>) -> Option<String> {
-            match (variable, key) {
-                (RuleVariable::TX, Some("score")) => Some("42".to_string()),
-                (RuleVariable::TX, Some("id")) => Some("test-123".to_string()),
-                (RuleVariable::Args, Some("count")) => Some("10".to_string()),
-                _ => None,
-            }
-        }
+        let mut tx = Transaction::new("macro-test");
+        let vars = tx.collection_mut(RuleVariable::TX).unwrap();
+        vars.add("score", "42");
+        vars.add("id", "test-123");
+        tx.args_mut().add("count", "10");
+        tx
     }
 
     #[test]
     fn test_expand_with_tx() {
         let m = Macro::new("%{TX.score}").unwrap();
-        let tx = MockTx;
+        let tx = mock_tx();
         assert_eq!(m.expand(Some(&tx)), "42");
     }
 
     #[test]
     fn test_expand_multi_variable() {
         let m = Macro::new("ID: %{TX.id} Score: %{TX.score}").unwrap();
-        let tx = MockTx;
+        let tx = mock_tx();
         assert_eq!(m.expand(Some(&tx)), "ID: test-123 Score: 42");
     }
 
     #[test]
     fn test_expand_missing_key() {
         let m = Macro::new("%{TX.missing}").unwrap();
-        let tx = MockTx;
+        let tx = mock_tx();
         // Returns original text if key not found
         assert_eq!(m.expand(Some(&tx)), "TX.missing");
     }

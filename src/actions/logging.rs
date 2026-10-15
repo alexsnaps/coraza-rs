@@ -7,8 +7,9 @@
 //! and audit logs. These actions are non-disruptive and do not affect transaction
 //! processing - they only control logging behavior.
 
-use crate::actions::{Action, ActionError, ActionType, RuleMetadata, TransactionState};
+use crate::actions::{Action, ActionError, ActionType, RuleMetadata};
 use crate::operators::Macro;
+use crate::transaction::Transaction;
 
 /// `log` action - Enables logging for the rule.
 ///
@@ -38,7 +39,7 @@ impl Action for LogAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Logging actions don't execute at runtime
     }
 
@@ -76,7 +77,7 @@ impl Action for NologAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Logging actions don't execute at runtime
     }
 
@@ -112,7 +113,7 @@ impl Action for AuditlogAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Logging actions don't execute at runtime
     }
 
@@ -155,7 +156,7 @@ impl Action for NoauditlogAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Logging actions don't execute at runtime
     }
 
@@ -194,7 +195,7 @@ impl Action for LogdataAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // logdata macro expansion is performed after all other actions have been
         // evaluated (and potentially all the needed variables have been set)
     }

@@ -8,20 +8,21 @@
 //! the last one takes precedence. These actions are NOT executed if
 //! SecRuleEngine is set to DetectionOnly.
 
-use crate::actions::{Action, ActionError, ActionType, RuleMetadata, TransactionState};
+use crate::actions::{Action, ActionError, ActionType, RuleMetadata};
+use crate::transaction::Transaction;
 
-/// Allow type for the `allow` action.
+/// Which rules an `allow` action skips once it runs.
 ///
-/// Determines the scope of what is allowed when the allow action triggers.
+/// The logging phase is never skipped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AllowType {
-    /// Not set (default)
+    /// No `allow` action has run
     Unset,
-    /// Skip all phases (entire transaction)
+    /// `allow`: the rest of the current phase and every later phase
     All,
-    /// Skip only the current phase
+    /// `allow:phase`: the rest of the current phase
     Phase,
-    /// Skip request phases until RESPONSE_HEADERS
+    /// `allow:request`: the rest of the request phases (REQUEST_HEADERS, REQUEST_BODY)
     Request,
 }
 
@@ -49,7 +50,7 @@ impl Action for DenyAction {
         Ok(())
     }
 
-    fn evaluate(&self, rule: &RuleMetadata, tx: &mut dyn TransactionState) {
+    fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
         let rule_id = rule.id;
 
         let status = if rule.status == 0 {
@@ -96,7 +97,7 @@ impl Action for DropAction {
         Ok(())
     }
 
-    fn evaluate(&self, rule: &RuleMetadata, tx: &mut dyn TransactionState) {
+    fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
         let rule_id = rule.id;
 
         tx.interrupt(rule_id, "drop", rule.status, "");
@@ -168,7 +169,7 @@ impl Action for AllowAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut Transaction) {
         tx.set_allow_type(self.allow_type);
     }
 
@@ -211,7 +212,7 @@ impl Action for BlockAction {
         Ok(())
     }
 
-    fn evaluate(&self, rule: &RuleMetadata, tx: &mut dyn TransactionState) {
+    fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
         // TODO: Implement proper SecDefaultAction replacement during rule compilation (Phase 10)
         // For now, default to deny action behavior
 
@@ -276,7 +277,7 @@ impl Action for RedirectAction {
         Ok(())
     }
 
-    fn evaluate(&self, rule: &RuleMetadata, tx: &mut dyn TransactionState) {
+    fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
         let rule_id = rule.id;
 
         let status = match rule.status {
@@ -323,7 +324,7 @@ impl Action for PassAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Pass action doesn't interrupt - it just continues processing
     }
 
@@ -336,46 +337,9 @@ impl Action for PassAction {
 mod tests {
     use super::*;
 
-    // Mock TransactionState for testing
-    struct MockTransaction {
-        interrupted: bool,
-        interrupt_action: String,
-        interrupt_status: i32,
-        interrupt_data: String,
-        allow_type: AllowType,
-    }
-
-    impl MockTransaction {
-        fn new() -> Self {
-            Self {
-                interrupted: false,
-                interrupt_action: String::new(),
-                interrupt_status: 0,
-                interrupt_data: String::new(),
-                allow_type: AllowType::Unset,
-            }
-        }
-    }
-
-    impl TransactionState for MockTransaction {
-        fn interrupt(&mut self, _rule_id: i32, action: &str, status: i32, data: &str) {
-            self.interrupted = true;
-            self.interrupt_action = action.to_string();
-            self.interrupt_status = status;
-            self.interrupt_data = data.to_string();
-        }
-
-        fn set_allow_type(&mut self, allow_type: AllowType) {
-            self.allow_type = allow_type;
-        }
-
-        fn get_variable(
-            &self,
-            _variable: crate::RuleVariable,
-            _key: Option<&str>,
-        ) -> Option<String> {
-            None
-        }
+    fn interruption(tx: &Transaction) -> &crate::transaction::Interruption {
+        tx.interruption()
+            .expect("transaction should be interrupted")
     }
 
     // DenyAction Tests
@@ -505,34 +469,38 @@ mod tests {
     #[test]
     fn test_deny_evaluate_default_status() {
         let action = DenyAction;
-        let mut tx = MockTransaction::new();
+        let mut tx = Transaction::new("action-test");
         let mut rule = RuleMetadata::new();
         rule.id = 123;
         action.evaluate(&rule, &mut tx);
-        assert!(tx.interrupted);
-        assert_eq!(tx.interrupt_action, "deny");
-        assert_eq!(tx.interrupt_status, 403); // default status
+        assert_eq!(interruption(&tx).rule_id, 123);
+        assert_eq!(interruption(&tx).action, "deny");
+        assert_eq!(interruption(&tx).status, 403); // default status
     }
 
     #[test]
     fn test_deny_evaluate_custom_status() {
         let action = DenyAction;
-        let mut tx = MockTransaction::new();
+        let mut tx = Transaction::new("action-test");
         let mut rule = RuleMetadata::new();
         rule.id = 123;
         rule.status = 404;
         action.evaluate(&rule, &mut tx);
-        assert!(tx.interrupted);
-        assert_eq!(tx.interrupt_status, 404);
+        assert_eq!(interruption(&tx).status, 404);
     }
 
     #[test]
     fn test_allow_evaluate() {
         let mut action = AllowAction::new();
         action.init(&mut RuleMetadata::new(), "phase").unwrap();
-        let mut tx = MockTransaction::new();
+        let mut tx = Transaction::new("action-test");
         action.evaluate(&RuleMetadata::new(), &mut tx);
-        assert_eq!(tx.allow_type, AllowType::Phase);
+        assert!(tx.is_allowed(crate::RulePhase::RequestHeaders));
+        assert!(!tx.is_allowed(crate::RulePhase::Logging));
+
+        // allow:phase ends with the phase that triggered it
+        tx.end_phase_allow();
+        assert!(!tx.is_allowed(crate::RulePhase::RequestBody));
     }
 
     #[test]
@@ -541,14 +509,13 @@ mod tests {
         action
             .init(&mut RuleMetadata::new(), "http://example.com")
             .unwrap();
-        let mut tx = MockTransaction::new();
+        let mut tx = Transaction::new("action-test");
         let mut rule = RuleMetadata::new();
         rule.id = 123;
         action.evaluate(&rule, &mut tx);
-        assert!(tx.interrupted);
-        assert_eq!(tx.interrupt_action, "redirect");
-        assert_eq!(tx.interrupt_status, 302); // default redirect status
-        assert_eq!(tx.interrupt_data, "http://example.com");
+        assert_eq!(interruption(&tx).action, "redirect");
+        assert_eq!(interruption(&tx).status, 302); // default redirect status
+        assert_eq!(interruption(&tx).data, "http://example.com");
     }
 
     #[test]
@@ -557,11 +524,11 @@ mod tests {
         action
             .init(&mut RuleMetadata::new(), "http://example.com")
             .unwrap();
-        let mut tx = MockTransaction::new();
+        let mut tx = Transaction::new("action-test");
         let mut rule = RuleMetadata::new();
         rule.id = 123;
         rule.status = 301;
         action.evaluate(&rule, &mut tx);
-        assert_eq!(tx.interrupt_status, 301);
+        assert_eq!(interruption(&tx).status, 301);
     }
 }

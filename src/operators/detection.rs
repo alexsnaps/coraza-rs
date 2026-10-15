@@ -4,7 +4,7 @@
 //! attacks using the libinjection library.
 
 use crate::operators::Operator;
-use crate::operators::macros::TransactionState;
+use crate::transaction::Transaction;
 
 /// SQL injection detection operator.
 ///
@@ -39,7 +39,7 @@ use crate::operators::macros::TransactionState;
 pub struct DetectSQLi;
 
 impl Operator for DetectSQLi {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         if input.is_empty() {
             return false;
         }
@@ -106,7 +106,7 @@ pub fn detect_sqli() -> DetectSQLi {
 pub struct DetectXSS;
 
 impl Operator for DetectXSS {
-    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, _tx: Option<&mut Transaction>, input: &str) -> bool {
         if input.is_empty() {
             return false;
         }

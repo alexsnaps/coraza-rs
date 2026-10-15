@@ -4,7 +4,7 @@
 //! and IP ranges, compatible with ModSecurity's @ipMatch family of operators.
 
 use crate::operators::Operator;
-use crate::operators::macros::TransactionState;
+use crate::transaction::Transaction;
 use ipnet::IpNet;
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -108,7 +108,7 @@ impl IpMatch {
 }
 
 impl Operator for IpMatch {
-    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, _tx: Option<&mut Transaction>, input: &str) -> bool {
         // Parse the input IP address
         let ip = match IpAddr::from_str(input) {
             Ok(ip) => ip,
@@ -242,7 +242,7 @@ impl IpMatchFromFile {
 }
 
 impl Operator for IpMatchFromFile {
-    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, _tx: Option<&mut Transaction>, input: &str) -> bool {
         // Parse input IP address
         let ip = match IpAddr::from_str(input) {
             Ok(ip) => ip,

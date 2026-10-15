@@ -9,9 +9,10 @@
 
 use crate::operators::{
     BeginsWith, Contains, DetectSQLi, DetectXSS, EndsWith, Eq, Ge, Gt, IpMatch, Le, Lt, NoMatch,
-    Operator, Pm, PmFromFile, Rx, StrEq, StrMatch, TransactionState, UnconditionalMatch,
-    ValidateByteRange, ValidateUrlEncoding, ValidateUtf8Encoding, Within,
+    Operator, Pm, PmFromFile, Rx, StrEq, StrMatch, UnconditionalMatch, ValidateByteRange,
+    ValidateUrlEncoding, ValidateUtf8Encoding, Within,
 };
+use crate::transaction::Transaction;
 
 /// Enum containing all available operators.
 ///
@@ -61,7 +62,7 @@ impl OperatorEnum {
     ///
     /// This method dispatches to the appropriate operator implementation
     /// using pattern matching, which the compiler optimizes into a jump table.
-    pub fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    pub fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         match self {
             // Pattern matching
             Self::Rx(op) => op.evaluate(tx, input),
@@ -228,7 +229,7 @@ impl RuleOperator {
     /// assert!(op.evaluate(Some(&mut tx), "test"));
     /// assert!(!op.evaluate(Some(&mut tx), "other"));
     /// ```
-    pub fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    pub fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         let result = self.operator.evaluate(tx, input);
 
         if self.negation { !result } else { result }

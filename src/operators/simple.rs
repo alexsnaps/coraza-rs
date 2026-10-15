@@ -6,7 +6,8 @@
 //! This module implements basic comparison and string matching operators
 //! with macro expansion support.
 
-use crate::operators::{Macro, MacroError, Operator, TransactionState};
+use crate::operators::{Macro, MacroError, Operator};
+use crate::transaction::Transaction;
 
 /// Numeric equality operator.
 ///
@@ -32,7 +33,7 @@ pub struct Eq {
 }
 
 impl Operator for Eq {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         let param_value = self.macro_param.expand(tx.as_deref());
         let param_int = param_value.parse::<i32>().unwrap_or(0);
         let input_int = input.parse::<i32>().unwrap_or(0);
@@ -74,7 +75,7 @@ pub struct Gt {
 }
 
 impl Operator for Gt {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         let param_value = self.macro_param.expand(tx.as_deref());
         let param_int = param_value.parse::<i32>().unwrap_or(0);
         let input_int = input.parse::<i32>().unwrap_or(0);
@@ -115,7 +116,7 @@ pub struct Ge {
 }
 
 impl Operator for Ge {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         let param_value = self.macro_param.expand(tx.as_deref());
         let param_int = param_value.parse::<i32>().unwrap_or(0);
         let input_int = input.parse::<i32>().unwrap_or(0);
@@ -156,7 +157,7 @@ pub struct Lt {
 }
 
 impl Operator for Lt {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         let param_value = self.macro_param.expand(tx.as_deref());
         let param_int = param_value.parse::<i32>().unwrap_or(0);
         let input_int = input.parse::<i32>().unwrap_or(0);
@@ -197,7 +198,7 @@ pub struct Le {
 }
 
 impl Operator for Le {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         let param_value = self.macro_param.expand(tx.as_deref());
         let param_int = param_value.parse::<i32>().unwrap_or(0);
         let input_int = input.parse::<i32>().unwrap_or(0);
@@ -239,7 +240,7 @@ pub struct StrEq {
 }
 
 impl Operator for StrEq {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         let param_value = self.macro_param.expand(tx.as_deref());
         input == param_value
     }
@@ -278,7 +279,7 @@ pub struct Contains {
 }
 
 impl Operator for Contains {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         let param_value = self.macro_param.expand(tx.as_deref());
         input.contains(&param_value)
     }
@@ -316,7 +317,7 @@ pub struct BeginsWith {
 }
 
 impl Operator for BeginsWith {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         let param_value = self.macro_param.expand(tx.as_deref());
         input.starts_with(&param_value)
     }
@@ -355,7 +356,7 @@ pub struct EndsWith {
 }
 
 impl Operator for EndsWith {
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
         let param_value = self.macro_param.expand(tx.as_deref());
         input.ends_with(&param_value)
     }
@@ -379,17 +380,13 @@ mod tests {
     use crate::types::RuleVariable;
 
     // Mock transaction state for testing macro expansion
-    struct MockTx;
-
-    impl TransactionState for MockTx {
-        fn get_variable(&self, variable: RuleVariable, key: Option<&str>) -> Option<String> {
-            match (variable, key) {
-                (RuleVariable::TX, Some("threshold")) => Some("10".to_string()),
-                (RuleVariable::TX, Some("method")) => Some("POST".to_string()),
-                (RuleVariable::TX, Some("extension")) => Some(".php".to_string()),
-                _ => None,
-            }
-        }
+    fn mock_tx() -> Transaction {
+        let mut tx = Transaction::new("operator-test");
+        let vars = tx.collection_mut(RuleVariable::TX).unwrap();
+        vars.add("threshold", "10");
+        vars.add("method", "POST");
+        vars.add("extension", ".php");
+        tx
     }
 
     #[test]
@@ -428,7 +425,7 @@ mod tests {
     #[test]
     fn test_eq_with_macro() {
         let op = eq("%{TX.threshold}").unwrap();
-        let mut tx = MockTx;
+        let mut tx = mock_tx();
 
         assert!(op.evaluate(Some(&mut tx), "10"));
         assert!(!op.evaluate(Some(&mut tx), "5"));
@@ -449,7 +446,7 @@ mod tests {
     #[test]
     fn test_gt_with_macro() {
         let op = gt("%{TX.threshold}").unwrap();
-        let mut tx = MockTx;
+        let mut tx = mock_tx();
 
         assert!(op.evaluate(Some(&mut tx), "15"));
         assert!(op.evaluate(Some(&mut tx), "11"));
@@ -511,7 +508,7 @@ mod tests {
     #[test]
     fn test_streq_with_macro() {
         let op = streq("%{TX.method}").unwrap();
-        let mut tx = MockTx;
+        let mut tx = mock_tx();
 
         assert!(op.evaluate(Some(&mut tx), "POST"));
         assert!(!op.evaluate(Some(&mut tx), "GET"));
@@ -541,7 +538,7 @@ mod tests {
     #[test]
     fn test_contains_with_macro() {
         let op = contains("%{TX.extension}").unwrap();
-        let mut tx = MockTx;
+        let mut tx = mock_tx();
 
         assert!(op.evaluate(Some(&mut tx), "/index.php"));
         assert!(op.evaluate(Some(&mut tx), "test.php?id=1"));

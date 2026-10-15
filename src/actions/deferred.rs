@@ -8,8 +8,9 @@
 //! - Persistence layer (expirevar, initcol)
 //! - Environment variable access (setenv)
 
-use crate::actions::{Action, ActionError, ActionType, RuleMetadata, TransactionState};
+use crate::actions::{Action, ActionError, ActionType, RuleMetadata};
 use crate::operators::Macro;
+use crate::transaction::Transaction;
 
 /// `exec` action - Execute external script/binary.
 ///
@@ -70,7 +71,7 @@ impl Action for ExecAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Not implemented for security reasons (matches Go behavior)
         // Executing arbitrary external processes from a WAF is dangerous
     }
@@ -149,7 +150,7 @@ impl Action for ExpirevarAction {
         Ok(())
     }
 
-    fn evaluate(&self, rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, rule: &RuleMetadata, _tx: &mut Transaction) {
         // Not supported - would require persistence layer (matches Go behavior)
         // Go logs: "Expirevar was used but it's not supported"
         eprintln!(
@@ -242,7 +243,7 @@ impl Action for SetenvAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut Transaction) {
         // Expand macro with transaction state
         let value = self.value.expand(Some(tx));
 
@@ -331,7 +332,7 @@ impl Action for InitcolAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Not fully implemented - persistence layer deferred to Phase 10
         // Go implementation has this commented out with TODO
 
@@ -377,19 +378,7 @@ mod tests {
             .init(&mut RuleMetadata::new(), "/usr/bin/test.sh")
             .unwrap();
 
-        // Mock transaction state
-        struct MockTx;
-        impl TransactionState for MockTx {
-            fn get_variable(
-                &self,
-                _variable: crate::RuleVariable,
-                _key: Option<&str>,
-            ) -> Option<String> {
-                None
-            }
-        }
-
-        let mut tx = MockTx;
+        let mut tx = Transaction::new("action-test");
         action.evaluate(&RuleMetadata::new(), &mut tx);
         // Should not crash - verify by test completing
     }
@@ -502,19 +491,7 @@ mod tests {
             .init(&mut RuleMetadata::new(), "TEST_VAR=test_value")
             .unwrap();
 
-        // Mock transaction state
-        struct MockTx;
-        impl TransactionState for MockTx {
-            fn get_variable(
-                &self,
-                _variable: crate::RuleVariable,
-                _key: Option<&str>,
-            ) -> Option<String> {
-                None
-            }
-        }
-
-        let mut tx = MockTx;
+        let mut tx = Transaction::new("action-test");
         action.evaluate(&RuleMetadata::new(), &mut tx);
 
         // Verify environment variable was set

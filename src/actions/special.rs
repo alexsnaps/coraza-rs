@@ -6,7 +6,8 @@
 //! These actions provide specialized functionality for variable capturing,
 //! transformation pipelines, and HTTP status code configuration.
 
-use crate::actions::{Action, ActionError, ActionType, RuleMetadata, TransactionState};
+use crate::actions::{Action, ActionError, ActionType, RuleMetadata};
+use crate::transaction::Transaction;
 use crate::transformations;
 
 /// `capture` action - Enables regex capturing.
@@ -42,7 +43,7 @@ impl Action for CaptureAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Capture is a metadata action - doesn't execute at runtime
     }
 
@@ -82,7 +83,7 @@ impl Action for MultimatchAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Multimatch is a metadata action - doesn't execute at runtime
     }
 
@@ -128,7 +129,7 @@ impl Action for StatusAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Status is a data action - doesn't execute at runtime
     }
 
@@ -181,7 +182,7 @@ impl Action for TAction {
             .map_err(ActionError::InvalidArguments)
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Transformation is a metadata action - doesn't execute at runtime
     }
 

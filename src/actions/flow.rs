@@ -6,7 +6,8 @@
 //! Flow actions control the execution flow of rules, such as chaining rules
 //! together or skipping over rules based on conditions.
 
-use crate::actions::{Action, ActionError, ActionType, RuleMetadata, TransactionState};
+use crate::actions::{Action, ActionError, ActionType, RuleMetadata};
+use crate::transaction::Transaction;
 
 /// `chain` action - Links rules together in an AND condition.
 ///
@@ -49,7 +50,7 @@ impl Action for ChainAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
         // Chain is a metadata action - doesn't execute at runtime
     }
 
@@ -117,7 +118,7 @@ impl Action for SkipAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut Transaction) {
         tx.set_skip(self.count);
     }
 
@@ -180,7 +181,7 @@ impl Action for SkipAfterAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut Transaction) {
         tx.set_skip_after(&self.marker);
     }
 
@@ -192,39 +193,6 @@ impl Action for SkipAfterAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Mock TransactionState for testing
-    struct MockTransaction {
-        skip: i32,
-        skip_after: String,
-    }
-
-    impl MockTransaction {
-        fn new() -> Self {
-            Self {
-                skip: 0,
-                skip_after: String::new(),
-            }
-        }
-    }
-
-    impl TransactionState for MockTransaction {
-        fn get_variable(
-            &self,
-            _variable: crate::RuleVariable,
-            _key: Option<&str>,
-        ) -> Option<String> {
-            None
-        }
-
-        fn set_skip(&mut self, count: i32) {
-            self.skip = count;
-        }
-
-        fn set_skip_after(&mut self, marker: &str) {
-            self.skip_after = marker.to_string();
-        }
-    }
 
     // ChainAction Tests
     #[test]
@@ -299,9 +267,9 @@ mod tests {
         let mut action = SkipAction::new();
         action.init(&mut RuleMetadata::new(), "3").unwrap();
 
-        let mut tx = MockTransaction::new();
+        let mut tx = Transaction::new("action-test");
         action.evaluate(&RuleMetadata::new(), &mut tx);
-        assert_eq!(tx.skip, 3);
+        assert_eq!(tx.skip(), 3);
     }
 
     #[test]
@@ -342,9 +310,9 @@ mod tests {
         let mut action = SkipAfterAction::new();
         action.init(&mut RuleMetadata::new(), "END_CHECK").unwrap();
 
-        let mut tx = MockTransaction::new();
+        let mut tx = Transaction::new("action-test");
         action.evaluate(&RuleMetadata::new(), &mut tx);
-        assert_eq!(tx.skip_after, "END_CHECK");
+        assert_eq!(tx.skip_after(), "END_CHECK");
     }
 
     #[test]

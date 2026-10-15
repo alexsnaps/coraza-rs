@@ -11,7 +11,8 @@
 //! will be implemented in Phase 8 when the transaction system is complete.
 
 use crate::RuleVariable;
-use crate::actions::{Action, ActionError, ActionType, RuleMetadata, TransactionState};
+use crate::actions::{Action, ActionError, ActionType, RuleMetadata};
+use crate::transaction::Transaction;
 use std::str::FromStr;
 
 /// CTL command types.
@@ -260,7 +261,7 @@ impl Action for CtlAction {
         Ok(())
     }
 
-    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut dyn TransactionState) {
+    fn evaluate(&self, _rule: &RuleMetadata, tx: &mut Transaction) {
         use crate::RuleEngineStatus;
         use crate::types::RulePhase;
 
@@ -268,14 +269,14 @@ impl Action for CtlAction {
             CtlCommand::RuleEngine => {
                 // Parse and set rule engine status
                 if let Ok(status) = RuleEngineStatus::from_str(&self.value) {
-                    tx.ctl_set_rule_engine(status);
+                    tx.set_rule_engine(status);
                 }
                 // Note: Errors are already caught during init(), silently ignore here
             }
 
             CtlCommand::RequestBodyAccess => {
                 // Only allow changing before request body phase
-                if let Some(phase) = tx.ctl_last_phase()
+                if let Some(phase) = tx.last_phase()
                     && phase >= RulePhase::RequestBody
                 {
                     // Too late to change, silently ignore
@@ -283,58 +284,58 @@ impl Action for CtlAction {
                 }
 
                 if let Ok(enabled) = Self::parse_on_off(&self.value) {
-                    tx.ctl_set_request_body_access(enabled);
+                    tx.set_request_body_access(enabled);
                 }
             }
 
             CtlCommand::RequestBodyLimit => {
                 // Only allow changing before request body phase
-                if let Some(phase) = tx.ctl_last_phase()
+                if let Some(phase) = tx.last_phase()
                     && phase >= RulePhase::RequestBody
                 {
                     return;
                 }
 
                 if let Ok(limit) = self.value.parse::<i64>() {
-                    tx.ctl_set_request_body_limit(limit);
+                    tx.set_request_body_limit(limit);
                 }
             }
 
             CtlCommand::ForceRequestBodyVariable => {
                 if let Ok(enabled) = Self::parse_on_off(&self.value) {
-                    tx.ctl_set_force_request_body_variable(enabled);
+                    tx.set_force_request_body_variable(enabled);
                 }
             }
 
             CtlCommand::ResponseBodyAccess => {
                 // Only allow changing before response body phase
-                if let Some(phase) = tx.ctl_last_phase()
+                if let Some(phase) = tx.last_phase()
                     && phase >= RulePhase::ResponseBody
                 {
                     return;
                 }
 
                 if let Ok(enabled) = Self::parse_on_off(&self.value) {
-                    tx.ctl_set_response_body_access(enabled);
+                    tx.set_response_body_access(enabled);
                 }
             }
 
             CtlCommand::ResponseBodyLimit => {
                 // Only allow changing before response body phase
-                if let Some(phase) = tx.ctl_last_phase()
+                if let Some(phase) = tx.last_phase()
                     && phase >= RulePhase::ResponseBody
                 {
                     return;
                 }
 
                 if let Ok(limit) = self.value.parse::<i64>() {
-                    tx.ctl_set_response_body_limit(limit);
+                    tx.set_response_body_limit(limit);
                 }
             }
 
             CtlCommand::ForceResponseBodyVariable => {
                 if let Ok(enabled) = Self::parse_on_off(&self.value) {
-                    tx.ctl_set_force_response_body_variable(enabled);
+                    tx.set_force_response_body_variable(enabled);
                 }
             }
 
@@ -349,17 +350,17 @@ impl Action for CtlAction {
                 {
                     // Range: 100-199
                     for id in start..=end {
-                        tx.ctl_remove_rule_by_id(id);
+                        tx.remove_rule_by_id(id);
                     }
                 } else if let Ok(id) = self.value.parse::<i32>() {
                     // Single ID
-                    tx.ctl_remove_rule_by_id(id);
+                    tx.remove_rule_by_id(id);
                 }
             }
 
             CtlCommand::RuleRemoveByTag => {
                 // Collect rule IDs that match the tag, then add to exclusion list
-                let matching_ids: Vec<i32> = if let Some(rules) = tx.ctl_get_rules() {
+                let matching_ids: Vec<i32> = if let Some(rules) = tx.rules() {
                     rules
                         .get_rules()
                         .iter()
@@ -371,13 +372,13 @@ impl Action for CtlAction {
                 };
 
                 for id in matching_ids {
-                    tx.ctl_remove_rule_by_id(id);
+                    tx.remove_rule_by_id(id);
                 }
             }
 
             CtlCommand::RuleRemoveByMsg => {
                 // Collect rule IDs that match the message, then add to exclusion list
-                let matching_ids: Vec<i32> = if let Some(rules) = tx.ctl_get_rules() {
+                let matching_ids: Vec<i32> = if let Some(rules) = tx.rules() {
                     rules
                         .get_rules()
                         .iter()
@@ -394,7 +395,7 @@ impl Action for CtlAction {
                 };
 
                 for id in matching_ids {
-                    tx.ctl_remove_rule_by_id(id);
+                    tx.remove_rule_by_id(id);
                 }
             }
 
@@ -403,14 +404,14 @@ impl Action for CtlAction {
                 // The variable/key were already parsed in init()
                 if let (Ok(rule_id), Some(var)) = (self.value.parse::<i32>(), self.collection) {
                     let key = self.key.as_deref().unwrap_or("");
-                    tx.ctl_remove_rule_target_by_id(rule_id, var, key);
+                    tx.remove_rule_target_by_id(rule_id, var, key);
                 }
             }
 
             CtlCommand::RuleRemoveTargetByTag => {
                 // Collect rule IDs that match the tag, then add target exclusions
                 if let Some(var) = self.collection {
-                    let matching_ids: Vec<i32> = if let Some(rules) = tx.ctl_get_rules() {
+                    let matching_ids: Vec<i32> = if let Some(rules) = tx.rules() {
                         rules
                             .get_rules()
                             .iter()
@@ -423,7 +424,7 @@ impl Action for CtlAction {
 
                     let key = self.key.as_deref().unwrap_or("");
                     for id in matching_ids {
-                        tx.ctl_remove_rule_target_by_id(id, var, key);
+                        tx.remove_rule_target_by_id(id, var, key);
                     }
                 }
             }
@@ -431,7 +432,7 @@ impl Action for CtlAction {
             CtlCommand::RuleRemoveTargetByMsg => {
                 // Collect rule IDs that match the message, then add target exclusions
                 if let Some(var) = self.collection {
-                    let matching_ids: Vec<i32> = if let Some(rules) = tx.ctl_get_rules() {
+                    let matching_ids: Vec<i32> = if let Some(rules) = tx.rules() {
                         rules
                             .get_rules()
                             .iter()
@@ -449,7 +450,7 @@ impl Action for CtlAction {
 
                     let key = self.key.as_deref().unwrap_or("");
                     for id in matching_ids {
-                        tx.ctl_remove_rule_target_by_id(id, var, key);
+                        tx.remove_rule_target_by_id(id, var, key);
                     }
                 }
             }

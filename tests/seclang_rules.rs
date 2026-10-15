@@ -50,7 +50,6 @@ fn unknown_transformation_is_a_parse_error() {
 
 fn tx_var(tx: &Transaction, key: &str) -> Option<String> {
     use coraza::RuleVariable;
-    use coraza::operators::TransactionState;
     tx.get_variable(RuleVariable::TX, Some(key))
 }
 
@@ -116,4 +115,48 @@ fn chain_disrupts_only_when_every_link_matches() {
 
     let mut tx = request_with_arg(&waf, "x", "ab");
     assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(7));
+}
+
+#[test]
+fn allow_skips_the_rest_of_the_transaction() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,allow"
+        SecAction "id:2,phase:1,deny,status:403"
+        SecAction "id:3,phase:2,deny,status:403"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    assert!(tx.process_request_headers().is_none());
+    assert_eq!(tx.process_request_body(b"").unwrap(), None);
+}
+
+#[test]
+fn allow_phase_skips_only_the_current_phase() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,allow:phase"
+        SecAction "id:2,phase:1,deny,status:403"
+        SecAction "id:3,phase:2,deny,status:403"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    assert!(tx.process_request_headers().is_none());
+    assert_eq!(
+        tx.process_request_body(b"").unwrap().map(|i| i.rule_id),
+        Some(3)
+    );
+}
+
+#[test]
+fn allow_request_skips_the_request_phases_only() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,allow:request"
+        SecAction "id:2,phase:2,deny,status:403"
+        SecAction "id:3,phase:3,deny,status:403"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    assert!(tx.process_request_headers().is_none());
+    assert_eq!(tx.process_request_body(b"").unwrap(), None);
+    let interruption = tx.process_response_headers(200, "HTTP/1.1");
+    assert_eq!(interruption.map(|i| i.rule_id), Some(3));
 }

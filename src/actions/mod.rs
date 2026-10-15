@@ -71,6 +71,7 @@ use std::sync::OnceLock;
 
 use crate::operators::Macro;
 use crate::rules::TransformationChain;
+use crate::transaction::Transaction;
 use crate::{RulePhase, RuleSeverity};
 
 pub use ctl::CtlAction;
@@ -230,11 +231,6 @@ impl Default for RuleMetadata {
     }
 }
 
-/// Transaction state interface for action evaluation.
-///
-/// Re-exported from operators module to avoid duplication.
-pub use crate::operators::TransactionState;
-
 /// Rule action trait.
 ///
 /// Actions define what happens when a rule matches. Each action implements this trait
@@ -244,7 +240,8 @@ pub use crate::operators::TransactionState;
 /// # Examples
 ///
 /// ```
-/// use coraza::actions::{Action, ActionType, ActionError, RuleMetadata, TransactionState};
+/// use coraza::actions::{Action, ActionType, ActionError, RuleMetadata};
+/// use coraza::transaction::Transaction;
 ///
 /// // Simple action that requires no parameters
 /// struct DenyAction;
@@ -257,7 +254,7 @@ pub use crate::operators::TransactionState;
 ///         Ok(())
 ///     }
 ///
-///     fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+///     fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
 ///         // Execute action logic (e.g., interrupt transaction)
 ///     }
 ///
@@ -293,7 +290,7 @@ pub trait Action: Send + Sync {
     ///
     /// * `rule` - Immutable reference to rule
     /// * `tx` - Mutable reference to transaction state
-    fn evaluate(&self, rule: &RuleMetadata, tx: &mut dyn TransactionState);
+    fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction);
 
     /// Return the action type category.
     fn action_type(&self) -> ActionType;
@@ -477,7 +474,8 @@ fn init_registry() -> HashMap<String, ActionFactory> {
 /// # Examples
 ///
 /// ```no_run
-/// use coraza::actions::{register, Action, ActionType, ActionError, RuleMetadata, TransactionState};
+/// use coraza::actions::{register, Action, ActionType, ActionError, RuleMetadata};
+/// use coraza::transaction::Transaction;
 ///
 /// struct CustomAction;
 ///
@@ -486,7 +484,7 @@ fn init_registry() -> HashMap<String, ActionFactory> {
 ///         Ok(())
 ///     }
 ///
-///     fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+///     fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
 ///         // Custom action logic
 ///     }
 ///
@@ -558,7 +556,7 @@ mod tests {
             Ok(())
         }
 
-        fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
+        fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
             // Mock evaluation
         }
 

@@ -15,7 +15,9 @@ pub mod validation;
 
 pub use detection::{DetectSQLi, DetectXSS, detect_sqli, detect_xss};
 pub use ip::{IpMatch, IpMatchFromFile, ip_match, ip_match_from_file};
-pub use macros::{Macro, MacroError, TransactionState};
+pub use macros::{Macro, MacroError};
+
+use crate::transaction::Transaction;
 pub use pattern::{Pm, PmFromFile, Rx, StrMatch, Within, pm, pm_from_file, rx, strmatch, within};
 pub use simple::{
     BeginsWith, Contains, EndsWith, Eq, Ge, Gt, Le, Lt, StrEq, begins_with, contains, ends_with,
@@ -42,5 +44,5 @@ pub trait Operator {
     ///
     /// Returns true if the operator matches the input value according to its
     /// configured parameter (after macro expansion).
-    fn evaluate<TX: TransactionState>(&self, tx: Option<&mut TX>, input: &str) -> bool;
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool;
 }

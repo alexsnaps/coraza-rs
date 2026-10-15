@@ -4,7 +4,7 @@
 //! utility operators that always match or never match.
 
 use crate::operators::Operator;
-use crate::operators::macros::TransactionState;
+use crate::transaction::Transaction;
 
 /// Unconditional match operator.
 ///
@@ -34,7 +34,7 @@ use crate::operators::macros::TransactionState;
 pub struct UnconditionalMatch;
 
 impl Operator for UnconditionalMatch {
-    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, _input: &str) -> bool {
+    fn evaluate(&self, _tx: Option<&mut Transaction>, _input: &str) -> bool {
         true
     }
 }
@@ -81,7 +81,7 @@ pub fn unconditional_match() -> UnconditionalMatch {
 pub struct NoMatch;
 
 impl Operator for NoMatch {
-    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, _input: &str) -> bool {
+    fn evaluate(&self, _tx: Option<&mut Transaction>, _input: &str) -> bool {
         false
     }
 }
@@ -197,7 +197,7 @@ impl ValidateByteRange {
 }
 
 impl Operator for ValidateByteRange {
-    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, _tx: Option<&mut Transaction>, input: &str) -> bool {
         if input.is_empty() {
             return false; // Empty input is valid
         }
@@ -270,7 +270,7 @@ impl ValidateUrlEncoding {
 }
 
 impl Operator for ValidateUrlEncoding {
-    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, input: &str) -> bool {
+    fn evaluate(&self, _tx: Option<&mut Transaction>, input: &str) -> bool {
         if input.is_empty() {
             return false; // Empty input is valid
         }
@@ -352,7 +352,7 @@ pub fn validate_url_encoding() -> ValidateUrlEncoding {
 pub struct ValidateUtf8Encoding;
 
 impl Operator for ValidateUtf8Encoding {
-    fn evaluate<TX: TransactionState>(&self, _tx: Option<&mut TX>, _input: &str) -> bool {
+    fn evaluate(&self, _tx: Option<&mut Transaction>, _input: &str) -> bool {
         // In Rust, &str is guaranteed to be valid UTF-8, so this always returns false
         // However, if we receive input from C FFI or unsafe code, we should check
         // For now, since our input is &str, it's always valid UTF-8

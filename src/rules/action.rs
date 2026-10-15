@@ -7,7 +7,7 @@
 //! categorized by type and executed at different points in the rule flow.
 
 use crate::actions::{Action, ActionType, RuleMetadata};
-use crate::operators::TransactionState;
+use crate::transaction::Transaction;
 
 /// Named action wrapper for rule execution.
 ///
@@ -96,7 +96,7 @@ impl RuleAction {
     /// let mut tx = Transaction::new("test");
     /// rule_action.evaluate(&rule, &mut tx);
     /// ```
-    pub fn evaluate(&self, rule: &RuleMetadata, tx: &mut dyn TransactionState) {
+    pub fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
         self.action.evaluate(rule, tx);
     }
 }
@@ -144,7 +144,7 @@ impl std::fmt::Debug for RuleAction {
 pub fn execute_actions<F>(
     actions: &[RuleAction],
     rule: &RuleMetadata,
-    tx: &mut dyn TransactionState,
+    tx: &mut Transaction,
     action_filter: F,
 ) where
     F: Fn(ActionType) -> bool,
@@ -184,7 +184,7 @@ pub fn execute_actions<F>(
 pub fn execute_nondisruptive_actions(
     actions: &[RuleAction],
     rule: &RuleMetadata,
-    tx: &mut dyn TransactionState,
+    tx: &mut Transaction,
 ) {
     execute_actions(actions, rule, tx, |action_type| {
         action_type == ActionType::Nondisruptive
@@ -223,7 +223,7 @@ pub fn execute_nondisruptive_actions(
 pub fn execute_flow_and_disruptive_actions(
     actions: &[RuleAction],
     rule: &RuleMetadata,
-    tx: &mut dyn TransactionState,
+    tx: &mut Transaction,
     rule_engine_on: bool,
 ) {
     execute_actions(actions, rule, tx, |action_type| {
