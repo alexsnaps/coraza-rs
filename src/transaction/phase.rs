@@ -32,14 +32,10 @@ pub(super) struct FlowState {
 
     /// Keys removed from rules for this transaction (`ctl:ruleRemoveTarget*`), by rule id
     removed_targets: BTreeMap<i32, Vec<(RuleVariable, VariableException)>>,
-
-    /// Whether disruptive actions take effect in the current phase: the rule engine was
-    /// `On` when it started
-    enforcing: bool,
 }
 
 impl FlowState {
-    /// The flow state of a transaction no rule has run for, its rule engine `On`.
+    /// The flow state of a transaction no rule has run for.
     pub(super) fn new() -> Self {
         Self {
             interruption: None,
@@ -48,7 +44,6 @@ impl FlowState {
             allow: AllowType::Unset,
             removed_rules: BTreeSet::new(),
             removed_targets: BTreeMap::new(),
-            enforcing: true,
         }
     }
 }
@@ -58,13 +53,12 @@ impl Transaction {
     ///
     /// Evaluation stops at an interruption, but in the logging phase, and at an `allow`;
     /// rules of other phases, rules `ctl` removed and rules `skip` or `skipAfter` skip are
-    /// passed over. Disruptive actions take effect if the rule engine is `On` as the phase
-    /// starts.
+    /// passed over. Disruptive actions take effect if the rule engine is `On` when they run,
+    /// as an earlier rule's `ctl:ruleEngine` may have changed it.
     pub(super) fn run_phase(&mut self, phase: RulePhase) {
         let Some(rules) = self.rules.clone() else {
             return;
         };
-        self.flow.enforcing = self.rule_engine == RuleEngineStatus::On;
 
         for rule in rules.get_rules() {
             if self.flow.interruption.is_some() && phase != RulePhase::Logging {
@@ -108,10 +102,10 @@ impl Transaction {
         self.flow.interruption.as_ref()
     }
 
-    /// Interrupts the transaction on behalf of a disruptive action of rule `rule_id`, if
-    /// disruptive actions take effect.
+    /// Interrupts the transaction on behalf of a disruptive action of rule `rule_id`, if the
+    /// rule engine is `On`, as Go Coraza does.
     pub(crate) fn interrupt(&mut self, rule_id: i32, action: &str, status: i32, data: &str) {
-        if self.flow.enforcing {
+        if self.rule_engine == RuleEngineStatus::On {
             self.flow.interruption = Some(Interruption {
                 rule_id: rule_id as usize,
                 action: action.to_string(),
@@ -134,10 +128,10 @@ impl Transaction {
         interruption
     }
 
-    /// Records an `allow` action, if disruptive actions take effect; see [`AllowType`] for
-    /// which rules it skips.
+    /// Records an `allow` action, if the rule engine is `On`, as Go Coraza does; see
+    /// [`AllowType`] for which rules it skips.
     pub(crate) fn allow(&mut self, allow: AllowType) {
-        if self.flow.enforcing {
+        if self.rule_engine == RuleEngineStatus::On {
             self.flow.allow = allow;
         }
     }

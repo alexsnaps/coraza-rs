@@ -494,6 +494,28 @@ fn ctl_rule_engine_applies_to_later_phases() {
 }
 
 #[test]
+fn a_rule_engine_mode_change_applies_to_the_next_rule_of_the_phase() {
+    let waf = waf(r#"
+        SecRuleEngine On
+        SecAction "id:1,phase:1,pass,nolog,ctl:ruleEngine=DetectionOnly"
+        SecAction "id:2,phase:1,deny,status:403"
+    "#);
+
+    let mut tx = waf.new_transaction();
+
+    // As in Go Coraza, rule 2's deny runs in DetectionOnly: it doesn't interrupt, and is
+    // recorded as a disruptive action that didn't take effect
+    assert_eq!(tx.process_request_headers(), None);
+    let rule_2 = tx
+        .matched_rules()
+        .iter()
+        .find(|matched| matched.rule.id == 2)
+        .expect("rule 2 matched");
+    assert_eq!(rule_2.disruptive_action, Some("deny"));
+    assert!(!rule_2.disruptive);
+}
+
+#[test]
 fn malformed_bodies_are_reported_to_rules() {
     let waf = waf(&format!(
         r#"
