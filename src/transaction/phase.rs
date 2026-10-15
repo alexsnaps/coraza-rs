@@ -49,11 +49,11 @@ impl FlowState {
 }
 
 impl Transaction {
-    /// Whether `phase` runs now, as Go Coraza decides: not once the transaction is
-    /// interrupted, and in order: a body phase only right after its headers phase, the
-    /// others once. A phase that runs becomes the last phase.
+    /// Whether `phase` runs now, as Go Coraza decides: not with the rule engine `Off`, nor
+    /// once the transaction is interrupted, and in order: a body phase only right after
+    /// its headers phase, the others once. A phase that runs becomes the last phase.
     pub(super) fn begin_phase(&mut self, phase: RulePhase) -> bool {
-        if self.flow.interruption.is_some() {
+        if self.rule_engine == RuleEngineStatus::Off || self.flow.interruption.is_some() {
             return false;
         }
         let in_order = match phase {

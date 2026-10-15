@@ -401,6 +401,29 @@ fn body_phases_run_only_right_after_their_headers_phase() {
 }
 
 #[test]
+fn with_the_rule_engine_off_no_phase_runs() {
+    let waf = waf(r#"
+        SecRuleEngine Off
+        SecRequestBodyAccess On
+        SecAction "id:1,phase:1,pass,nolog,setvar:tx.request_headers=1"
+        SecAction "id:2,phase:2,pass,nolog,setvar:tx.request_body=1"
+        SecAction "id:3,phase:5,pass,nolog,setvar:tx.logging=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+    tx.process_request_headers();
+    tx.process_request_body(b"a=1");
+    tx.process_logging().unwrap();
+
+    // As in Go Coraza, no rule runs, the logging phase's included, and the body isn't read
+    assert_eq!(tx_var(&tx, "request_headers"), None);
+    assert_eq!(tx_var(&tx, "request_body"), None);
+    assert_eq!(tx_var(&tx, "logging"), None);
+    assert!(tx.args_post().get("a").is_empty());
+}
+
+#[test]
 fn a_phase_called_again_returns_the_interruption() {
     let waf = waf(r#"SecAction "id:1,phase:1,deny,status:403""#);
 

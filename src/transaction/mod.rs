@@ -1931,8 +1931,9 @@ impl Transaction {
         self.interruption().cloned()
     }
 
-    /// Process logging phase (final phase): runs its rules, then writes the transaction's
-    /// audit log entry, as Go Coraza decides: always with `SecAuditEngine On`, and with
+    /// Process logging phase (final phase): runs its rules, unless the rule engine is
+    /// `Off`, then writes the transaction's audit log entry, as Go Coraza decides: always
+    /// with `SecAuditEngine On`, and with
     /// `RelevantOnly` when a rule with `auditlog` matched or the status is one of
     /// `SecAuditLogRelevantStatus` (the interruption's, or the response's).
     ///
@@ -1953,9 +1954,10 @@ impl Transaction {
         // Update phase
         self.last_phase = Some(RulePhase::Logging);
 
-        // Evaluate rules for Phase 5 (Logging)
-        // Note: Logging phase rules run even if transaction is disrupted
-        self.evaluate_rules(RulePhase::Logging);
+        // Evaluate rules for Phase 5 (Logging), even if the transaction was interrupted
+        if self.rule_engine != RuleEngineStatus::Off {
+            self.evaluate_rules(RulePhase::Logging);
+        }
 
         let Some(logger) = self.audit_logger.clone() else {
             return Ok(());
