@@ -39,10 +39,12 @@ probed bugs.
 
 - [x] **Rename `actions::Rule` to `RuleMetadata`.** It collides with `rules::Rule`, which already imports it under
   that alias (`src/actions/mod.rs:163`, `src/rules/rule.rs:14`).
-- [ ] **Resolve `t:` into the chain evaluation uses.** `t:` stores names in `metadata.transformations`
+- [x] **Resolve `t:` into the chain evaluation uses.** `t:` stores names in `metadata.transformations`
   (`src/actions/special.rs:177`); evaluation reads `rules::Rule.transformations: TransformationChain`
   (`src/rules/rule.rs:63`), which nothing in `src/` populates. There is no name → transformation lookup. **(probe)**
   `@streq admin` with `t:lowercase` does not match `ADMIN`.
+  - Done: the chain lives in `RuleMetadata` only; `t:` resolves names via `transformations::by_name` and rejects
+    unknown ones. Regression tests in `tests/seclang_rules.rs`.
 - [ ] **Wire or remove `capture`.** It sets `metadata.capture`, which nothing reads. **(probe)** `tx.capturing()`
   stays `false`.
 - [ ] **Keep one representation of chains.** Chain role lives in `has_chain`, a `parent_id` where 0 means "none",

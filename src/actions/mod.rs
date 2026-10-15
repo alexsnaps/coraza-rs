@@ -70,6 +70,7 @@ use std::fmt;
 use std::sync::OnceLock;
 
 use crate::operators::Macro;
+use crate::rules::TransformationChain;
 use crate::{RulePhase, RuleSeverity};
 
 pub use ctl::CtlAction;
@@ -191,8 +192,8 @@ pub struct RuleMetadata {
     pub capture: bool,
     /// Whether to check variables before/after each transformation
     pub multi_match: bool,
-    /// Transformation pipeline (name, function)
-    pub transformations: Vec<String>,
+    /// Transformations applied to each variable value before the operator (`t:`)
+    pub transformations: TransformationChain,
     /// SecMarker label (for flow control markers)
     pub sec_mark: Option<String>,
     /// Processing phase (1-5)
@@ -218,7 +219,7 @@ impl RuleMetadata {
             has_chain: false,
             capture: false,
             multi_match: false,
-            transformations: Vec::new(),
+            transformations: TransformationChain::new(),
             sec_mark: None,
             phase: RulePhase::RequestBody, // Default phase is 2 (request body)
         }

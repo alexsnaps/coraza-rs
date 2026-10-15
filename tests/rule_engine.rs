@@ -128,7 +128,8 @@ fn test_rule_with_transformation() {
         ));
 
     // Add lowercase transformation
-    rule.transformations_mut()
+    rule.metadata_mut()
+        .transformations
         .add("lowercase", lowercase)
         .unwrap();
 
@@ -159,10 +160,12 @@ fn test_rule_with_multiple_transformations() {
         ));
 
     // Add transformation chain: lowercase then uppercase
-    rule.transformations_mut()
+    rule.metadata_mut()
+        .transformations
         .add("lowercase", lowercase)
         .unwrap();
-    rule.transformations_mut()
+    rule.metadata_mut()
+        .transformations
         .add("uppercase", uppercase)
         .unwrap();
 
@@ -431,7 +434,8 @@ fn test_complex_rule_with_transformations_and_chain() {
         ));
     chained_rule.metadata_mut().parent_id = 1;
     chained_rule
-        .transformations_mut()
+        .metadata_mut()
+        .transformations
         .add("lowercase", lowercase)
         .unwrap();
 
@@ -449,7 +453,8 @@ fn test_complex_rule_with_transformations_and_chain() {
         ))
         .with_chain(chained_rule);
 
-    rule.transformations_mut()
+    rule.metadata_mut()
+        .transformations
         .add("lowercase", lowercase)
         .unwrap();
 
@@ -492,7 +497,8 @@ fn test_rule_group_with_mixed_rules() {
             "admin",
         ));
     rule3
-        .transformations_mut()
+        .metadata_mut()
+        .transformations
         .add("lowercase", lowercase)
         .unwrap();
 

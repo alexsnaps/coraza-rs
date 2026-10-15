@@ -15,8 +15,8 @@ use crate::actions::RuleMetadata;
 use crate::collection::MatchData;
 use crate::operators::TransactionState;
 use crate::rules::{
-    RuleAction, RuleOperator, TransformationChain, VariableSpec,
-    execute_flow_and_disruptive_actions, execute_nondisruptive_actions,
+    RuleAction, RuleOperator, VariableSpec, execute_flow_and_disruptive_actions,
+    execute_nondisruptive_actions,
 };
 use crate::transaction::Transaction;
 
@@ -59,9 +59,6 @@ pub struct Rule {
     /// Operator to evaluate (None for SecAction/SecMarker)
     operator: Option<RuleOperator>,
 
-    /// Transformation chain to apply to variable values
-    transformations: TransformationChain,
-
     /// Actions to execute when rule matches
     actions: Vec<RuleAction>,
 
@@ -76,7 +73,6 @@ impl Rule {
             metadata: RuleMetadata::new(),
             variables: Vec::new(),
             operator: None,
-            transformations: TransformationChain::new(),
             actions: Vec::new(),
             chain: None,
         }
@@ -126,16 +122,6 @@ impl Rule {
     /// Get the operator (if any).
     pub fn operator(&self) -> Option<&RuleOperator> {
         self.operator.as_ref()
-    }
-
-    /// Get the transformation chain.
-    pub fn transformations(&self) -> &TransformationChain {
-        &self.transformations
-    }
-
-    /// Get mutable transformation chain.
-    pub fn transformations_mut(&mut self) -> &mut TransformationChain {
-        &mut self.transformations
     }
 
     /// Get the actions.
@@ -257,13 +243,16 @@ impl Rule {
                 // Apply transformations to the variable value
                 let (transformed_value, _errors) = if self.metadata.multi_match {
                     // Multi-match: test original + all intermediate transformed values
-                    let (values, errors) = self.transformations.apply_multimatch(&var_match.value);
+                    let (values, errors) = self
+                        .metadata
+                        .transformations
+                        .apply_multimatch(&var_match.value);
                     // For simplicity, concatenate all values (we'd actually test each separately)
                     // In a full implementation, we'd loop through values
                     (values.join("|"), errors)
                 } else {
                     // Simple mode: just get final transformed value
-                    self.transformations.apply(&var_match.value)
+                    self.metadata.transformations.apply(&var_match.value)
                 };
 
                 // TODO: Log transformation errors
@@ -475,7 +464,8 @@ mod tests {
             ));
 
         // Add lowercase transformation
-        rule.transformations_mut()
+        rule.metadata_mut()
+            .transformations
             .add("lowercase", lowercase)
             .unwrap();
 

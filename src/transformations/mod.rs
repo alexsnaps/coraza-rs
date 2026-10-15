@@ -65,3 +65,80 @@ impl std::fmt::Display for TransformationError {
 }
 
 impl std::error::Error for TransformationError {}
+
+/// Looks up a transformation by its SecLang name (case-insensitive), e.g. `urlDecode`.
+///
+/// Returns `None` for unknown names. `none` is a real (identity) transformation here;
+/// clearing a rule's transformations with `t:none` is up to the caller.
+pub fn by_name(name: &str) -> Option<crate::rules::transformation::Transformation> {
+    use crate::rules::transformation::Transformation;
+
+    // Adapters for transformations that don't report errors.
+    macro_rules! infallible {
+        ($f:path) => {
+            (|input| {
+                let (output, changed) = $f(input);
+                (output, changed, None)
+            }) as Transformation
+        };
+    }
+
+    let function: Transformation = match name.to_ascii_lowercase().as_str() {
+        "base64decode" => base64_decode,
+        "base64decodeext" => base64_decode_ext,
+        "base64encode" => base64_encode,
+        "cmdline" => infallible!(cmd_line),
+        "compresswhitespace" => compress_whitespace,
+        "cssdecode" => infallible!(css_decode),
+        "escapeseqdecode" => infallible!(escape_seq_decode),
+        "hexdecode" => hex_decode,
+        "hexencode" => hex_encode,
+        "htmlentitydecode" => infallible!(html_entity_decode),
+        "jsdecode" => infallible!(js_decode),
+        "length" => length,
+        "lowercase" => lowercase,
+        "md5" => md5_hash,
+        "none" => none,
+        "normalisepath" | "normalizepath" => infallible!(normalise_path),
+        "normalisepathwin" | "normalizepathwin" => infallible!(normalise_path_win),
+        "removecomments" => infallible!(remove_comments),
+        "removenulls" => remove_nulls,
+        "removewhitespace" => remove_whitespace,
+        "replacecomments" => infallible!(replace_comments),
+        "replacenulls" => replace_nulls,
+        "sha1" => sha1_hash,
+        "trim" => trim,
+        "trimleft" => trim_left,
+        "trimright" => trim_right,
+        "uppercase" => uppercase,
+        "urldecode" => url_decode,
+        "urldecodeuni" => infallible!(url_decode_uni),
+        "urlencode" => url_encode,
+        "utf8tounicode" => infallible!(utf8_to_unicode),
+        _ => return None,
+    };
+    Some(function)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn by_name_is_case_insensitive() {
+        let f = by_name("urlDecode").unwrap();
+        assert_eq!(f("a%20b").0, "a b");
+        assert!(by_name("URLDECODE").is_some());
+    }
+
+    #[test]
+    fn by_name_adapts_infallible_transformations() {
+        let f = by_name("cmdLine").unwrap();
+        assert_eq!(f("C^AT").0, cmd_line("C^AT").0);
+    }
+
+    #[test]
+    fn by_name_rejects_unknown() {
+        assert!(by_name("noSuchThing").is_none());
+    }
+}

@@ -7,6 +7,7 @@
 //! transformation pipelines, and HTTP status code configuration.
 
 use crate::actions::{Action, ActionError, ActionType, RuleMetadata, TransactionState};
+use crate::transformations;
 
 /// `capture` action - Enables regex capturing.
 ///
@@ -166,16 +167,18 @@ impl Action for TAction {
             return Err(ActionError::MissingArguments);
         }
 
-        // Special case: "none" clears all transformations
-        if data == "none" {
+        // `t:none` drops the transformations listed before it (including defaults)
+        if data.eq_ignore_ascii_case("none") {
             rule.transformations.clear();
             return Ok(());
         }
 
-        // TODO: Validate transformation exists when we implement transformation registry
-        // For now, just store the name - validation will happen at rule execution time
-        rule.transformations.push(data.to_string());
-        Ok(())
+        let function = transformations::by_name(data).ok_or_else(|| {
+            ActionError::InvalidArguments(format!("unknown transformation: {}", data))
+        })?;
+        rule.transformations
+            .add(data, function)
+            .map_err(ActionError::InvalidArguments)
     }
 
     fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut dyn TransactionState) {
@@ -296,12 +299,12 @@ mod tests {
         let mut rule = RuleMetadata::new();
 
         // Add some transformations first
-        rule.transformations.push("lowercase".to_string());
-        rule.transformations.push("uppercase".to_string());
+        let mut action = TAction;
+        action.init(&mut rule, "lowercase").unwrap();
+        action.init(&mut rule, "uppercase").unwrap();
         assert_eq!(rule.transformations.len(), 2);
 
         // Apply t:none
-        let mut action = TAction;
         assert!(action.init(&mut rule, "none").is_ok());
         assert_eq!(
             rule.transformations.len(),
@@ -315,8 +318,7 @@ mod tests {
         let mut rule = RuleMetadata::new();
         let mut action = TAction;
         assert!(action.init(&mut rule, "lowercase").is_ok());
-        assert_eq!(rule.transformations.len(), 1);
-        assert_eq!(rule.transformations[0], "lowercase");
+        assert_eq!(rule.transformations.names(), vec!["lowercase"]);
     }
 
     #[test]
@@ -329,20 +331,19 @@ mod tests {
         let mut action2 = TAction;
         assert!(action2.init(&mut rule, "urlDecode").is_ok());
 
-        assert_eq!(rule.transformations.len(), 2);
-        assert_eq!(rule.transformations[0], "lowercase");
-        assert_eq!(rule.transformations[1], "urlDecode");
+        assert_eq!(rule.transformations.names(), vec!["lowercase", "urlDecode"]);
+        assert_eq!(rule.transformations.apply("A%42").0, "aB");
     }
 
     #[test]
     fn test_t_unknown_transformation() {
-        // TODO: Add validation when transformation registry is implemented
-        // For now, we accept any transformation name
         let mut rule = RuleMetadata::new();
         let mut action = TAction;
-        assert!(action.init(&mut rule, "unknownTransformation").is_ok());
-        assert_eq!(rule.transformations.len(), 1);
-        assert_eq!(rule.transformations[0], "unknownTransformation");
+        assert!(matches!(
+            action.init(&mut rule, "unknownTransformation"),
+            Err(ActionError::InvalidArguments(_))
+        ));
+        assert!(rule.transformations.is_empty());
     }
 
     #[test]
