@@ -231,3 +231,28 @@ fn well_formed_bodies_raise_no_body_error() {
 
     assert_eq!(tx.process_request_body(br#"{"a": 1}"#).unwrap(), None);
 }
+
+#[test]
+fn multimatch_tests_the_value_before_and_after_each_transformation() {
+    let waf = waf(r#"
+        SecRule ARGS "@streq ADMIN" "id:1,phase:1,t:lowercase,multiMatch,deny,status:403"
+        SecRule ARGS "@streq ADMIN" "id:2,phase:1,t:lowercase,setvar:tx.single=1"
+    "#);
+
+    let mut tx = request_with_arg(&waf, "user", "ADMIN");
+    let interruption = tx.process_request_headers();
+
+    assert_eq!(interruption.map(|i| i.rule_id), Some(1));
+}
+
+#[test]
+fn multimatch_runs_actions_once_per_matching_value() {
+    let waf =
+        waf(r#"SecRule ARGS "@rx a" "id:1,phase:1,t:lowercase,multiMatch,pass,setvar:tx.hits=+1""#);
+
+    let mut tx = request_with_arg(&waf, "x", "Aa");
+    tx.process_request_headers();
+
+    // "Aa" and "aa" both match
+    assert_eq!(tx_var(&tx, "hits").as_deref(), Some("2"));
+}

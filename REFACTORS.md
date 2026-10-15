@@ -150,4 +150,5 @@ probed bugs.
 
 ## Noticed, not consolidation
 
-- With `multiMatch`, all transformed values are joined with `"|"` and matched once (`src/rules/rule.rs:263`).
+- With `multiMatch`, all transformed values are joined with `"|"` and matched once (`src/rules/rule.rs:263`). **Done:** each value is
+  now tested on its own, with non-disruptive actions run per matching value.

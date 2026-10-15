@@ -261,28 +261,27 @@ impl Rule {
         let mut matched_values = Vec::new();
         for var_spec in &self.variables {
             for var_match in var_spec.get_matches(tx) {
-                let (transformed_value, _errors) = if self.metadata.multi_match {
-                    // Multi-match: test original + all intermediate transformed values
-                    let (values, errors) = self
-                        .metadata
+                // With multiMatch, the value before and after each transformation that
+                // changed it is tested; otherwise only the fully transformed value.
+                // TODO: Log transformation errors
+                let (values, _errors) = if self.metadata.multi_match {
+                    self.metadata
                         .transformations
-                        .apply_multimatch(&var_match.value);
-                    // For simplicity, concatenate all values (we'd actually test each separately)
-                    // In a full implementation, we'd loop through values
-                    (values.join("|"), errors)
+                        .apply_multimatch(&var_match.value)
                 } else {
-                    self.metadata.transformations.apply(&var_match.value)
+                    let (value, errors) = self.metadata.transformations.apply(&var_match.value);
+                    (vec![value], errors)
                 };
 
-                // TODO: Log transformation errors
-
-                if operator.evaluate(Some(tx), &transformed_value) {
-                    matched_values.push(MatchData::new(
-                        var_match.variable,
-                        var_match.key,
-                        transformed_value,
-                    ));
-                    execute_nondisruptive_actions(&self.actions, &self.metadata, tx);
+                for value in values {
+                    if operator.evaluate(Some(tx), &value) {
+                        matched_values.push(MatchData::new(
+                            var_match.variable,
+                            var_match.key.clone(),
+                            value,
+                        ));
+                        execute_nondisruptive_actions(&self.actions, &self.metadata, tx);
+                    }
                 }
             }
         }
