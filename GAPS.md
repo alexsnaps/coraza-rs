@@ -258,6 +258,11 @@ None of these is used by CRS v4.30.0.
   that isn't UTF-8 becomes U+FFFD, so `t:sha1,t:hexEncode` (CRS 901320 and 901410) and `t:md5,t:hexEncode` don't
   give the digest in hex, and `%ff` doesn't stay one byte. A fix would carry bytes through a rule's transformations
   and turn them into text only for the operator.
+- [x] **`@rx` and `@pm` compiled for every value.** Found while running the FTW tests, which took about half a
+  second per request. Both used the regular expression or matcher built at load time only when called without a
+  transaction, which rules never do.
+  - Done: they use it whenever the pattern has no macro. CRS's 669 rules cost 464 ms on a plain `GET` before,
+    under 1 ms after.
 - [ ] **Run CRS v4.30.0's FTW tests and record the pass rate.** Not run yet; `ftw-runner/` drives
   `examples/ftw_server_async.rs`.
   - Go Coraza's CI runs all 5,260 tests (`testing/coreruleset`). It ignores 7 (`.ftw.yml`) and changes the expected

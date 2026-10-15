@@ -48,20 +48,20 @@ impl Operator for Rx {
         // Determine if we're capturing based on transaction state
         let capturing = tx.as_ref().is_some_and(|t| t.capturing());
 
-        // Fast path: use cached regex when available and no macro expansion needed
-        if tx.is_none()
-            && let Some(ref regex) = self.cached_regex
-        {
-            return regex.is_match(input);
-        }
-
-        // Expand macro if needed and compile regex
-        let pattern = self.macro_param.expand(tx.as_deref());
-        let pattern_with_flags = format!("(?s){}", pattern);
-
-        let regex = match Regex::new(&pattern_with_flags) {
-            Ok(re) => re,
-            Err(_) => return false,
+        // A pattern with macros is compiled for each value, once expanded
+        let expanded;
+        let regex = match &self.cached_regex {
+            Some(regex) => regex,
+            None => {
+                let pattern = self.macro_param.expand(tx.as_deref());
+                match Regex::new(&format!("(?s){}", pattern)) {
+                    Ok(regex) => {
+                        expanded = regex;
+                        &expanded
+                    }
+                    Err(_) => return false,
+                }
+            }
         };
 
         if capturing {
@@ -147,24 +147,24 @@ impl Operator for Pm {
         // Determine if we're capturing based on transaction state
         let capturing = tx.as_ref().is_some_and(|t| t.capturing());
 
-        // If we have a cached matcher and no transaction state, use the cache
-        if tx.is_none()
-            && let Some(ref matcher) = self.cached_matcher
-        {
-            return matcher.is_match(input);
-        }
-
-        // Otherwise expand macro and build matcher on the fly
-        let patterns = self.macro_param.expand(tx.as_deref());
-        let patterns_lower = patterns.to_lowercase();
-        let dict: Vec<&str> = patterns_lower.split(' ').collect();
-
-        let matcher = match AhoCorasick::builder()
-            .ascii_case_insensitive(true)
-            .build(&dict)
-        {
-            Ok(m) => m,
-            Err(_) => return false,
+        // Phrases with macros are matched with a matcher built for each value, once expanded
+        let expanded;
+        let matcher = match &self.cached_matcher {
+            Some(matcher) => matcher,
+            None => {
+                let patterns = self.macro_param.expand(tx.as_deref()).to_lowercase();
+                let dict: Vec<&str> = patterns.split(' ').collect();
+                match AhoCorasick::builder()
+                    .ascii_case_insensitive(true)
+                    .build(&dict)
+                {
+                    Ok(matcher) => {
+                        expanded = matcher;
+                        &expanded
+                    }
+                    Err(_) => return false,
+                }
+            }
         };
 
         if capturing {
