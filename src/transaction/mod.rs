@@ -110,6 +110,22 @@ macro_rules! variable_storage {
             RuleVariable::ResponseArgs => Some(Map($($borrow)+ $tx.response_args)),
             RuleVariable::ResponseXML => Some(Map($($borrow)+ $tx.response_xml)),
             RuleVariable::TX => Some(Map($($borrow)+ $tx.tx)),
+            RuleVariable::ArgsNames => Some(Names(RuleVariable::ArgsNames, $($borrow)+ $tx.args)),
+            RuleVariable::ArgsGetNames => {
+                Some(Names(RuleVariable::ArgsGetNames, $($borrow)+ $tx.args_get))
+            }
+            RuleVariable::ArgsPostNames => {
+                Some(Names(RuleVariable::ArgsPostNames, $($borrow)+ $tx.args_post))
+            }
+            RuleVariable::RequestHeadersNames => {
+                Some(Names(RuleVariable::RequestHeadersNames, $($borrow)+ $tx.request_headers))
+            }
+            RuleVariable::RequestCookiesNames => {
+                Some(Names(RuleVariable::RequestCookiesNames, $($borrow)+ $tx.request_cookies))
+            }
+            RuleVariable::ResponseHeadersNames => {
+                Some(Names(RuleVariable::ResponseHeadersNames, $($borrow)+ $tx.response_headers))
+            }
             RuleVariable::MatchedVars => Some(Map($($borrow)+ $tx.matched_vars)),
             RuleVariable::MatchedVarsNames => {
                 Some(Names(RuleVariable::MatchedVarsNames, $($borrow)+ $tx.matched_vars))
@@ -176,17 +192,11 @@ macro_rules! variable_storage {
             | RuleVariable::HighestSeverity
             | RuleVariable::StatusLine
             | RuleVariable::Duration
-            | RuleVariable::ResponseHeadersNames
-            | RuleVariable::RequestHeadersNames
             | RuleVariable::ArgsPath
             | RuleVariable::FilesTmpContent
             | RuleVariable::MultipartFilename
             | RuleVariable::MultipartName
             | RuleVariable::Geo
-            | RuleVariable::RequestCookiesNames
-            | RuleVariable::ArgsNames
-            | RuleVariable::ArgsGetNames
-            | RuleVariable::ArgsPostNames
             | RuleVariable::Rule
             | RuleVariable::JSON
             | RuleVariable::Env

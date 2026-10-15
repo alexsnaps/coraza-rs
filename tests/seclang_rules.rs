@@ -862,3 +862,42 @@ fn matched_variables_describe_the_matches_of_the_current_rule() {
     // MATCHED_VARS starts empty for each rule
     assert_eq!(tx_var(&tx, "leaked"), None);
 }
+
+#[test]
+fn names_variables_are_the_keys_of_their_collections() {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule ARGS_NAMES "@streq evil_arg" "id:1,phase:1,deny,status:403"
+        SecRule ARGS_GET_NAMES "@streq evil_get" "id:2,phase:1,deny,status:403"
+        SecRule REQUEST_HEADERS_NAMES "@streq X-Evil" "id:3,phase:1,deny,status:403"
+        SecRule REQUEST_COOKIES_NAMES "@streq evil_cookie" "id:4,phase:1,deny,status:403"
+        SecRule ARGS_POST_NAMES "@streq evil_post" "id:5,phase:2,deny,status:403"
+        SecRule RESPONSE_HEADERS_NAMES "@streq X-Evil" "id:6,phase:3,deny,status:403"
+    "#);
+
+    let mut tx = request_with_arg(&waf, "evil_arg", "x");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+
+    let mut tx = waf.new_transaction();
+    tx.process_uri("/?evil_get=x", "GET", "HTTP/1.1");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(2));
+
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("X-Evil", "x");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(3));
+
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Cookie", "evil_cookie=x");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(4));
+
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+    tx.process_request_headers();
+    let interruption = tx.process_request_body(b"evil_post=x").unwrap();
+    assert_eq!(interruption.map(|i| i.rule_id), Some(5));
+
+    let mut tx = waf.new_transaction();
+    tx.add_response_header("X-Evil", "x");
+    let interruption = tx.process_response_headers(200, "HTTP/1.1");
+    assert_eq!(interruption.map(|i| i.rule_id), Some(6));
+}
