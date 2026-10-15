@@ -35,6 +35,10 @@ pub struct MatchData {
     pub key: String,
     /// The value of the variable
     pub value: String,
+    /// The rule's `msg`, as expanded for this match; empty when not expanded or unset
+    pub message: String,
+    /// The rule's `logdata`, as expanded for this match; empty when not expanded or unset
+    pub data: String,
 }
 
 impl MatchData {
@@ -44,26 +48,20 @@ impl MatchData {
             variable,
             key: key.into(),
             value: value.into(),
+            message: String::new(),
+            data: String::new(),
         }
     }
 
     /// Create a MatchData instance without a key.
     pub fn without_key(variable: RuleVariable, value: impl Into<String>) -> Self {
-        Self {
-            variable,
-            key: String::new(),
-            value: value.into(),
-        }
+        Self::new(variable, String::new(), value)
     }
 
     /// Create an empty MatchData instance for operator-less rules.
     ///
     /// Used for rules without operators (SecAction, SecMarker) that always match.
     pub fn new_empty() -> Self {
-        Self {
-            variable: RuleVariable::Unknown,
-            key: String::new(),
-            value: String::new(),
-        }
+        Self::new(RuleVariable::Unknown, String::new(), String::new())
     }
 }

@@ -6,10 +6,10 @@
 //! This module contains basic string manipulation transformations that don't
 //! require external dependencies beyond stdlib.
 
-use crate::transformations::TransformationResult;
+use crate::transformations::{TransformationResult, chars_lossy};
 use crate::utils::strings::x2c;
 
-/// Whitespace characters to trim (matching C++ isspace).
+/// Whitespace bytes to trim (matching C++ isspace).
 ///
 /// From <https://en.cppreference.com/w/cpp/string/byte/isspace>:
 /// - space (0x20, ' ')
@@ -18,48 +18,80 @@ use crate::utils::strings::x2c;
 /// - carriage return (0x0d, '\r')
 /// - horizontal tab (0x09, '\t')
 /// - vertical tab (0x0b, '\v')
-const TRIM_SPACES: &[char] = &[' ', '\t', '\n', '\r', '\x0c', '\x0b'];
+const TRIM_SPACES: &[u8] = b" \t\n\r\x0c\x0b";
 
 /// Converts input to lowercase.
+///
+/// ASCII input is lowercased byte by byte; other input is read as characters, each
+/// byte that isn't part of one becoming U+FFFD, as in Go Coraza.
 ///
 /// # Examples
 ///
 /// ```
 /// use coraza::transformations::lowercase;
 ///
-/// let (result, changed, _) = lowercase("TestCase");
-/// assert_eq!(result, "testcase");
+/// let (result, changed, _) = lowercase(b"TestCase");
+/// assert_eq!(result, b"testcase");
 /// assert!(changed);
 ///
-/// let (result, changed, _) = lowercase("already lowercase");
-/// assert_eq!(result, "already lowercase");
+/// let (result, changed, _) = lowercase(b"already lowercase");
+/// assert_eq!(result, b"already lowercase");
 /// assert!(!changed);
 /// ```
-pub fn lowercase(input: &str) -> TransformationResult {
-    let transformed = input.to_lowercase();
+pub fn lowercase(input: &[u8]) -> TransformationResult {
+    let transformed = if input.is_ascii() {
+        input.to_ascii_lowercase()
+    } else {
+        chars_lossy(input).to_lowercase().into_bytes()
+    };
     let changed = input != transformed;
     (transformed, changed, None)
 }
 
 /// Converts input to uppercase.
 ///
+/// ASCII input is uppercased byte by byte; other input is read as characters, each
+/// byte that isn't part of one becoming U+FFFD, as in Go Coraza.
+///
 /// # Examples
 ///
 /// ```
 /// use coraza::transformations::uppercase;
 ///
-/// let (result, changed, _) = uppercase("TestCase");
-/// assert_eq!(result, "TESTCASE");
+/// let (result, changed, _) = uppercase(b"TestCase");
+/// assert_eq!(result, b"TESTCASE");
 /// assert!(changed);
 ///
-/// let (result, changed, _) = uppercase("ALREADY UPPERCASE");
-/// assert_eq!(result, "ALREADY UPPERCASE");
+/// let (result, changed, _) = uppercase(b"ALREADY UPPERCASE");
+/// assert_eq!(result, b"ALREADY UPPERCASE");
 /// assert!(!changed);
 /// ```
-pub fn uppercase(input: &str) -> TransformationResult {
-    let transformed = input.to_uppercase();
+pub fn uppercase(input: &[u8]) -> TransformationResult {
+    let transformed = if input.is_ascii() {
+        input.to_ascii_uppercase()
+    } else {
+        chars_lossy(input).to_uppercase().into_bytes()
+    };
     let changed = input != transformed;
     (transformed, changed, None)
+}
+
+/// `input` without its leading whitespace.
+fn trim_start(input: &[u8]) -> &[u8] {
+    let start = input
+        .iter()
+        .position(|byte| !TRIM_SPACES.contains(byte))
+        .unwrap_or(input.len());
+    &input[start..]
+}
+
+/// `input` without its trailing whitespace.
+fn trim_end(input: &[u8]) -> &[u8] {
+    let end = input
+        .iter()
+        .rposition(|byte| !TRIM_SPACES.contains(byte))
+        .map_or(0, |last| last + 1);
+    &input[..end]
 }
 
 /// Removes leading and trailing whitespace.
@@ -71,18 +103,18 @@ pub fn uppercase(input: &str) -> TransformationResult {
 /// ```
 /// use coraza::transformations::trim;
 ///
-/// let (result, changed, _) = trim("  hello  ");
-/// assert_eq!(result, "hello");
+/// let (result, changed, _) = trim(b"  hello  ");
+/// assert_eq!(result, b"hello");
 /// assert!(changed);
 ///
-/// let (result, changed, _) = trim("hello");
-/// assert_eq!(result, "hello");
+/// let (result, changed, _) = trim(b"hello");
+/// assert_eq!(result, b"hello");
 /// assert!(!changed);
 /// ```
-pub fn trim(input: &str) -> TransformationResult {
-    let transformed = input.trim_matches(TRIM_SPACES);
+pub fn trim(input: &[u8]) -> TransformationResult {
+    let transformed = trim_end(trim_start(input));
     let changed = input.len() != transformed.len();
-    (transformed.to_string(), changed, None)
+    (transformed.to_vec(), changed, None)
 }
 
 /// Removes leading whitespace.
@@ -94,14 +126,14 @@ pub fn trim(input: &str) -> TransformationResult {
 /// ```
 /// use coraza::transformations::trim_left;
 ///
-/// let (result, changed, _) = trim_left("  hello  ");
-/// assert_eq!(result, "hello  ");
+/// let (result, changed, _) = trim_left(b"  hello  ");
+/// assert_eq!(result, b"hello  ");
 /// assert!(changed);
 /// ```
-pub fn trim_left(input: &str) -> TransformationResult {
-    let transformed = input.trim_start_matches(TRIM_SPACES);
+pub fn trim_left(input: &[u8]) -> TransformationResult {
+    let transformed = trim_start(input);
     let changed = input.len() != transformed.len();
-    (transformed.to_string(), changed, None)
+    (transformed.to_vec(), changed, None)
 }
 
 /// Removes trailing whitespace.
@@ -113,34 +145,37 @@ pub fn trim_left(input: &str) -> TransformationResult {
 /// ```
 /// use coraza::transformations::trim_right;
 ///
-/// let (result, changed, _) = trim_right("  hello  ");
-/// assert_eq!(result, "  hello");
+/// let (result, changed, _) = trim_right(b"  hello  ");
+/// assert_eq!(result, b"  hello");
 /// assert!(changed);
 /// ```
-pub fn trim_right(input: &str) -> TransformationResult {
-    let transformed = input.trim_end_matches(TRIM_SPACES);
+pub fn trim_right(input: &[u8]) -> TransformationResult {
+    let transformed = trim_end(input);
     let changed = input.len() != transformed.len();
-    (transformed.to_string(), changed, None)
+    (transformed.to_vec(), changed, None)
 }
 
 /// Removes all whitespace characters from the input.
+///
+/// The input is read as characters, each byte that isn't part of one becoming
+/// U+FFFD, as in Go Coraza.
 ///
 /// # Examples
 ///
 /// ```
 /// use coraza::transformations::remove_whitespace;
 ///
-/// let (result, changed, _) = remove_whitespace("t e s t");
-/// assert_eq!(result, "test");
+/// let (result, changed, _) = remove_whitespace(b"t e s t");
+/// assert_eq!(result, b"test");
 /// assert!(changed);
 ///
-/// let (result, changed, _) = remove_whitespace("test");
-/// assert_eq!(result, "test");
+/// let (result, changed, _) = remove_whitespace(b"test");
+/// assert_eq!(result, b"test");
 /// assert!(!changed);
 /// ```
-pub fn remove_whitespace(input: &str) -> TransformationResult {
+pub fn remove_whitespace(input: &[u8]) -> TransformationResult {
     let mut changed = false;
-    let transformed: String = input
+    let transformed: String = chars_lossy(input)
         .chars()
         .filter(|c| {
             if c.is_whitespace() {
@@ -152,72 +187,68 @@ pub fn remove_whitespace(input: &str) -> TransformationResult {
         })
         .collect();
 
-    (transformed, changed, None)
+    (transformed.into_bytes(), changed, None)
 }
 
 /// Compresses consecutive whitespace into single spaces.
 ///
-/// Multiple consecutive whitespace characters (space, tab, newline, etc.) are
-/// replaced with a single space character.
+/// Each run of whitespace (ASCII whitespace, U+0085, U+00A0, or a 0xA0 byte that isn't
+/// part of a character) becomes one space, as in Go Coraza.
 ///
 /// # Examples
 ///
 /// ```
 /// use coraza::transformations::compress_whitespace;
 ///
-/// let (result, changed, _) = compress_whitespace("Multiple    spaces");
-/// assert_eq!(result, "Multiple spaces");
+/// let (result, changed, _) = compress_whitespace(b"Multiple    spaces");
+/// assert_eq!(result, b"Multiple spaces");
 /// assert!(changed);
 ///
-/// let (result, changed, _) = compress_whitespace("Single space");
-/// assert_eq!(result, "Single space");
+/// let (result, changed, _) = compress_whitespace(b"Single space");
+/// assert_eq!(result, b"Single space");
 /// assert!(!changed);
 /// ```
-pub fn compress_whitespace(input: &str) -> TransformationResult {
-    // Fast path: check if there's any whitespace to compress
-    let bytes = input.as_bytes();
-    if let Some(pos) = bytes.iter().position(|&b| is_latin_space(b)) {
-        return do_compress_whitespace(input, pos);
-    }
-    (input.to_string(), false, None)
-}
-
-/// Helper function for compress_whitespace - does the actual compression.
-fn do_compress_whitespace(input: &str, start_pos: usize) -> TransformationResult {
-    let mut result = String::with_capacity(input.len());
-    result.push_str(&input[..start_pos]);
-
-    let bytes = input.as_bytes();
+pub fn compress_whitespace(input: &[u8]) -> TransformationResult {
+    let mut result = Vec::with_capacity(input.len());
     let mut changed = false;
     let mut in_whitespace = false;
 
-    for &byte in bytes.iter().skip(start_pos) {
-        if is_latin_space(byte) {
-            if in_whitespace {
-                changed = true;
-                continue;
-            } else {
-                in_whitespace = true;
-                result.push(' ');
-            }
-        } else {
+    let mut push = |is_whitespace: bool, is_space: bool, bytes: &[u8]| {
+        if !is_whitespace {
             in_whitespace = false;
-            result.push(byte as char);
+            result.extend_from_slice(bytes);
+        } else if in_whitespace {
+            changed = true;
+        } else {
+            in_whitespace = true;
+            changed |= !is_space;
+            result.push(b' ');
+        }
+    };
+    for chunk in input.utf8_chunks() {
+        for c in chunk.valid().chars() {
+            push(
+                is_latin_space(c),
+                c == ' ',
+                c.encode_utf8(&mut [0; 4]).as_bytes(),
+            );
+        }
+        // A Latin-1 NBSP, as ModSecurity matches it
+        for &byte in chunk.invalid() {
+            push(byte == 0xA0, false, &[byte]);
         }
     }
 
     (result, changed, None)
 }
 
-/// Checks if a byte is a latin space character.
-///
-/// Includes: tab, newline, vertical tab, form feed, carriage return, space, and
-/// Latin-1 whitespace characters (0x85, 0xA0).
+/// Whether `c` is ASCII whitespace or one of Latin-1's (U+0085, U+00A0), the
+/// whitespace `compressWhitespace` matches in ModSecurity.
 #[inline]
-fn is_latin_space(c: u8) -> bool {
+fn is_latin_space(c: char) -> bool {
     matches!(
         c,
-        b'\t' | b'\n' | b'\x0b' | b'\x0c' | b'\r' | b' ' | 0x85 | 0xA0
+        '\t' | '\n' | '\x0b' | '\x0c' | '\r' | ' ' | '\u{85}' | '\u{a0}'
     )
 }
 
@@ -231,82 +262,80 @@ fn is_latin_space(c: u8) -> bool {
 /// ```
 /// use coraza::transformations::url_decode;
 ///
-/// let (result, changed, _) = url_decode("hello+world");
-/// assert_eq!(result, "hello world");
+/// let (result, changed, _) = url_decode(b"hello+world");
+/// assert_eq!(result, b"hello world");
 /// assert!(changed);
 ///
-/// let (result, changed, _) = url_decode("test%20case");
-/// assert_eq!(result, "test case");
+/// let (result, changed, _) = url_decode(b"test%20case");
+/// assert_eq!(result, b"test case");
 /// assert!(changed);
 ///
-/// let (result, changed, _) = url_decode("no encoding");
-/// assert_eq!(result, "no encoding");
+/// let (result, changed, _) = url_decode(b"%ff");
+/// assert_eq!(result, b"\xff");
+///
+/// let (result, changed, _) = url_decode(b"no encoding");
+/// assert_eq!(result, b"no encoding");
 /// assert!(!changed);
 /// ```
-pub fn url_decode(input: &str) -> TransformationResult {
+pub fn url_decode(input: &[u8]) -> TransformationResult {
     // Fast path: check if there's anything to decode
-    let bytes = input.as_bytes();
-    if let Some(pos) = bytes.iter().position(|&b| b == b'%' || b == b'+') {
+    if let Some(pos) = input.iter().position(|&b| b == b'%' || b == b'+') {
         return do_url_decode(input, pos);
     }
-    (input.to_string(), false, None)
+    (input.to_vec(), false, None)
 }
 
 /// Helper function for url_decode - does the actual decoding.
 ///
 /// Extracted from <https://github.com/senghoo/modsecurity-go/blob/master/utils/urlencode.go>
-fn do_url_decode(input: &str, start_pos: usize) -> TransformationResult {
-    let input_bytes = input.as_bytes();
-    let input_len = input_bytes.len();
+fn do_url_decode(input: &[u8], start_pos: usize) -> TransformationResult {
+    let input_len = input.len();
 
     let mut result = Vec::with_capacity(input_len);
     // Copy the part before the first special character
-    result.extend_from_slice(&input_bytes[..start_pos]);
+    result.extend_from_slice(&input[..start_pos]);
 
     let mut i = start_pos;
 
     while i < input_len {
-        if input_bytes[i] == b'%' {
+        if input[i] == b'%' {
             // Character is a percent sign
             // Are there enough bytes available?
             if i + 2 < input_len {
-                let c1 = input_bytes[i + 1];
-                let c2 = input_bytes[i + 2];
+                let c1 = input[i + 1];
+                let c2 = input[i + 2];
 
                 if c1.is_ascii_hexdigit() && c2.is_ascii_hexdigit() {
-                    let decoded = x2c(&input[i + 1..i + 3]);
-                    result.push(decoded);
+                    result.push(x2c(&input[i + 1..i + 3]));
                     i += 3;
                 } else {
                     // Not a valid encoding, skip this %
-                    result.push(input_bytes[i]);
+                    result.push(input[i]);
                     i += 1;
                 }
             } else {
                 // Not enough bytes available, copy the raw bytes
-                result.push(input_bytes[i]);
+                result.push(input[i]);
                 i += 1;
             }
-        } else if input_bytes[i] == b'+' {
+        } else if input[i] == b'+' {
             // Plus sign becomes space
             result.push(b' ');
             i += 1;
         } else {
             // Regular character
-            result.push(input_bytes[i]);
+            result.push(input[i]);
             i += 1;
         }
     }
 
-    // SAFETY: We're only decoding percent-encoded bytes and replacing '+' with space.
-    // The input was valid UTF-8, and our transformations preserve UTF-8 validity.
-    let transformed = unsafe { String::from_utf8_unchecked(result) };
-    (transformed, true, None)
+    (result, true, None)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transformations::on_text;
 
     #[test]
     fn test_lowercase() {
@@ -323,7 +352,7 @@ mod tests {
         ];
 
         for (input, want, want_changed) in tests {
-            let (got, changed, err) = lowercase(input);
+            let (got, changed, err) = on_text(lowercase, input);
             assert!(err.is_none(), "unexpected error: {:?}", err);
             assert_eq!(got, want, "input: {:?}", input);
             assert_eq!(changed, want_changed, "input: {:?}", input);
@@ -345,7 +374,7 @@ mod tests {
         ];
 
         for (input, want, want_changed) in tests {
-            let (got, changed, err) = uppercase(input);
+            let (got, changed, err) = on_text(uppercase, input);
             assert!(err.is_none(), "unexpected error: {:?}", err);
             assert_eq!(got, want, "input: {:?}", input);
             assert_eq!(changed, want_changed, "input: {:?}", input);
@@ -364,7 +393,7 @@ mod tests {
         ];
 
         for (input, want, want_changed) in tests {
-            let (got, changed, err) = trim(input);
+            let (got, changed, err) = on_text(trim, input);
             assert!(err.is_none(), "unexpected error: {:?}", err);
             assert_eq!(got, want, "input: {:?}", input);
             assert_eq!(changed, want_changed, "input: {:?}", input);
@@ -382,7 +411,7 @@ mod tests {
         ];
 
         for (input, want, want_changed) in tests {
-            let (got, changed, err) = trim_left(input);
+            let (got, changed, err) = on_text(trim_left, input);
             assert!(err.is_none(), "unexpected error: {:?}", err);
             assert_eq!(got, want, "input: {:?}", input);
             assert_eq!(changed, want_changed, "input: {:?}", input);
@@ -400,7 +429,7 @@ mod tests {
         ];
 
         for (input, want, want_changed) in tests {
-            let (got, changed, err) = trim_right(input);
+            let (got, changed, err) = on_text(trim_right, input);
             assert!(err.is_none(), "unexpected error: {:?}", err);
             assert_eq!(got, want, "input: {:?}", input);
             assert_eq!(changed, want_changed, "input: {:?}", input);
@@ -418,7 +447,7 @@ mod tests {
         ];
 
         for (input, want, want_changed) in tests {
-            let (got, changed, err) = remove_whitespace(input);
+            let (got, changed, err) = on_text(remove_whitespace, input);
             assert!(err.is_none(), "unexpected error: {:?}", err);
             assert_eq!(got, want, "input: {:?}", input);
             assert_eq!(changed, want_changed, "input: {:?}", input);
@@ -437,10 +466,27 @@ mod tests {
         ];
 
         for (input, want, want_changed) in tests {
-            let (got, changed, err) = compress_whitespace(input);
+            let (got, changed, err) = on_text(compress_whitespace, input);
             assert!(err.is_none(), "unexpected error: {:?}", err);
             assert_eq!(got, want, "input: {:?}", input);
             assert_eq!(changed, want_changed, "input: {:?}", input);
+        }
+    }
+
+    #[test]
+    fn test_compress_whitespace_non_ascii() {
+        // 0x85 and 0xA0, U+0085 and U+00A0 in Latin-1, are also the last byte of
+        // characters such as ① (e2 91 a0) and à (c3 a0)
+        for (input, want, want_changed) in [
+            ("acap://①②⑦.⓪", "acap://①②⑦.⓪", false),
+            ("a  é", "a é", true),
+            ("à\u{a0}\u{85}b", "à b", true),
+            ("a\tb", "a b", true),
+        ] {
+            let (got, changed, err) = on_text(compress_whitespace, input);
+            assert!(err.is_none());
+            assert_eq!(got, want, "input: {input:?}");
+            assert_eq!(changed, want_changed, "input: {input:?}");
         }
     }
 
@@ -461,7 +507,7 @@ mod tests {
         ];
 
         for (input, want, want_changed) in tests {
-            let (got, changed, err) = url_decode(input);
+            let (got, changed, err) = on_text(url_decode, input);
             assert!(err.is_none(), "unexpected error: {:?}", err);
             assert_eq!(got, want, "input: {:?}", input);
             assert_eq!(changed, want_changed, "input: {:?}", input);
@@ -471,25 +517,31 @@ mod tests {
     #[test]
     fn test_url_decode_utf8() {
         // UTF-8 multi-byte sequences encoded as percent
-        let (got, changed, err) = url_decode("hello%C2%A9world"); // © symbol
+        let (got, changed, err) = on_text(url_decode, "hello%C2%A9world"); // © symbol
         assert!(err.is_none());
         assert_eq!(got, "hello©world");
         assert!(changed);
     }
 
     #[test]
-    fn test_is_latin_space() {
-        assert!(is_latin_space(b'\t'));
-        assert!(is_latin_space(b'\n'));
-        assert!(is_latin_space(b'\x0b')); // vertical tab
-        assert!(is_latin_space(b'\x0c')); // form feed
-        assert!(is_latin_space(b'\r'));
-        assert!(is_latin_space(b' '));
-        assert!(is_latin_space(0x85));
-        assert!(is_latin_space(0xA0));
+    fn test_bytes_that_are_not_utf8() {
+        // Kept by byte-level transformations
+        assert_eq!(url_decode(b"%ff%41").0, b"\xffA");
+        assert_eq!(trim(b" \xff ").0, b"\xff");
+        assert_eq!(compress_whitespace(b"\xc3  \xa0\xa0x").0, b"\xc3 x");
+        // Replaced, one U+FFFD per byte, by those that read characters, as in Go
+        assert_eq!(lowercase(b"A\xff\xfeB").0, "a\u{FFFD}\u{FFFD}b".as_bytes());
+        assert_eq!(uppercase(b"a\xffb").0, "A\u{FFFD}B".as_bytes());
+        assert_eq!(remove_whitespace(b"a \xff").0, "a\u{FFFD}".as_bytes());
+    }
 
-        assert!(!is_latin_space(b'a'));
-        assert!(!is_latin_space(b'Z'));
-        assert!(!is_latin_space(b'0'));
+    #[test]
+    fn test_is_latin_space() {
+        for c in ['\t', '\n', '\x0b', '\x0c', '\r', ' ', '\u{85}', '\u{a0}'] {
+            assert!(is_latin_space(c), "{c:?}");
+        }
+        for c in ['a', 'Z', '0', '\u{2000}', '\u{3000}'] {
+            assert!(!is_latin_space(c), "{c:?}");
+        }
     }
 }

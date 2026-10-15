@@ -21,10 +21,8 @@
 //! - Scanner Detection (913xxx) - User-Agent patterns
 //! - Path Traversal (930xxx) - Directory traversal patterns
 //! - Command Injection (932xxx) - Shell command patterns
-//!
-//! **Requires Future Operators:**
-//! - SQL Injection (942xxx) - Needs @detectSQLi
-//! - XSS (941xxx) - Needs @detectXSS
+//! - SQL Injection (942xxx) - Patterns, and @detectSQLi
+//! - XSS (941xxx) - Patterns, and @detectXSS
 //!
 //! Note: Full E2E rule evaluation tests require transaction-level rule
 //! execution, which will be added in a future phase.

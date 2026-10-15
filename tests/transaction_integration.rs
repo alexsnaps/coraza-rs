@@ -105,7 +105,7 @@ fn test_full_request_variable_population() {
     tx.add_request_header("Cookie", "session=abc123; user=admin");
 
     assert_eq!(tx.request_method(), "POST");
-    assert_eq!(tx.request_uri(), "/api/users");
+    assert_eq!(tx.request_uri(), "/api/users?id=123");
     assert_eq!(tx.request_protocol(), "HTTP/1.1");
     assert_eq!(tx.query_string(), "id=123");
     assert_eq!(tx.args_get().get("id"), vec!["123"]);
@@ -285,17 +285,16 @@ fn test_setenv_action_execution() {
         .expect("setenv runs when the rule matches");
     assert_eq!(action.action_type(), ActionType::Nondisruptive);
 
-    // Execute (sets environment variable)
+    // Sets ENV, not the process environment
     let mut tx = Transaction::new("action-test");
     action.evaluate(&rule, &mut tx);
 
-    // Verify environment variable was set
-    assert_eq!(std::env::var("TEST_VAR").unwrap(), "test_value");
-
-    // Cleanup
-    unsafe {
-        std::env::remove_var("TEST_VAR");
-    }
+    assert_eq!(
+        tx.get_variable(coraza::RuleVariable::Env, Some("TEST_VAR"))
+            .as_deref(),
+        Some("test_value")
+    );
+    assert!(std::env::var_os("TEST_VAR").is_none());
 }
 
 #[test]
@@ -310,7 +309,14 @@ fn test_exec_action_is_never_run() {
 
 #[test]
 fn test_complete_transaction_flow() {
-    let mut tx = Transaction::new("complete-flow-test");
+    let waf = coraza::waf::Waf::new(coraza::config::WafConfig {
+        request_body_access: true,
+        response_body_access: true,
+        response_body_mime_types: vec!["application/json".to_string()],
+        ..Default::default()
+    })
+    .unwrap();
+    let mut tx = waf.new_transaction_with_id("complete-flow-test".to_string());
 
     // 1. Connection phase
     tx.process_connection("192.168.1.1", 12345, "10.0.0.1", 443);
@@ -322,7 +328,7 @@ fn test_complete_transaction_flow() {
     tx.add_request_header("User-Agent", "curl/7.68.0");
 
     assert_eq!(tx.request_method(), "POST");
-    assert_eq!(tx.request_uri(), "/api/login");
+    assert_eq!(tx.request_uri(), "/api/login?redirect=/dashboard");
     assert_eq!(tx.args_get().get("redirect"), vec!["/dashboard"]);
 
     // 3. Request body phase with URL-encoded data
@@ -335,6 +341,7 @@ fn test_complete_transaction_flow() {
     assert_eq!(tx.args_post().get("password"), vec!["P@ssw0rd"]); // Decoded
 
     // 4. Response headers phase
+    tx.add_response_header("Content-Type", "application/json");
     let interruption = tx.process_response_headers(200, "HTTP/1.1");
     assert!(interruption.is_none()); // No interruption
 
@@ -349,7 +356,7 @@ fn test_complete_transaction_flow() {
     assert!(tx.response_body().contains("success"));
 
     // 6. Logging phase
-    tx.process_logging();
+    tx.process_logging().unwrap();
 
     // Verify final phase tracking
     assert_eq!(tx.last_phase(), Some(RulePhase::Logging));
@@ -401,6 +408,8 @@ fn test_json_api_request_with_nested_data() {
     tx.process_uri("/api/v1/users", "POST", "HTTP/2");
     tx.add_request_header("Content-Type", "application/json");
     tx.add_request_header("Authorization", "Bearer token123");
+    // As in Go, JSON bodies are parsed once the JSON processor is selected
+    tx.set_request_body_processor(BodyProcessorKind::Json);
 
     let json_body = br#"{
         "user": {

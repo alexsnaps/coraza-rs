@@ -3,10 +3,11 @@
 //! This module provides operators for matching IP addresses against CIDR blocks
 //! and IP ranges, compatible with ModSecurity's @ipMatch family of operators.
 
-use crate::operators::Operator;
+use crate::operators::{Datasets, Operator};
 use crate::transaction::Transaction;
 use ipnet::IpNet;
 use std::net::IpAddr;
+use std::path::Path;
 use std::str::FromStr;
 
 /// IP address matching operator.
@@ -144,6 +145,38 @@ pub fn ip_match(ips: &str) -> Result<IpMatch, String> {
     IpMatch::new(ips)
 }
 
+/// IP address matching operator (from a `SecDataset`).
+///
+/// Matches the IPs and CIDR blocks of a dataset as `@ipMatch` matches its own.
+#[derive(Debug, Clone)]
+pub struct IpMatchFromDataset {
+    ips: IpMatch,
+}
+
+impl Operator for IpMatchFromDataset {
+    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
+        self.ips.evaluate(tx, input)
+    }
+}
+
+/// Creates a new `@ipMatchFromDataset` operator from the dataset `name` of `datasets`.
+///
+/// # Errors
+///
+/// If `datasets` has no dataset `name`, or an empty one, or it holds no valid IP.
+pub fn ip_match_from_dataset(
+    name: &str,
+    datasets: &Datasets,
+) -> Result<IpMatchFromDataset, String> {
+    let items = datasets
+        .get(name)
+        .filter(|items| !items.is_empty())
+        .ok_or_else(|| format!("dataset \"{}\" not found", name))?;
+    Ok(IpMatchFromDataset {
+        ips: IpMatch::new(&items.join(","))?,
+    })
+}
+
 /// IP address matching operator (from file).
 ///
 /// Loads IP addresses and CIDR blocks from a file, then performs matching
@@ -185,7 +218,8 @@ impl IpMatchFromFile {
     ///
     /// # Arguments
     ///
-    /// * `file_path` - Path to file containing IP addresses (one per line)
+    /// * `file_path` - Path to file containing IP addresses (one per line); a relative
+    ///   path is relative to the working directory
     ///
     /// # Returns
     ///
@@ -198,9 +232,10 @@ impl IpMatchFromFile {
     /// - Empty lines are ignored
     /// - Lines starting with `#` are treated as comments and ignored
     /// - Invalid IP addresses are silently skipped
-    pub fn new(file_path: &str) -> Result<Self, String> {
+    pub fn new(file_path: impl AsRef<Path>) -> Result<Self, String> {
+        let file_path = file_path.as_ref();
         let content = std::fs::read_to_string(file_path)
-            .map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
+            .map_err(|e| format!("Failed to read file {}: {}", file_path.display(), e))?;
 
         let mut subnets = Vec::new();
 
@@ -234,7 +269,10 @@ impl IpMatchFromFile {
         }
 
         if subnets.is_empty() {
-            return Err(format!("No valid IP addresses found in {}", file_path));
+            return Err(format!(
+                "No valid IP addresses found in {}",
+                file_path.display()
+            ));
         }
 
         Ok(Self { subnets })
@@ -258,7 +296,8 @@ impl Operator for IpMatchFromFile {
 ///
 /// # Arguments
 ///
-/// * `file_path` - Path to file containing IP addresses (one per line)
+/// * `file_path` - Path to file containing IP addresses (one per line); a relative path
+///   is relative to the working directory
 ///
 /// # Examples
 ///
@@ -266,7 +305,7 @@ impl Operator for IpMatchFromFile {
 /// # use coraza::operators::ip_match_from_file;
 /// let op = ip_match_from_file("/etc/coraza/blocked-ips.txt").unwrap();
 /// ```
-pub fn ip_match_from_file(file_path: &str) -> Result<IpMatchFromFile, String> {
+pub fn ip_match_from_file(file_path: impl AsRef<Path>) -> Result<IpMatchFromFile, String> {
     IpMatchFromFile::new(file_path)
 }
 

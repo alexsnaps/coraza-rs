@@ -12,14 +12,23 @@
 //! 4. Extract directive name and options
 //! 5. Dispatch to directive handler
 
+use std::ops::RangeInclusive;
 use std::path::Path;
 use std::str::FromStr;
 
 use crate::config::WafConfig;
+use crate::operators::{Datasets, OperatorContext};
 use crate::rules::{Rule, RuleGroup};
 use crate::seclang::CompileError;
-use crate::seclang::rule_compiler::{compile_sec_action, compile_sec_marker, compile_sec_rule};
-use crate::types::{AuditEngineStatus, BodyLimitAction, RuleEngineStatus};
+use crate::seclang::parse_actions;
+use crate::seclang::rule_compiler::{
+    DefaultActions, apply_actions, compile_sec_action_in, compile_sec_marker, compile_sec_rule_in,
+};
+use crate::seclang::variable_parser::VariableList;
+use crate::types::{
+    AuditEngineStatus, AuditLogFormat, AuditLogType, BodyLimitAction, RuleEngineStatus,
+    parse_audit_log_parts,
+};
 use crate::waf::{ConfigError, Waf, WafBuilder};
 
 /// Maximum include recursion depth to prevent DoS attacks
@@ -57,16 +66,51 @@ type ParseResult<T> = Result<T, ParseError>;
 /// the location to the message.
 type DirectiveFn = fn(&mut DirectiveOptions<'_>) -> Result<(), String>;
 
+/// A known directive, by whether it takes an argument.
+#[derive(Clone, Copy)]
+enum Directive {
+    /// Needs a non-empty argument
+    WithArgument(DirectiveFn),
+    /// Takes no argument
+    WithoutArgument(DirectiveFn),
+    /// Accepted with any argument and ignored, as Go Coraza does, so that configurations
+    /// written for it load
+    Ignored,
+}
+
 /// What a directive handler works on: its (non-empty) argument and the parser's output.
 struct DirectiveOptions<'a> {
     /// Directive options/arguments (everything after directive name)
     opts: String,
+
+    /// Directory of the file holding the directive (empty for a string), which relative
+    /// paths in it are relative to
+    config_dir: &'a Path,
+
+    /// File holding the directive (`_inline_` for a string)
+    file: &'a str,
+
+    /// Line of `file` the directive ends on
+    line: usize,
+
+    /// The directive as written, continuation lines joined
+    raw: &'a str,
 
     /// Mutable reference to WAF configuration
     waf_config: &'a mut WafConfig,
 
     /// Rules compiled so far, in file order
     rules: &'a mut RuleGroup,
+
+    /// Defaults that rules compiled from now on merge their actions with
+    default_actions: &'a mut DefaultActions,
+
+    /// Datasets defined so far
+    datasets: &'a mut Datasets,
+
+    /// Whether a directive that fails from now on is skipped rather than returned; see
+    /// [`Parser::skip_failed_directives`]
+    skip_failed: &'a mut bool,
 }
 
 /// Parser configuration and state
@@ -115,6 +159,12 @@ pub struct Parser {
     /// Rules compiled from SecRule, SecAction and SecMarker, in file order
     rules: RuleGroup,
 
+    /// Defaults set by SecDefaultAction so far
+    default_actions: DefaultActions,
+
+    /// Datasets defined by SecDataset so far
+    datasets: Datasets,
+
     /// Whether a failing directive is recorded in `skipped` instead of returned
     skip_failed: bool,
 
@@ -130,6 +180,8 @@ impl Parser {
             include_count: 0,
             waf_config: WafConfig::new(),
             rules: RuleGroup::new(),
+            default_actions: DefaultActions::default(),
+            datasets: Datasets::new(),
             skip_failed: false,
             skipped: Vec::new(),
         }
@@ -189,10 +241,11 @@ impl Parser {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn from_string(&mut self, data: &str) -> ParseResult<()> {
-        let old_file = self.state.current_file.clone();
-        self.state.current_file = "_inline_".to_string();
+        let old_file = std::mem::replace(&mut self.state.current_file, "_inline_".to_string());
+        let old_line = std::mem::take(&mut self.state.current_line);
         let result = self.parse_string(data);
         self.state.current_file = old_file;
+        self.state.current_line = old_line;
         result
     }
 
@@ -265,8 +318,10 @@ impl Parser {
                 self.error(format!("failed to read file '{}': {}", resolved_path, e))
             })?;
 
-            // Parse file content
+            // Parse file content, counting its lines from 1
+            let last_line = std::mem::take(&mut self.state.current_line);
             let result = self.parse_string(&content);
+            self.state.current_line = last_line;
 
             // Restore directory for sibling includes
             self.state.current_dir = last_dir;
@@ -384,18 +439,32 @@ impl Parser {
             return self.from_file(&opts);
         }
 
-        let Some(handler) = directive_handler(&directive_lower) else {
+        let Some(directive) = directive_handler(&directive_lower) else {
             return Err(self.error(format!("unknown directive \"{}\"", directive_name)));
         };
 
-        let result = if opts.is_empty() {
-            Err("requires an argument".to_string())
-        } else {
-            handler(&mut DirectiveOptions {
-                opts,
-                waf_config: &mut self.waf_config,
-                rules: &mut self.rules,
-            })
+        let result = match directive {
+            Directive::WithArgument(_) if opts.is_empty() => {
+                Err("requires an argument".to_string())
+            }
+            Directive::WithoutArgument(_) if !opts.is_empty() => {
+                Err("takes no argument".to_string())
+            }
+            Directive::Ignored => Ok(()),
+            Directive::WithArgument(handler) | Directive::WithoutArgument(handler) => {
+                handler(&mut DirectiveOptions {
+                    opts,
+                    config_dir: Path::new(&self.state.current_dir),
+                    file: &self.state.current_file,
+                    line: self.state.current_line,
+                    raw: line,
+                    waf_config: &mut self.waf_config,
+                    rules: &mut self.rules,
+                    default_actions: &mut self.default_actions,
+                    datasets: &mut self.datasets,
+                    skip_failed: &mut self.skip_failed,
+                })
+            }
         };
         result.map_err(|message| {
             self.error(format!(
@@ -424,37 +493,87 @@ impl Default for Parser {
 /// Handler of the directive with the given lowercase name; `None` if unknown.
 ///
 /// `Include` is handled by the parser itself.
-fn directive_handler(name: &str) -> Option<DirectiveFn> {
-    let handler: DirectiveFn = match name {
-        "secrule" => directive_sec_rule,
-        "secaction" => directive_sec_action,
-        "secmarker" => directive_sec_marker,
-        "secruleengine" => directive_sec_rule_engine,
-        "secrequestbodyaccess" => directive_sec_request_body_access,
-        "secresponsebodyaccess" => directive_sec_response_body_access,
-        "secrequestbodylimit" => directive_sec_request_body_limit,
-        "secrequestbodylimitaction" => directive_sec_request_body_limit_action,
-        "secdebugloglevel" => directive_sec_debug_log_level,
-        "secwebappid" => directive_sec_web_app_id,
-        "seccomponentsignature" => directive_sec_component_signature,
-        "secserversignature" => directive_sec_server_signature,
-        "secsensorid" => directive_sec_sensor_id,
-        "secresponsebodylimit" => directive_sec_response_body_limit,
-        "secresponsebodylimitaction" => directive_sec_response_body_limit_action,
-        "secrequestbodyinmemorylimit" => directive_sec_request_body_in_memory_limit,
-        "secrequestbodynofileslimit" => directive_sec_request_body_no_files_limit,
-        "secargumentslimit" => directive_sec_arguments_limit,
-        "secuploaddir" => directive_sec_upload_dir,
-        "secuploadfilelimit" => directive_sec_upload_file_limit,
-        "secuploadfilemode" => directive_sec_upload_file_mode,
-        "secuploadkeepfiles" => directive_sec_upload_keep_files,
-        "secauditengine" => directive_sec_audit_engine,
-        "secauditlog" => directive_sec_audit_log,
-        "secdatadir" => directive_sec_data_dir,
-        "seccollectiontimeout" => directive_sec_collection_timeout,
+fn directive_handler(name: &str) -> Option<Directive> {
+    use Directive::{Ignored, WithArgument, WithoutArgument};
+    let directive = match name {
+        "secrule" => WithArgument(directive_sec_rule),
+        "secaction" => WithArgument(directive_sec_action),
+        "secmarker" => WithArgument(directive_sec_marker),
+        "secdefaultaction" => WithArgument(directive_sec_default_action),
+        "secdataset" => WithArgument(directive_sec_dataset),
+        "secruleremovebyid" => WithArgument(directive_sec_rule_remove_by_id),
+        "secruleremovebymsg" => WithArgument(directive_sec_rule_remove_by_msg),
+        "secruleremovebytag" => WithArgument(directive_sec_rule_remove_by_tag),
+        "secruleupdateactionbyid" => WithArgument(directive_sec_rule_update_action_by_id),
+        "secruleupdatetargetbyid" => WithArgument(directive_sec_rule_update_target_by_id),
+        "secruleupdatetargetbytag" => WithArgument(directive_sec_rule_update_target_by_tag),
+        "secruleengine" => WithArgument(directive_sec_rule_engine),
+        "secrequestbodyaccess" => WithArgument(directive_sec_request_body_access),
+        "secresponsebodyaccess" => WithArgument(directive_sec_response_body_access),
+        "secrequestbodylimit" => WithArgument(directive_sec_request_body_limit),
+        "secrequestbodylimitaction" => WithArgument(directive_sec_request_body_limit_action),
+        "secdebugloglevel" => WithArgument(directive_sec_debug_log_level),
+        "secwebappid" => WithArgument(directive_sec_web_app_id),
+        "seccomponentsignature" => WithArgument(directive_sec_component_signature),
+        "secserversignature" => WithArgument(directive_sec_server_signature),
+        "secsensorid" => WithArgument(directive_sec_sensor_id),
+        "secresponsebodylimit" => WithArgument(directive_sec_response_body_limit),
+        "secresponsebodylimitaction" => WithArgument(directive_sec_response_body_limit_action),
+        "secrequestbodyinmemorylimit" => WithArgument(directive_sec_request_body_in_memory_limit),
+        "secrequestbodynofileslimit" => WithArgument(directive_sec_request_body_no_files_limit),
+        "secargumentslimit" => WithArgument(directive_sec_arguments_limit),
+        "secuploaddir" => WithArgument(directive_sec_upload_dir),
+        "secuploadfilelimit" => WithArgument(directive_sec_upload_file_limit),
+        "secuploadfilemode" => WithArgument(directive_sec_upload_file_mode),
+        "secuploadkeepfiles" => WithArgument(directive_sec_upload_keep_files),
+        "secauditengine" => WithArgument(directive_sec_audit_engine),
+        "secauditlog" => WithArgument(directive_sec_audit_log),
+        "secauditlogformat" => WithArgument(directive_sec_audit_log_format),
+        "secauditlogparts" => WithArgument(directive_sec_audit_log_parts),
+        "secauditlogtype" => WithArgument(directive_sec_audit_log_type),
+        "secauditlogrelevantstatus" => WithArgument(directive_sec_audit_log_relevant_status),
+        "secrxprefilter" => WithArgument(directive_sec_rx_pre_filter),
+        "secrequestbodyjsondepthlimit" => WithArgument(directive_sec_request_body_json_depth_limit),
+        "secresponsebodyjsondepthlimit" => {
+            WithArgument(directive_sec_response_body_json_depth_limit)
+        }
+        "secresponsebodymimetype" => WithArgument(directive_sec_response_body_mime_type),
+        "secdatadir" => WithArgument(directive_sec_data_dir),
+        "seccollectiontimeout" => WithArgument(directive_sec_collection_timeout),
+        "secdebuglog" => WithArgument(directive_sec_debug_log),
+        "secauditlogdirmode" => WithArgument(directive_sec_audit_log_dir_mode),
+        "secauditlogfilemode" => WithArgument(directive_sec_audit_log_file_mode),
+        "secauditlogstoragedir" => WithArgument(directive_sec_audit_log_storage_dir),
+        "secignorerulecompilationerrors" => {
+            WithArgument(directive_sec_ignore_rule_compilation_errors)
+        }
+        "secremoterulesfailaction" => WithArgument(directive_sec_remote_rules_fail_action),
+        "secresponsebodymimetypesclear" => {
+            WithoutArgument(directive_sec_response_body_mime_types_clear)
+        }
+        "secremoterules" => WithArgument(directive_sec_remote_rules),
+        "secargumentseparator"
+        | "secconnengine"
+        | "secconnreadstatelimit"
+        | "secconnwritestatelimit"
+        | "seccookieformat"
+        | "secgsblookupdb"
+        | "sechashengine"
+        | "sechashkey"
+        | "sechashmethodpm"
+        | "sechashmethodrx"
+        | "sechashparam"
+        | "sechttpblkey"
+        | "secpcrematchlimit"
+        | "secpcrematchlimitrecursion"
+        | "secruleperftime"
+        | "secrulescript"
+        | "secruleupdatetargetbymsg"
+        | "sectmpdir"
+        | "secunicodemap" => Ignored,
         _ => return None,
     };
-    Some(handler)
+    Some(directive)
 }
 
 // ============================================================================
@@ -470,31 +589,199 @@ fn parse_boolean(value: &str) -> Result<bool, String> {
     }
 }
 
-/// Adds a compiled rule; fails on compile errors and duplicate ids.
+/// Adds a compiled rule, noting where it was written; fails on compile errors and
+/// duplicate ids.
 fn add_rule(
     options: &mut DirectiveOptions,
     rule: Result<Rule, CompileError>,
 ) -> Result<(), String> {
-    rule.map_err(|e| e.message)
-        .and_then(|rule| options.rules.add(rule))
+    let mut rule = rule.map_err(|e| e.message)?;
+    let metadata = rule.metadata_mut();
+    metadata.file = options.file.to_string();
+    metadata.line = options.line;
+    metadata.raw = options.raw.to_string();
+    options.rules.add(rule)
 }
 
 /// SecRule VARIABLES "OPERATOR" "ACTIONS"
 fn directive_sec_rule(options: &mut DirectiveOptions) -> Result<(), String> {
-    let rule = compile_sec_rule(&options.opts);
+    let context = OperatorContext {
+        base_dir: options.config_dir,
+        datasets: options.datasets,
+    };
+    let rule = compile_sec_rule_in(&options.opts, &context, options.default_actions);
     add_rule(options, rule)
 }
 
 /// SecAction "ACTIONS"
 fn directive_sec_action(options: &mut DirectiveOptions) -> Result<(), String> {
-    let rule = compile_sec_action(&options.opts);
+    let rule = compile_sec_action_in(&options.opts, options.default_actions);
     add_rule(options, rule)
+}
+
+/// SecDefaultAction "ACTIONS"
+///
+/// Sets the actions that rules of the phase named in ACTIONS, from here on, merge their
+/// own with; `block` takes the disruptive one.
+fn directive_sec_default_action(options: &mut DirectiveOptions) -> Result<(), String> {
+    options
+        .default_actions
+        .add(&options.opts)
+        .map_err(|e| e.message)
 }
 
 /// SecMarker LABEL
 fn directive_sec_marker(options: &mut DirectiveOptions) -> Result<(), String> {
     let rule = compile_sec_marker(&options.opts);
     add_rule(options, rule)
+}
+
+/// Splits `ARGUMENTS LAST` at its last argument, which may be double-quoted and then
+/// hold spaces. Quotes around either part are removed.
+fn split_last_argument(opts: &str) -> Option<(&str, &str)> {
+    let opts = opts.trim();
+    let (rest, last) = match opts.strip_suffix('"') {
+        Some(quoted) => quoted.rsplit_once('"')?,
+        None => opts.rsplit_once(char::is_whitespace)?,
+    };
+    let rest = rest.trim().trim_matches('"');
+    let last = last.trim_matches('"');
+    (!rest.is_empty() && !last.is_empty()).then_some((rest, last))
+}
+
+/// Parses a rule id (`942100`) or an inclusive range of them (`942100-942199`).
+fn parse_id_range(spec: &str) -> Result<RangeInclusive<i32>, String> {
+    let parse = |id: &str| {
+        id.parse::<i32>()
+            .map_err(|_| format!("invalid rule id or range: {}", spec))
+    };
+    let range = match spec.split_once('-') {
+        Some((start, end)) => parse(start)?..=parse(end)?,
+        None => parse(spec).map(|id| id..=id)?,
+    };
+    if range.is_empty() {
+        return Err(format!("invalid rule id range: {}", spec));
+    }
+    Ok(range)
+}
+
+/// SecRuleRemoveById ID|RANGE...
+///
+/// Removes the rules defined so far with the given ids or in the inclusive ranges.
+fn directive_sec_rule_remove_by_id(options: &mut DirectiveOptions) -> Result<(), String> {
+    for spec in options.opts.split_whitespace() {
+        let range = parse_id_range(spec)?;
+        options.rules.delete_by_range(*range.start(), *range.end());
+    }
+    Ok(())
+}
+
+/// SecRuleRemoveByMsg MSG
+///
+/// Removes the rules defined so far whose `msg` is MSG, as written.
+fn directive_sec_rule_remove_by_msg(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.rules.delete_by_msg(&options.opts);
+    Ok(())
+}
+
+/// SecRuleRemoveByTag TAG
+///
+/// Removes the rules defined so far tagged TAG.
+fn directive_sec_rule_remove_by_tag(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.rules.delete_by_tag(&options.opts);
+    Ok(())
+}
+
+/// SecRuleUpdateActionById ID|RANGE... "ACTIONS"
+///
+/// Applies ACTIONS to the rules with the given ids or in the given inclusive ranges, as
+/// if appended to each rule's own, without the defaults of `SecDefaultAction`: a
+/// disruptive action replaces the rule's. A single id must name a rule defined earlier.
+fn directive_sec_rule_update_action_by_id(options: &mut DirectiveOptions) -> Result<(), String> {
+    let (ids, actions) = split_last_argument(&options.opts)
+        .ok_or("syntax error: SecRuleUpdateActionById ID \"ACTIONS\"")?;
+    let actions = parse_actions(actions).map_err(|e| e.message)?;
+
+    for spec in ids.split_whitespace() {
+        let range = parse_id_range(spec)?;
+        let mut found = false;
+        for rule in options
+            .rules
+            .iter_mut()
+            .filter(|rule| range.contains(&rule.metadata().id))
+        {
+            apply_actions(rule, &actions).map_err(|e| e.message)?;
+            found = true;
+        }
+        if !found && range.start() == range.end() {
+            return Err(format!("rule {} not found", range.start()));
+        }
+    }
+    Ok(())
+}
+
+/// SecRuleUpdateTargetById ID|RANGE... "VARIABLES"
+///
+/// Adds VARIABLES to the rules with the given ids or in the given inclusive ranges, as
+/// if appended to each rule's own: `!ARGS:id` excludes a key. A single id must name a
+/// rule defined earlier.
+fn directive_sec_rule_update_target_by_id(options: &mut DirectiveOptions) -> Result<(), String> {
+    let (ids, variables) = split_last_argument(&options.opts)
+        .ok_or("syntax error: SecRuleUpdateTargetById ID \"VARIABLES\"")?;
+    let variables = VariableList::parse(variables).map_err(|e| e.message)?;
+
+    for spec in ids.split_whitespace() {
+        let range = parse_id_range(spec)?;
+        let mut found = false;
+        for rule in options
+            .rules
+            .iter_mut()
+            .filter(|rule| range.contains(&rule.metadata().id))
+        {
+            variables.apply_to(rule.variables_mut());
+            found = true;
+        }
+        if !found && range.start() == range.end() {
+            return Err(format!("rule {} not found", range.start()));
+        }
+    }
+    Ok(())
+}
+
+/// SecRuleUpdateTargetByTag TAG "VARIABLES"
+///
+/// Adds VARIABLES to every rule tagged TAG, as [`directive_sec_rule_update_target_by_id`]
+/// does.
+fn directive_sec_rule_update_target_by_tag(options: &mut DirectiveOptions) -> Result<(), String> {
+    let (tag, variables) = split_last_argument(&options.opts)
+        .ok_or("syntax error: SecRuleUpdateTargetByTag TAG \"VARIABLES\"")?;
+    let variables = VariableList::parse(variables).map_err(|e| e.message)?;
+
+    options
+        .rules
+        .update_by_tag(tag, |rule| variables.apply_to(rule.variables_mut()));
+    Ok(())
+}
+
+/// SecDataset NAME `ITEMS`
+///
+/// Defines (or replaces) dataset NAME: one item per line of ITEMS, between backticks
+/// and over several lines; blank lines and `#` comments are skipped.
+fn directive_sec_dataset(options: &mut DirectiveOptions) -> Result<(), String> {
+    let (name, items) = options
+        .opts
+        .split_once(char::is_whitespace)
+        .ok_or("syntax error: SecDataset NAME `ITEMS`")?;
+    let items = items
+        .trim()
+        .trim_matches('`')
+        .lines()
+        .map(str::trim)
+        .filter(|item| !item.is_empty() && !item.starts_with('#'))
+        .map(str::to_string)
+        .collect();
+    options.datasets.insert(name.to_string(), items);
+    Ok(())
 }
 
 /// SecRuleEngine On|Off|DetectionOnly
@@ -759,6 +1046,147 @@ fn directive_sec_audit_log(options: &mut DirectiveOptions) -> Result<(), String>
     Ok(())
 }
 
+/// SecAuditLogFormat Native|JSON|JSONLegacy|OCSF
+fn directive_sec_audit_log_format(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.audit_log_format =
+        AuditLogFormat::from_str(&options.opts).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// SecAuditLogParts PARTS, e.g. `ABCFHZ`
+fn directive_sec_audit_log_parts(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.audit_log_parts =
+        parse_audit_log_parts(&options.opts).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// SecAuditLogType Serial|Concurrent|HTTPS|Syslog
+fn directive_sec_audit_log_type(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.audit_log_type =
+        AuditLogType::from_str(&options.opts).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// SecAuditLogRelevantStatus REGEX
+fn directive_sec_audit_log_relevant_status(options: &mut DirectiveOptions) -> Result<(), String> {
+    regex::Regex::new(&options.opts).map_err(|e| format!("invalid regular expression: {e}"))?;
+    options.waf_config.audit_log_relevant_status = options.opts.clone();
+    Ok(())
+}
+
+/// SecRxPreFilter On|Off
+///
+/// In Go Coraza it lets `@rx` skip a regex that can't match, a speed-up only. The
+/// regex engine here does that on its own, so the setting is checked and has no effect.
+fn directive_sec_rx_pre_filter(options: &mut DirectiveOptions) -> Result<(), String> {
+    parse_boolean(&options.opts).map(|_| ())
+}
+
+/// A positive integer argument.
+fn parse_positive(opts: &str) -> Result<usize, String> {
+    match opts.parse::<usize>() {
+        Ok(value) if value > 0 => Ok(value),
+        _ => Err(format!("expected a positive integer, got: {}", opts)),
+    }
+}
+
+/// SecRequestBodyJsonDepthLimit LIMIT
+fn directive_sec_request_body_json_depth_limit(
+    options: &mut DirectiveOptions,
+) -> Result<(), String> {
+    options.waf_config.request_body_json_depth_limit = parse_positive(&options.opts)?;
+    Ok(())
+}
+
+/// SecResponseBodyJsonDepthLimit LIMIT
+fn directive_sec_response_body_json_depth_limit(
+    options: &mut DirectiveOptions,
+) -> Result<(), String> {
+    options.waf_config.response_body_json_depth_limit = parse_positive(&options.opts)?;
+    Ok(())
+}
+
+/// SecResponseBodyMimeType TYPE...
+///
+/// Sets the response content types whose body is inspected, replacing earlier ones.
+fn directive_sec_response_body_mime_type(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.response_body_mime_types = options
+        .opts
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    Ok(())
+}
+
+/// SecDebugLog PATH
+fn directive_sec_debug_log(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.debug_log = options.opts.clone();
+    Ok(())
+}
+
+/// An octal permission mode, e.g. `0640`.
+fn parse_mode(opts: &str) -> Result<u32, String> {
+    u32::from_str_radix(opts, 8).map_err(|e| format!("invalid file mode (expected octal): {}", e))
+}
+
+/// SecAuditLogDirMode MODE
+fn directive_sec_audit_log_dir_mode(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.audit_log_dir_mode = parse_mode(&options.opts)?;
+    Ok(())
+}
+
+/// SecAuditLogFileMode MODE
+fn directive_sec_audit_log_file_mode(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.audit_log_file_mode = parse_mode(&options.opts)?;
+    Ok(())
+}
+
+/// SecAuditLogStorageDir DIRECTORY
+fn directive_sec_audit_log_storage_dir(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.audit_log_storage_dir = options.opts.clone();
+    Ok(())
+}
+
+/// SecIgnoreRuleCompilationErrors On|Off
+///
+/// With `On`, later directives that fail are skipped, as with
+/// [`Parser::skip_failed_directives`]. Go Coraza records the setting but doesn't act on
+/// it.
+fn directive_sec_ignore_rule_compilation_errors(
+    options: &mut DirectiveOptions,
+) -> Result<(), String> {
+    *options.skip_failed = parse_boolean(&options.opts)?;
+    Ok(())
+}
+
+/// SecRemoteRulesFailAction Abort|Warn
+///
+/// Checked, and has no effect: `SecRemoteRules` isn't supported, as in Go Coraza.
+fn directive_sec_remote_rules_fail_action(options: &mut DirectiveOptions) -> Result<(), String> {
+    match options.opts.to_lowercase().as_str() {
+        "abort" | "warn" => Ok(()),
+        _ => Err(format!("expected Abort or Warn, got: {}", options.opts)),
+    }
+}
+
+/// SecRemoteRules KEY URL
+///
+/// Not supported, as in Go Coraza: loading rules over the network is left to the
+/// embedder.
+fn directive_sec_remote_rules(_options: &mut DirectiveOptions) -> Result<(), String> {
+    Err("not supported".to_string())
+}
+
+/// SecResponseBodyMimeTypesClear
+///
+/// Clears the response content types set by `SecResponseBodyMimeType`.
+fn directive_sec_response_body_mime_types_clear(
+    options: &mut DirectiveOptions,
+) -> Result<(), String> {
+    options.waf_config.response_body_mime_types.clear();
+    Ok(())
+}
+
 /// SecDataDir [directory]
 ///
 /// Sets the directory for storing data files.
@@ -783,6 +1211,30 @@ fn directive_sec_collection_timeout(options: &mut DirectiveOptions) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_split_last_argument() {
+        assert_eq!(split_last_argument("1 2 ARGS"), Some(("1 2", "ARGS")));
+        assert_eq!(
+            split_last_argument(r#"1 "!ARGS:a b""#),
+            Some(("1", "!ARGS:a b"))
+        );
+        // As left by the parser once it removed the quotes around the whole argument
+        assert_eq!(
+            split_last_argument(r#"tag" "!ARGS:a"#),
+            Some(("tag", "!ARGS:a"))
+        );
+        assert_eq!(split_last_argument("ARGS"), None);
+    }
+
+    #[test]
+    fn test_parse_id_range() {
+        assert_eq!(parse_id_range("5"), Ok(5..=5));
+        assert_eq!(parse_id_range("5-9"), Ok(5..=9));
+        assert!(parse_id_range("9-5").is_err());
+        assert!(parse_id_range("-5").is_err());
+        assert!(parse_id_range("a").is_err());
+    }
 
     #[test]
     fn test_parser_new() {
@@ -1560,7 +2012,7 @@ SecWebAppId production
         parser
             .from_string(
                 r#"
-                SecDefaultAction "phase:1,log,pass"
+                SecNoSuchDirective On
                 SecRule ARGS "@nosuchop x" "id:1"
                 SecRule ARGS "@contains attack" "id:2,phase:1,deny"
                 "#,

@@ -120,8 +120,10 @@ pub struct RuleMetadata {
     pub rev: String,
     /// Version string
     pub ver: String,
-    /// Maturity level (1-9)
+    /// Maturity level (1-9); 0 when unset
     pub maturity: u8,
+    /// Accuracy level (1-9); 0 when unset
+    pub accuracy: u8,
     /// Additional log data with macro expansion
     pub log_data: Option<Macro>,
     /// HTTP status code for blocking actions
@@ -143,6 +145,12 @@ pub struct RuleMetadata {
     pub sec_mark: Option<String>,
     /// Processing phase (1-5)
     pub phase: RulePhase,
+    /// File the rule was written in; empty for a rule not read from a file
+    pub file: String,
+    /// Line of `file` the rule's directive starts on; 0 when unknown
+    pub line: usize,
+    /// The rule's directive as written; empty for a rule not compiled from SecLang
+    pub raw: String,
 }
 
 impl RuleMetadata {
@@ -156,6 +164,7 @@ impl RuleMetadata {
             rev: String::new(),
             ver: String::new(),
             maturity: 0,
+            accuracy: 0,
             log_data: None,
             status: 0,
             log: false,
@@ -166,6 +175,9 @@ impl RuleMetadata {
             transformations: TransformationChain::new(),
             sec_mark: None,
             phase: RulePhase::RequestBody, // Default phase is 2 (request body)
+            file: String::new(),
+            line: 0,
+            raw: String::new(),
         }
     }
 }
@@ -236,6 +248,7 @@ impl Action {
             "rev" => Some(metadata::rev),
             "ver" => Some(metadata::ver),
             "maturity" => Some(metadata::maturity),
+            "accuracy" => Some(metadata::accuracy),
             "phase" => Some(metadata::phase),
             "log" => Some(logging::log),
             "nolog" => Some(logging::nolog),
@@ -310,8 +323,8 @@ impl Action {
         match self {
             Self::Deny(action) => action.evaluate(rule, tx),
             Self::Drop(action) => action.evaluate(rule, tx),
-            Self::Block(action) => action.evaluate(rule, tx),
-            Self::Pass(_) => {}
+            // `block` left in a rule (its phase has no defaults) does nothing
+            Self::Block(_) | Self::Pass(_) => {}
             Self::Allow(action) => action.evaluate(tx),
             Self::Redirect(action) => action.evaluate(rule, tx),
             Self::Skip(action) => action.evaluate(tx),

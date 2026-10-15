@@ -102,9 +102,12 @@ pub(super) fn expirevar(_rule: &mut RuleMetadata, data: &str) -> Result<(), Acti
 ///
 /// # Description
 ///
-/// Creates, removes, and updates environment variables that can be accessed by
-/// the implementation. The environment variable is set both in the process
-/// environment and in the ENV collection.
+/// Sets a variable of the transaction's ENV collection, for later rules and for the
+/// embedder to read.
+///
+/// Go Coraza also sets it in the process environment. This one doesn't: changing the
+/// environment of a process whose other threads may read it, as a server's do, is
+/// undefined behaviour (see `std::env::set_var`).
 ///
 /// # Arguments
 ///
@@ -152,19 +155,8 @@ impl SetenvAction {
     }
 
     pub fn evaluate(&self, tx: &mut Transaction) {
-        // Expand macro with transaction state
         let value = self.value.expand(Some(tx));
-
-        // Set OS environment variable (matches Go behavior)
-        // SAFETY: Setting environment variables is inherently unsafe due to potential
-        // race conditions with other threads reading the environment. However, this
-        // matches the Go implementation and is the expected behavior of the setenv action.
-        unsafe {
-            std::env::set_var(&self.key, &value);
-        }
-
-        // TODO: Also set in ENV collection when we add it to Transaction
-        // tx.env_mut().set(&self.key, &value);
+        tx.set_env(&self.key, value);
     }
 }
 
@@ -296,20 +288,19 @@ mod tests {
     }
 
     #[test]
-    fn test_setenv_evaluate() {
-        let action = SetenvAction::parse("TEST_VAR=test_value").unwrap();
+    fn test_setenv_evaluate_sets_env_not_the_process_environment() {
+        let action = SetenvAction::parse("CORAZA_SETENV_TEST=%{REQUEST_METHOD}").unwrap();
 
         let mut tx = Transaction::new("action-test");
+        tx.process_uri("/", "POST", "HTTP/1.1");
         action.evaluate(&mut tx);
 
-        // Verify environment variable was set
-        assert_eq!(std::env::var("TEST_VAR").unwrap(), "test_value");
-
-        // Clean up
-        // SAFETY: Removing environment variables after test cleanup
-        unsafe {
-            std::env::remove_var("TEST_VAR");
-        }
+        assert_eq!(
+            tx.get_variable(crate::RuleVariable::Env, Some("CORAZA_SETENV_TEST"))
+                .as_deref(),
+            Some("POST")
+        );
+        assert!(std::env::var_os("CORAZA_SETENV_TEST").is_none());
     }
 
     #[test]

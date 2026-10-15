@@ -8,10 +8,17 @@
 //! the global configuration or other parallel transactions.
 //!
 use crate::actions::{ActionError, RuleMetadata};
+use crate::body_processors::BodyProcessorKind;
+use crate::rules::VariableException;
 use crate::transaction::Transaction;
-use crate::types::{AuditEngineStatus, ParseValueError, RuleEngineStatus, RulePhase, RuleVariable};
+use crate::types::{
+    AuditEngineStatus, ParseValueError, RuleEngineStatus, RulePhase, RuleVariable,
+    apply_audit_log_parts,
+};
 use std::ops::RangeInclusive;
 use std::str::FromStr;
+
+use regex::RegexBuilder;
 
 /// A `ctl` command with its value, parsed when the rule is compiled.
 #[derive(Debug, Clone, PartialEq)]
@@ -23,6 +30,8 @@ enum CtlCommand {
     ResponseBodyAccess(bool),
     ResponseBodyLimit(i64),
     ForceResponseBodyVariable(bool),
+    RequestBodyProcessor(BodyProcessorKind),
+    ResponseBodyProcessor(BodyProcessorKind),
     /// Inclusive range of rule IDs; a single ID is a one-element range
     RuleRemoveById(RangeInclusive<i32>),
     RuleRemoveByTag(String),
@@ -30,18 +39,21 @@ enum CtlCommand {
     RuleRemoveTargetById(i32, RuleTarget),
     RuleRemoveTargetByTag(String, RuleTarget),
     RuleRemoveTargetByMsg(String, RuleTarget),
-    /// Accepted (and validated where possible) but not acted on yet: `auditEngine`,
-    /// `auditLogParts`, `debugLogLevel`, `requestBodyProcessor`, `responseBodyProcessor`,
-    /// `hashEngine`, `hashEnforcement`
-    NotImplemented,
+    AuditEngine(AuditEngineStatus),
+    /// A validated change to the parts: `+E`, `-E` or all of them (`ABCFHZ`)
+    AuditLogParts(String),
+    DebugLogLevel(u8),
+    /// `hashEngine` and `hashEnforcement`: accepted with no effect, as in Go Coraza
+    Unsupported,
 }
 
 /// A variable excluded from rules by the `ruleRemoveTarget*` commands.
 #[derive(Debug, Clone, PartialEq)]
 struct RuleTarget {
     variable: RuleVariable,
-    /// Lowercase key; empty excludes the whole collection
-    key: String,
+    /// The keys excluded: by name, empty for the whole collection, or by `/regex/`;
+    /// either matched whatever the key's case, as in Go Coraza
+    key: VariableException,
 }
 
 impl CtlCommand {
@@ -63,6 +75,8 @@ impl CtlCommand {
             "responseBodyAccess" => Self::ResponseBodyAccess(parse_on_off(value)?),
             "responseBodyLimit" => Self::ResponseBodyLimit(parse_limit(value)?),
             "forceResponseBodyVariable" => Self::ForceResponseBodyVariable(parse_on_off(value)?),
+            "requestBodyProcessor" => Self::RequestBodyProcessor(parse_processor(value)?),
+            "responseBodyProcessor" => Self::ResponseBodyProcessor(parse_processor(value)?),
             "ruleRemoveById" => Self::RuleRemoveById(parse_id_range(value)?),
             "ruleRemoveByTag" => Self::RuleRemoveByTag(value.to_string()),
             "ruleRemoveByMsg" => Self::RuleRemoveByMsg(value.to_string()),
@@ -78,22 +92,19 @@ impl CtlCommand {
                 let (msg, target) = split_target(value)?;
                 Self::RuleRemoveTargetByMsg(msg.to_string(), target)
             }
-            "auditEngine" => {
-                AuditEngineStatus::from_str(value).map_err(|e| invalid(e.to_string()))?;
-                Self::NotImplemented
+            "auditEngine" => Self::AuditEngine(
+                AuditEngineStatus::from_str(value).map_err(|e| invalid(e.to_string()))?,
+            ),
+            "auditLogParts" => {
+                // Validated against no parts; applied to the transaction's when evaluated
+                apply_audit_log_parts(&[], value).map_err(|e| invalid(e.to_string()))?;
+                Self::AuditLogParts(value.to_string())
             }
-            "debugLogLevel" => {
-                match value.parse::<u8>() {
-                    Ok(0..=9) => {}
-                    _ => return Err(invalid(format!("log level must be 0-9, got '{}'", value))),
-                }
-                Self::NotImplemented
-            }
-            "auditLogParts"
-            | "requestBodyProcessor"
-            | "responseBodyProcessor"
-            | "hashEngine"
-            | "hashEnforcement" => Self::NotImplemented,
+            "debugLogLevel" => match value.parse::<u8>() {
+                Ok(level @ 0..=9) => Self::DebugLogLevel(level),
+                _ => return Err(invalid(format!("log level must be 0-9, got '{}'", value))),
+            },
+            "hashEngine" | "hashEnforcement" => Self::Unsupported,
             _ => return Err(invalid(format!("unknown ctl command '{}'", name))),
         };
         Ok(command)
@@ -102,6 +113,12 @@ impl CtlCommand {
 
 fn invalid(message: String) -> ActionError {
     ActionError::InvalidArguments(message)
+}
+
+fn parse_processor(value: &str) -> Result<BodyProcessorKind, ActionError> {
+    value
+        .parse()
+        .map_err(|e: ParseValueError| invalid(e.to_string()))
 }
 
 fn parse_on_off(value: &str) -> Result<bool, ActionError> {
@@ -145,13 +162,17 @@ fn split_target(value: &str) -> Result<(&str, RuleTarget), ActionError> {
         .trim()
         .parse::<RuleVariable>()
         .map_err(|_| invalid(format!("unknown collection '{}'", collection.trim())))?;
-    Ok((
-        rules,
-        RuleTarget {
-            variable,
-            key: key.to_lowercase(),
-        },
-    ))
+    let key = key.trim();
+    let key = match key.strip_prefix('/').and_then(|key| key.strip_suffix('/')) {
+        Some("") => return Err(invalid("empty regex in the target's key".to_string())),
+        Some(pattern) => RegexBuilder::new(pattern)
+            .case_insensitive(true)
+            .build()
+            .map(VariableException::new_regex)
+            .map_err(|e| invalid(format!("invalid regex in the target's key: {e}")))?,
+        None => VariableException::new_string(key.to_lowercase()),
+    };
+    Ok((rules, RuleTarget { variable, key }))
 }
 
 /// `ctl` action - Change WAF configuration at runtime.
@@ -248,6 +269,16 @@ impl CtlAction {
             CtlCommand::ForceResponseBodyVariable(enabled) => {
                 tx.set_force_response_body_variable(*enabled);
             }
+            CtlCommand::RequestBodyProcessor(processor) => {
+                if before_phase(tx, RulePhase::RequestBody) {
+                    tx.set_request_body_processor(*processor);
+                }
+            }
+            CtlCommand::ResponseBodyProcessor(processor) => {
+                if before_phase(tx, RulePhase::ResponseBody) {
+                    tx.set_response_body_processor(*processor);
+                }
+            }
             CtlCommand::RuleRemoveById(ids) => {
                 for id in ids.clone() {
                     tx.remove_rule_by_id(id);
@@ -264,19 +295,26 @@ impl CtlAction {
                 }
             }
             CtlCommand::RuleRemoveTargetById(id, target) => {
-                tx.remove_rule_target_by_id(*id, target.variable, target.key.as_str());
+                tx.remove_rule_target(*id, target.variable, target.key.clone());
             }
             CtlCommand::RuleRemoveTargetByTag(tag, target) => {
                 for id in rule_ids(tx, |rule| rule.tags.contains(tag)) {
-                    tx.remove_rule_target_by_id(id, target.variable, target.key.as_str());
+                    tx.remove_rule_target(id, target.variable, target.key.clone());
                 }
             }
             CtlCommand::RuleRemoveTargetByMsg(msg, target) => {
                 for id in rule_ids(tx, |rule| has_msg(rule, msg)) {
-                    tx.remove_rule_target_by_id(id, target.variable, target.key.as_str());
+                    tx.remove_rule_target(id, target.variable, target.key.clone());
                 }
             }
-            CtlCommand::NotImplemented => {}
+            CtlCommand::AuditEngine(status) => tx.set_audit_engine(*status),
+            CtlCommand::AuditLogParts(change) => {
+                let parts = apply_audit_log_parts(tx.audit_log_parts(), change)
+                    .expect("audit log parts change validated when compiled");
+                tx.set_audit_log_parts(parts);
+            }
+            CtlCommand::DebugLogLevel(level) => tx.set_debug_log_level(*level),
+            CtlCommand::Unsupported => {}
         }
     }
 }
@@ -357,7 +395,7 @@ mod tests {
                 123,
                 RuleTarget {
                     variable: RuleVariable::Args,
-                    key: "user".to_string()
+                    key: VariableException::new_string("user".to_string())
                 }
             )
         );
@@ -367,22 +405,46 @@ mod tests {
                 "t".to_string(),
                 RuleTarget {
                     variable: RuleVariable::RequestFilename,
-                    key: String::new()
+                    key: VariableException::new_string(String::new())
                 }
             )
         );
     }
 
     #[test]
-    fn test_ctl_accepts_not_implemented_commands() {
-        for data in [
-            "auditEngine=RelevantOnly",
-            "auditLogParts=ABZ",
-            "requestBodyProcessor=XML",
-            "debugLogLevel=3",
-        ] {
-            assert_eq!(parse(data), CtlCommand::NotImplemented, "{}", data);
+    fn test_ctl_accepts_hash_commands_with_no_effect() {
+        for data in ["hashEngine=On", "hashEnforcement=On"] {
+            assert_eq!(parse(data), CtlCommand::Unsupported, "{}", data);
         }
+    }
+
+    #[test]
+    fn test_ctl_body_processors() {
+        assert_eq!(
+            parse("requestBodyProcessor=xml"),
+            CtlCommand::RequestBodyProcessor(BodyProcessorKind::Xml)
+        );
+
+        let mut tx = Transaction::new("ctl-processor");
+        CtlAction::parse("requestBodyProcessor=JSON")
+            .unwrap()
+            .evaluate(&mut tx);
+        assert_eq!(
+            tx.get_variable(RuleVariable::ReqbodyProcessor, None)
+                .as_deref(),
+            Some("JSON")
+        );
+
+        // Too late once the request body phase started
+        tx.process_request_body(b"").unwrap();
+        CtlAction::parse("requestBodyProcessor=XML")
+            .unwrap()
+            .evaluate(&mut tx);
+        assert_eq!(
+            tx.get_variable(RuleVariable::ReqbodyProcessor, None)
+                .as_deref(),
+            Some("JSON")
+        );
     }
 
     #[test]

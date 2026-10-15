@@ -9,7 +9,7 @@
 
 use super::{BodyProcessor, BodyProcessorError, BodyProcessorOptions};
 use crate::transaction::Transaction;
-use crate::transformations::url_decode;
+use crate::transformations::{text_from_bytes, url_decode};
 
 /// URL-encoded body processor for form data
 pub struct UrlencodedBodyProcessor;
@@ -25,10 +25,8 @@ impl BodyProcessor for UrlencodedBodyProcessor {
         let body_str = String::from_utf8_lossy(body).to_string();
         let body_len = body.len();
 
-        // Populate ARGS_POST, and ARGS with GET and POST arguments
         for (key, value) in parse_query(&body_str) {
-            tx.args_post_mut().add(&key, &value);
-            tx.args_mut().add(&key, &value);
+            tx.add_post_argument(&key, &value);
         }
 
         // Store REQUEST_BODY and REQUEST_BODY_LENGTH
@@ -58,7 +56,8 @@ pub(crate) fn parse_query(query: &str) -> impl Iterator<Item = (String, String)>
         .filter(|pair| !pair.is_empty())
         .map(|pair| {
             let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-            (url_decode(key).0, url_decode(value).0)
+            let decode = |text: &str| text_from_bytes(url_decode(text.as_bytes()).0);
+            (decode(key), decode(value))
         })
 }
 

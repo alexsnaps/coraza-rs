@@ -13,9 +13,9 @@
 //! - `XML:xpath` - XPath selection
 //! - `JSON:path` - JSON path selection
 
-use crate::rules::VariableSpec;
+use crate::rules::{VariableKey, VariableSpec};
 use crate::types::RuleVariable;
-use regex::Regex;
+use regex::RegexBuilder;
 use std::str::FromStr;
 
 use crate::seclang::CompileError;
@@ -73,22 +73,51 @@ struct ParsedVariable {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn parse_variables(input: &str) -> ParseResult<Vec<VariableSpec>> {
-    if input.is_empty() {
-        return Err(CompileError::new(
-            "empty variable specification".to_string(),
-        ));
+    let mut variables = Vec::new();
+    VariableList::parse(input)?.apply_to(&mut variables);
+    Ok(variables)
+}
+
+/// A parsed variable list (`ARGS|!ARGS:id|&TX:score`), to apply to a rule's variables.
+pub(crate) struct VariableList(Vec<Element>);
+
+impl VariableList {
+    pub(crate) fn parse(input: &str) -> ParseResult<Self> {
+        if input.is_empty() {
+            return Err(CompileError::new(
+                "empty variable specification".to_string(),
+            ));
+        }
+        parse_variable_list(input)?
+            .into_iter()
+            .map(build_element)
+            .collect::<ParseResult<_>>()
+            .map(Self)
     }
 
-    let mut result = Vec::new();
-    let mut parsed = parse_variable_list(input)?;
-
-    // Convert parsed variables to VariableSpec
-    for var in parsed.drain(..) {
-        let spec = build_variable_spec(var)?;
-        result.push(spec);
+    /// Adds the list's variables to `variables`, in order.
+    ///
+    /// A negated element (`!ARGS:id`) adds nothing: it excludes its key from every
+    /// variable of that collection in `variables` at that point, as in Go Coraza.
+    pub(crate) fn apply_to(&self, variables: &mut Vec<VariableSpec>) {
+        for element in &self.0 {
+            match element {
+                // Cloned, as one list may be applied to several rules
+                Element::Inspect(spec) => variables.push(spec.clone()),
+                Element::Exclude(variable, key) => {
+                    for spec in variables
+                        .iter_mut()
+                        .filter(|spec| spec.variable() == *variable)
+                    {
+                        match key {
+                            VariableKey::String(key) => spec.add_exception_string(key.clone()),
+                            VariableKey::Regex(key) => spec.add_exception_regex(key.clone()),
+                        }
+                    }
+                }
+            }
+        }
     }
-
-    Ok(result)
 }
 
 /// Parse a list of variables (handles pipe-separated syntax)
@@ -258,49 +287,50 @@ fn parse_variable_list(input: &str) -> ParseResult<Vec<ParsedVariable>> {
     Ok(vars)
 }
 
-/// Build VariableSpec from parsed variable
-fn build_variable_spec(var: ParsedVariable) -> ParseResult<VariableSpec> {
-    let mut spec = if let Some(key) = &var.key {
-        // Check if key is a regex (starts and ends with /)
-        if key.starts_with('/') && key.ends_with('/') && key.len() > 2 {
-            // Regex key
-            let pattern = &key[1..key.len() - 1];
-            let regex = Regex::new(pattern).map_err(|e| {
-                CompileError::new(format!("invalid regex pattern '{}': {}", pattern, e))
-            })?;
-            VariableSpec::new_regex(var.variable, regex)
-        } else {
-            // String key
-            VariableSpec::new_string(var.variable, key.clone())
-        }
-    } else {
-        // No key - match all
-        VariableSpec::new(var.variable)
+/// What one element of a variable list does to the rule's variables.
+enum Element {
+    /// A collection, or some of its keys, to inspect: `ARGS`, `ARGS:id`, `&ARGS`
+    Inspect(VariableSpec),
+    /// A key to leave out of the collection's other variables: `!ARGS:id`
+    Exclude(RuleVariable, VariableKey),
+}
+
+fn build_element(var: ParsedVariable) -> ParseResult<Element> {
+    let key = var
+        .key
+        .as_deref()
+        .map(|key| parse_key(var.variable, key))
+        .transpose()?;
+
+    if var.is_negation {
+        let key = key.ok_or_else(|| {
+            CompileError::new(format!("a negated variable needs a key: !{}", var.variable))
+        })?;
+        return Ok(Element::Exclude(var.variable, key));
+    }
+
+    let mut spec = match key {
+        Some(VariableKey::Regex(regex)) => VariableSpec::new_regex(var.variable, regex),
+        Some(VariableKey::String(key)) => VariableSpec::new_string(var.variable, key),
+        None => VariableSpec::new(var.variable),
     };
+    spec.set_count(var.is_count);
+    Ok(Element::Inspect(spec))
+}
 
-    // Set count flag
-    if var.is_count {
-        spec.set_count(true);
+/// A regex key for `/pattern/`, otherwise a string key, for `variable`.
+///
+/// The regex ignores case unless `variable`'s keys are case-sensitive: the others' are
+/// matched lowercase, as Go Coraza lowercases the pattern for them.
+fn parse_key(variable: RuleVariable, key: &str) -> ParseResult<VariableKey> {
+    match key.strip_prefix('/').and_then(|k| k.strip_suffix('/')) {
+        Some(pattern) if !pattern.is_empty() => RegexBuilder::new(pattern)
+            .case_insensitive(!variable.has_case_sensitive_keys())
+            .build()
+            .map(VariableKey::Regex)
+            .map_err(|e| CompileError::new(format!("invalid regex pattern '{}': {}", pattern, e))),
+        _ => Ok(VariableKey::String(key.to_string())),
     }
-
-    // Handle negation by adding exception
-    if var.is_negation
-        && let Some(key) = var.key
-    {
-        if key.starts_with('/') && key.ends_with('/') && key.len() > 2 {
-            // Regex exception
-            let pattern = &key[1..key.len() - 1];
-            let regex = Regex::new(pattern).map_err(|e| {
-                CompileError::new(format!("invalid regex pattern '{}': {}", pattern, e))
-            })?;
-            spec.add_exception_regex(regex);
-        } else {
-            // String exception
-            spec.add_exception_string(key);
-        }
-    }
-
-    Ok(spec)
 }
 
 #[cfg(test)]
@@ -333,9 +363,21 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_negation_variable() {
-        let vars = parse_variables("!ARGS:id").unwrap();
-        assert_eq!(vars.len(), 1);
+    fn test_parse_negation_excludes_from_earlier_variables() {
+        let vars = parse_variables("ARGS|ARGS_GET|ARGS:id|!ARGS:id").unwrap();
+        let exceptions: Vec<_> = vars.iter().map(|v| v.exception_count()).collect();
+        assert_eq!(exceptions, [1, 0, 1]);
+    }
+
+    #[test]
+    fn test_parse_negation_without_earlier_variable_adds_nothing() {
+        assert!(parse_variables("!ARGS:id").unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_negation_needs_a_key() {
+        let err = parse_variables("ARGS|!ARGS").unwrap_err();
+        assert!(err.message.contains("needs a key"), "{}", err.message);
     }
 
     #[test]
@@ -401,5 +443,38 @@ mod tests {
         // ARGS_GET:/(test\b)/|REQUEST_XML
         let vars = parse_variables("ARGS_GET:/(test\\b)/|REQUEST_XML").unwrap();
         assert_eq!(vars.len(), 2);
+    }
+
+    /// The keys `variables` selects in `tx`.
+    fn keys(variables: &str, tx: &crate::transaction::Transaction) -> Vec<String> {
+        let mut keys: Vec<String> = parse_variables(variables)
+            .unwrap()
+            .iter()
+            .flat_map(|spec| spec.get_matches(tx))
+            .map(|matched| matched.key)
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    #[test]
+    fn test_regex_key_case_follows_the_collection() {
+        let mut tx = crate::transaction::Transaction::new("test");
+        tx.request_headers_mut().add("X-Forwarded-For", "1.2.3.4");
+        tx.request_headers_mut().add("Host", "localhost");
+        tx.args_mut().add("Foo", "1");
+        tx.args_mut().add("foo", "2");
+
+        // Header names are case-insensitive, and so is a regex for them, as in Go
+        assert_eq!(
+            keys("REQUEST_HEADERS:/^X-FORWARDED/", &tx),
+            ["X-Forwarded-For"]
+        );
+        assert_eq!(
+            keys("REQUEST_HEADERS|!REQUEST_HEADERS:/^X-/", &tx),
+            ["Host"]
+        );
+        // Argument names are case-sensitive
+        assert_eq!(keys("ARGS:/^Foo$/", &tx), ["Foo"]);
     }
 }

@@ -236,6 +236,11 @@ impl RuleGroup {
         count
     }
 
+    /// The top-level rules, in order; chained rules are reached through their parent.
+    pub(crate) fn iter_mut(&mut self) -> std::slice::IterMut<'_, Rule> {
+        self.rules.iter_mut()
+    }
+
     /// Get all rules in the group.
     pub fn get_rules(&self) -> &[Rule] {
         &self.rules
@@ -317,7 +322,7 @@ impl RuleGroup {
                 continue;
             }
 
-            // Evaluate the rule
+            tx.reset_matched_vars();
             let _matches = rule.evaluate(tx, rule_engine_on);
         }
 

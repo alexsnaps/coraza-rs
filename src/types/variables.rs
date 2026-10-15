@@ -136,7 +136,7 @@ pub enum RuleVariable {
     Geo,
     /// REQUEST_COOKIES_NAMES - Names of request cookies (collection)
     RequestCookiesNames,
-    /// FILES_TMP_NAMES - Names of temporary uploaded files (collection)
+    /// FILES_TMPNAMES - Names of temporary uploaded files (collection)
     FilesTmpNames,
     /// ARGS_NAMES - Names of all arguments (POST and GET, collection)
     ArgsNames,
@@ -204,13 +204,13 @@ pub enum RuleVariable {
     Userid,
     /// IP - Kept for compatibility (unsupported)
     IP,
-    /// RESBODY_ERROR - Response body processor error flag
+    /// RES_BODY_ERROR - Response body processor error flag
     ResBodyError,
-    /// RESBODY_ERROR_MSG - Response body processor error message
+    /// RES_BODY_ERROR_MSG - Response body processor error message
     ResBodyErrorMsg,
-    /// RESBODY_PROCESSOR_ERROR - Response body processor error flag
+    /// RES_BODY_PROCESSOR_ERROR - Response body processor error flag
     ResBodyProcessorError,
-    /// RESBODY_PROCESSOR_ERROR_MSG - Response body processor error message
+    /// RES_BODY_PROCESSOR_ERROR_MSG - Response body processor error message
     ResBodyProcessorErrorMsg,
     /// TIME - Formatted time string (hour:minute:second)
     Time,
@@ -230,6 +230,18 @@ pub enum RuleVariable {
     TimeWday,
     /// TIME_YEAR - Current four-digit year
     TimeYear,
+    /// URI_PARSE_ERROR - 1 if the request URI could not be parsed, 0 otherwise
+    UriParseError,
+    /// ARGUMENTS_LIMIT_REACHED - 1 if arguments were dropped for going over
+    /// `SecArgumentsLimit`, 0 otherwise
+    ArgumentsLimitReached,
+    /// MULTIPART_DUPLICATE_PART_HEADER - 1 if a multipart part repeats a header or a
+    /// `Content-Disposition` parameter, 0 otherwise
+    MultipartDuplicatePartHeader,
+    /// MULTIPART_FILENAME_CHARSET - The charset of each part's `filename*`, by part name
+    MultipartFilenameCharset,
+    /// MULTIPART_FILENAME_LANGUAGE - The language of each part's `filename*`, by part name
+    MultipartFilenameLanguage,
 }
 
 /// Lookup table of all variable names in enum order.
@@ -291,10 +303,10 @@ const VARIABLE_NAMES: &[&str] = &[
     "REQUEST_COOKIES",
     "REQUEST_HEADERS",
     "RESPONSE_HEADERS",
-    "RESBODY_PROCESSOR",
+    "RES_BODY_PROCESSOR",
     "GEO",
     "REQUEST_COOKIES_NAMES",
-    "FILES_TMP_NAMES",
+    "FILES_TMPNAMES",
     "ARGS_NAMES",
     "ARGS_GET_NAMES",
     "ARGS_POST_NAMES",
@@ -327,10 +339,10 @@ const VARIABLE_NAMES: &[&str] = &[
     "SESSIONID",
     "USERID",
     "IP",
-    "RESBODY_ERROR",
-    "RESBODY_ERROR_MSG",
-    "RESBODY_PROCESSOR_ERROR",
-    "RESBODY_PROCESSOR_ERROR_MSG",
+    "RES_BODY_ERROR",
+    "RES_BODY_ERROR_MSG",
+    "RES_BODY_PROCESSOR_ERROR",
+    "RES_BODY_PROCESSOR_ERROR_MSG",
     "TIME",
     "TIME_DAY",
     "TIME_EPOCH",
@@ -340,6 +352,11 @@ const VARIABLE_NAMES: &[&str] = &[
     "TIME_SEC",
     "TIME_WDAY",
     "TIME_YEAR",
+    "URI_PARSE_ERROR",
+    "ARGUMENTS_LIMIT_REACHED",
+    "MULTIPART_DUPLICATE_PART_HEADER",
+    "MULTIPART_FILENAME_CHARSET",
+    "MULTIPART_FILENAME_LANGUAGE",
 ];
 
 impl RuleVariable {
@@ -421,6 +438,8 @@ impl RuleVariable {
                 | Self::FilesNames
                 | Self::FilesTmpContent
                 | Self::MultipartFilename
+                | Self::MultipartFilenameCharset
+                | Self::MultipartFilenameLanguage
                 | Self::MultipartName
                 | Self::MatchedVarsNames
                 | Self::MatchedVars
@@ -441,6 +460,45 @@ impl RuleVariable {
                 | Self::Env
                 | Self::IP
                 | Self::MultipartPartHeaders
+        )
+    }
+
+    /// Whether the variable's keys are case-sensitive: those of arguments, uploaded
+    /// files, multipart parts, XML and `ENV` are. Others (headers, cookies, `TX`, ...)
+    /// are matched whatever their case, by name and by regular expression, as in Go
+    /// Coraza.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::types::RuleVariable;
+    ///
+    /// assert!(RuleVariable::Args.has_case_sensitive_keys());
+    /// assert!(!RuleVariable::RequestHeaders.has_case_sensitive_keys());
+    /// ```
+    pub const fn has_case_sensitive_keys(&self) -> bool {
+        matches!(
+            self,
+            Self::Args
+                | Self::ArgsGet
+                | Self::ArgsPost
+                | Self::ArgsPath
+                | Self::ArgsNames
+                | Self::ArgsGetNames
+                | Self::ArgsPostNames
+                | Self::Files
+                | Self::FilesTmpNames
+                | Self::FilesSizes
+                | Self::FilesNames
+                | Self::MultipartPartHeaders
+                | Self::MultipartName
+                | Self::MultipartFilename
+                | Self::MultipartFilenameCharset
+                | Self::MultipartFilenameLanguage
+                | Self::RequestXML
+                | Self::ResponseArgs
+                | Self::ResponseXML
+                | Self::Env
         )
     }
 }
@@ -674,6 +732,11 @@ mod tests {
             RuleVariable::TimeSec,
             RuleVariable::TimeWday,
             RuleVariable::TimeYear,
+            RuleVariable::UriParseError,
+            RuleVariable::ArgumentsLimitReached,
+            RuleVariable::MultipartDuplicatePartHeader,
+            RuleVariable::MultipartFilenameCharset,
+            RuleVariable::MultipartFilenameLanguage,
         ];
 
         for variant in &all_variants {

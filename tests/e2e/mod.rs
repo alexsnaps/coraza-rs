@@ -473,7 +473,7 @@ impl TestServer {
         }
 
         // Phase 5: Logging
-        tx.process_logging();
+        tx.process_logging().unwrap();
 
         // Build successful response
         TestResponse {

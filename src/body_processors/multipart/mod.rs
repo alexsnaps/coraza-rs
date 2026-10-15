@@ -66,19 +66,36 @@ impl BodyProcessor for MultipartBodyProcessor {
 
         // Process each part
         for part in parts {
-            // Collect part headers into MULTIPART_PART_HEADERS
-            // Add Content-Disposition
-            let mut content_disp =
-                format!("Content-Disposition: form-data; name=\"{}\"", part.name);
-            if let Some(filename) = &part.filename {
-                content_disp.push_str(&format!("; filename=\"{}\"", filename));
+            if part.repeats_header {
+                tx.multipart_duplicate_part_header.set("1");
+                tx.multipart_strict_error.set("1");
             }
-            tx.multipart_part_headers.add(&part.name, &content_disp);
+            if part.invalid_quoting {
+                tx.multipart_invalid_quoting.set("1");
+                tx.multipart_strict_error.set("1");
+            }
 
-            // Add Content-Type if present
-            if let Some(content_type) = &part.content_type {
-                tx.multipart_part_headers
-                    .add(&part.name, &format!("Content-Type: {}", content_type));
+            // Each header, as Go Coraza lists it: its canonical name and its value as sent
+            for (name, value) in &part.headers {
+                let header = format!("{}: {value}", canonical_header_name(name));
+                tx.multipart_part_headers.add(&part.name, &header);
+            }
+            tx.multipart_name.add(&part.name, &part.name);
+            if let Some(filename) = &part.filename {
+                tx.multipart_filename.add(&part.name, filename);
+            }
+            // The name a backend reading `filename` rather than `filename*` would use
+            if let Some(alt_filename) = &part.alt_filename {
+                tx.multipart_filename.add(&part.name, alt_filename);
+            }
+            if let Some(encoding) = &part.filename_encoding {
+                tx.multipart_filename_charset
+                    .add(&part.name, &encoding.charset);
+                tx.multipart_filename_language
+                    .add(&part.name, &encoding.language);
+            }
+            if part.malformed_filename {
+                tx.multipart_strict_error.set("1");
             }
 
             // Check if this is a file upload (has filename)
@@ -97,10 +114,10 @@ impl BodyProcessor for MultipartBodyProcessor {
                 tx.files_sizes.set_index(filename, 0, &size.to_string());
                 tx.files_names.add(&part.name, &part.name);
             } else {
-                // Regular form field - add to ARGS_POST
-                let value = String::from_utf8_lossy(&part.data).to_string();
+                // Regular form field
+                let value = String::from_utf8_lossy(&part.data);
                 total_size += part.data.len() as u64;
-                tx.args_post_mut().add(&part.name, &value);
+                tx.add_post_argument(&part.name, &value);
             }
         }
 
@@ -139,6 +156,28 @@ fn save_to_temp(upload_dir: &str, data: &[u8]) -> Result<String, BodyProcessorEr
     file.write_all(data)?;
 
     Ok(temp_path.to_string_lossy().to_string())
+}
+
+/// `name` as Go writes a header name (`net/textproto.CanonicalMIMEHeaderKey`): each
+/// letter that starts it or follows a `-` uppercase, the others lowercase; a name with
+/// a character a header name can't hold stays as it is.
+fn canonical_header_name(name: &str) -> String {
+    let is_token = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
+    if !name.chars().all(is_token) {
+        return name.to_string();
+    }
+    let mut starts_word = true;
+    name.chars()
+        .map(|c| {
+            let c = if starts_word {
+                c.to_ascii_uppercase()
+            } else {
+                c.to_ascii_lowercase()
+            };
+            starts_word = c == '-';
+            c
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -234,6 +273,35 @@ Content of a.txt.\r
 
         // Check multipart strict error not set on success
         assert_eq!(tx.multipart_strict_error.get(), "");
+    }
+
+    #[test]
+    fn test_multipart_part_headers_as_go_lists_them() {
+        // CRS 922120's test: each header, its name canonical and its value as sent
+        let payload = "--boundary\n\
+            Content-Disposition: form-data; name=\"flavors\"\n\
+            content-transfer-encoding: 8bit\n\
+            CoNtEnT-TyPe: text/plain; charset=utf-7\n\
+            \n\
+            Pineapple. Pizza.\n\
+            --boundary--\n";
+        let mut tx = Transaction::new("test");
+        let options = BodyProcessorOptions {
+            mime: "multipart/form-data; boundary=boundary".to_string(),
+            ..Default::default()
+        };
+        MultipartBodyProcessor
+            .process_request(payload.as_bytes(), &mut tx, &options)
+            .unwrap();
+
+        assert_eq!(
+            tx.multipart_part_headers.get("flavors"),
+            [
+                "Content-Disposition: form-data; name=\"flavors\"",
+                "Content-Transfer-Encoding: 8bit",
+                "Content-Type: text/plain; charset=utf-7",
+            ]
+        );
     }
 
     #[test]

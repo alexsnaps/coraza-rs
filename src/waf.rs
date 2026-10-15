@@ -6,14 +6,13 @@
 //! This module provides the main WAF struct that manages configuration,
 //! rule storage, and transaction creation.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::actions::Action;
+use crate::audit_log::AuditLogger;
 use crate::config::WafConfig;
 use crate::rules::{Rule, RuleGroup, VariableSpec};
 use crate::transaction::Transaction;
-use crate::types::RulePhase;
 use crate::utils::strings::random_string;
 
 /// Error type for configuration validation during WAF creation.
@@ -86,14 +85,14 @@ impl std::error::Error for WafError {}
 /// ```
 #[derive(Debug)]
 pub struct Waf {
-    /// Configuration settings
-    config: WafConfig,
+    /// Configuration settings, shared with transactions
+    config: Arc<WafConfig>,
 
     /// Rules in evaluation order, shared with transactions for CTL rule exclusion
     rules: Arc<RuleGroup>,
 
-    /// Default actions per phase
-    default_actions: HashMap<RulePhase, Vec<Action>>,
+    /// Where transactions write their audit log entries
+    audit_logger: Arc<AuditLogger>,
 }
 
 impl Waf {
@@ -154,12 +153,8 @@ impl Waf {
     pub fn new_transaction_with_id(&self, id: String) -> Transaction {
         let mut tx = Transaction::new(id);
 
-        // Inherit configuration from WAF
-        tx.set_rule_engine(self.config.rule_engine);
-        tx.set_request_body_access(self.config.request_body_access);
-        tx.set_request_body_limit(self.config.request_body_limit);
-        tx.set_response_body_access(self.config.response_body_access);
-        tx.set_response_body_limit(self.config.response_body_limit);
+        tx.set_config(Arc::clone(&self.config));
+        tx.set_audit_logger(Arc::clone(&self.audit_logger));
 
         // Share rules reference for CTL tag/msg-based exclusions
         tx.set_rules(Arc::clone(&self.rules));
@@ -202,16 +197,6 @@ impl Waf {
     pub fn find_rule_by_id(&self, id: i32) -> Option<&Rule> {
         self.rules.find_by_id(id)
     }
-
-    /// Gets default actions for a specific phase.
-    ///
-    /// Returns an empty slice if no default actions are set for the phase.
-    pub fn get_default_actions(&self, phase: RulePhase) -> &[Action] {
-        self.default_actions
-            .get(&phase)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
-    }
 }
 
 impl Default for Waf {
@@ -243,7 +228,6 @@ impl Default for Waf {
 pub struct WafBuilder {
     config: WafConfig,
     rules: RuleGroup,
-    default_actions: HashMap<RulePhase, Vec<Action>>,
 }
 
 impl WafBuilder {
@@ -254,11 +238,7 @@ impl WafBuilder {
 
     /// Creates a builder with the given configuration and rules, listed in file order.
     pub(crate) fn with_rules(config: WafConfig, rules: RuleGroup) -> Self {
-        Self {
-            config,
-            rules,
-            default_actions: HashMap::new(),
-        }
+        Self { config, rules }
     }
 
     /// Returns the configuration the WAF will be built with.
@@ -278,11 +258,12 @@ impl WafBuilder {
     /// Returns `ConfigError` if the configuration is invalid (see [`Waf::new`]).
     pub fn build(self) -> Result<Waf, ConfigError> {
         validate_config(&self.config)?;
+        let audit_logger = AuditLogger::open(&self.config).map_err(ConfigError::new)?;
 
         Ok(Waf {
-            config: self.config,
+            audit_logger: Arc::new(audit_logger),
+            config: Arc::new(self.config),
             rules: Arc::new(self.rules),
-            default_actions: self.default_actions,
         })
     }
 
@@ -404,14 +385,6 @@ impl WafBuilder {
     /// Finds a rule by its ID.
     pub fn find_rule_by_id(&self, id: i32) -> Option<&Rule> {
         self.rules.find_by_id(id)
-    }
-
-    /// Sets default actions for a specific phase.
-    ///
-    /// Default actions are applied to all rules in the phase that don't have
-    /// explicit actions defined.
-    pub fn set_default_actions(&mut self, phase: RulePhase, actions: Vec<Action>) {
-        self.default_actions.insert(phase, actions);
     }
 
     /// Replaces the variables (targets) of the rule with the given ID.
@@ -873,20 +846,6 @@ mod tests {
         assert!(builder.find_rule_by_id(2).is_none());
         assert!(builder.find_rule_by_id(3).is_none());
         assert!(builder.find_rule_by_id(4).is_none());
-    }
-
-    #[test]
-    fn test_waf_default_actions() {
-        use crate::RulePhase;
-
-        let mut builder = WafBuilder::default();
-
-        builder.set_default_actions(RulePhase::RequestHeaders, vec![]);
-        let waf = builder.build().unwrap();
-
-        // Verify they're stored; other phases still empty
-        assert_eq!(waf.get_default_actions(RulePhase::RequestHeaders).len(), 0);
-        assert_eq!(waf.get_default_actions(RulePhase::RequestBody).len(), 0);
     }
 
     #[test]

@@ -7,7 +7,8 @@
 //! This server:
 //! - Loads CRS rules via SecLang parser
 //! - Processes HTTP requests through the WAF (async)
-//! - Writes ModSecurity-compatible audit logs
+//! - Writes Go Coraza's error log line for every matched rule with `log`, as its CRS
+//!   test harness does, and answers `/reflect` as CRS's albedo test backend
 //! - Supports concurrent requests via tokio
 //!
 //! Usage:
@@ -132,120 +133,164 @@ async fn handle_request(
     waf: Arc<Waf>,
     logfile: Arc<Mutex<std::fs::File>>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    // Extract request details
-    let method = req.method().as_str();
+    let method = req.method().as_str().to_string();
 
     // CONNECT requests use authority (host:port) instead of path
-    let full_uri = if method == "CONNECT" {
-        // For CONNECT, use the authority if present, otherwise path
+    let full_uri = if req.method() == Method::CONNECT {
         req.uri()
             .authority()
             .map(|a| a.to_string())
             .unwrap_or_else(|| req.uri().path().to_string())
     } else {
-        // For other methods, use path + query
-        let uri = req.uri().path();
-        let query = req.uri().query().unwrap_or("");
-        if query.is_empty() {
-            uri.to_string()
-        } else {
-            format!("{}?{}", uri, query)
+        match req.uri().query() {
+            Some(query) => format!("{}?{}", req.uri().path(), query),
+            None => req.uri().path().to_string(),
         }
     };
+    let path = req.uri().path().to_string();
     let protocol = format!("{:?}", req.version());
 
     println!("📨 {} {} {}", method, full_uri, protocol);
 
-    // Extract marker header
     let marker_header = req
         .headers()
         .get("X-CRS-Test")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    // Create transaction
     let mut tx = waf.new_transaction();
-
-    // Process request URI
-    tx.process_uri(&full_uri, method, &protocol);
-
-    // Add headers
+    tx.process_uri(&full_uri, &method, &protocol);
+    // As Go's net/http hands them to Go Coraza: hyper lowercases names, and a value
+    // needn't be ASCII
     for (name, value) in req.headers() {
-        if let Ok(value_str) = value.to_str() {
-            tx.add_request_header(name.as_str(), value_str);
-        }
+        let value = String::from_utf8_lossy(value.as_bytes());
+        tx.add_request_header(&canonical_header_name(name.as_str()), &value);
     }
 
-    // Phase 1: Request Headers
-    if let Some(interruption) = tx.process_request_headers() {
-        write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref());
-        return Ok(create_blocking_response(&interruption));
-    }
-
-    // Read request body
-    let body_bytes = if req.method() == Method::POST || req.method() == Method::PUT {
-        match req.collect().await {
-            Ok(collected) => collected.to_bytes().to_vec(),
-            Err(e) => {
-                eprintln!("Error reading body: {}", e);
-                return Ok(create_error_response(500, "Internal Server Error"));
-            }
+    let body = match req.collect().await {
+        Ok(collected) => collected.to_bytes().to_vec(),
+        Err(e) => {
+            eprintln!("Error reading body: {}", e);
+            return Ok(create_error_response(500, "Internal Server Error"));
         }
-    } else {
-        Vec::new()
     };
 
-    // Phase 2: Request Body
-    if !body_bytes.is_empty() {
-        match tx.process_request_body(&body_bytes) {
-            Ok(Some(interruption)) => {
-                write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref());
-                return Ok(create_blocking_response(&interruption));
-            }
-            Err(e) => {
-                eprintln!("Error processing request body: {}", e);
-                return Ok(create_error_response(500, "Internal Server Error"));
-            }
-            Ok(None) => {}
-        }
+    let response = run_transaction(&mut tx, &path, &body);
+
+    // As Go Coraza's HTTP middleware does, whether or not the transaction was interrupted
+    if let Err(e) = tx.process_logging() {
+        eprintln!("failed to write the audit log: {e}");
     }
+    log_transaction(&logfile, &tx, marker_header.as_deref());
 
-    // Simulate response headers
-    tx.add_response_header("Content-Type", "text/plain");
-
-    // Phase 3: Response Headers
-    if let Some(interruption) = tx.process_response_headers(200, "HTTP/1.1") {
-        write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref());
-        return Ok(create_blocking_response(&interruption));
-    }
-
-    let response_body = b"OK";
-
-    // Phase 4: Response Body
-    if let Some(interruption) = tx.process_response_body(response_body) {
-        write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref());
-        return Ok(create_blocking_response(&interruption));
-    }
-
-    // Phase 5: Logging
-    tx.process_logging();
-
-    // Write audit log for successful requests (FTW needs this for correlation)
-    if let Some(marker_value) = marker_header.as_deref() {
-        write_request_log(&logfile, &tx, marker_value);
-    }
-
-    // Send successful response
-    Ok(create_success_response("OK"))
+    Ok(response)
 }
 
-/// Create a successful HTTP response
-fn create_success_response(body: &str) -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("Content-Type", "text/plain")
-        .body(Full::new(Bytes::from(body.to_string())))
-        .unwrap()
+/// Runs the request and response phases of `tx`, the backend answering in between (as
+/// CRS's albedo test backend does for `/reflect`); returns the backend's response, or
+/// the interruption's.
+fn run_transaction(
+    tx: &mut coraza::transaction::Transaction,
+    path: &str,
+    body: &[u8],
+) -> Response<Full<Bytes>> {
+    if let Some(interruption) = tx.process_request_headers() {
+        return create_blocking_response(&interruption);
+    }
+
+    match tx.process_request_body(body) {
+        Ok(Some(interruption)) => return create_blocking_response(&interruption),
+        Err(e) => {
+            eprintln!("Error processing request body: {}", e);
+            return create_error_response(500, "Internal Server Error");
+        }
+        Ok(None) => {}
+    }
+
+    let backend = BackendResponse::for_request(path, body);
+
+    // Go Coraza's CRS test harness sets this on every response
+    tx.add_response_header("Content-Type", "text/plain");
+    for (name, value) in &backend.headers {
+        tx.add_response_header(name, value);
+    }
+    if let Some(interruption) = tx.process_response_headers(backend.status, "HTTP/1.1") {
+        return create_blocking_response(&interruption);
+    }
+    if let Some(interruption) = tx.process_response_body(&backend.body) {
+        return create_blocking_response(&interruption);
+    }
+
+    let mut response = Response::builder()
+        .status(StatusCode::from_u16(backend.status).unwrap_or(StatusCode::OK))
+        .header("Content-Type", "text/plain");
+    for (name, value) in &backend.headers {
+        response = response.header(name, value);
+    }
+    response
+        .body(Full::new(Bytes::from(backend.body)))
+        .unwrap_or_else(|_| create_error_response(500, "Internal Server Error"))
+}
+
+/// What the backend behind the WAF answers.
+struct BackendResponse {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+impl BackendResponse {
+    /// `OK`; for `/reflect`, what the JSON request body asks for, as albedo answers:
+    /// `status`, `headers` and `body` (or base64 `encodedBody`).
+    fn for_request(path: &str, body: &[u8]) -> Self {
+        let ok = Self {
+            status: 200,
+            headers: Vec::new(),
+            body: b"OK".to_vec(),
+        };
+        if path != "/reflect" {
+            return ok;
+        }
+        let Ok(spec) = serde_json::from_slice::<serde_json::Value>(body) else {
+            return ok;
+        };
+        let body = match (spec["body"].as_str(), spec["encodedBody"].as_str()) {
+            (Some(body), _) => body.as_bytes().to_vec(),
+            (None, Some(encoded)) => coraza::transformations::base64_decode(encoded.as_bytes()).0,
+            (None, None) => Vec::new(),
+        };
+        let headers = spec["headers"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_string())))
+            .collect();
+        Self {
+            status: spec["status"]
+                .as_u64()
+                .and_then(|status| u16::try_from(status).ok())
+                .unwrap_or(200),
+            headers,
+            body,
+        }
+    }
+}
+
+/// Writes the FTW marker, if the request had one, and Go Coraza's error log line for
+/// each matched rule with `log`, as its CRS test harness does.
+fn log_transaction(
+    logfile: &Arc<Mutex<std::fs::File>>,
+    tx: &coraza::transaction::Transaction,
+    marker: Option<&str>,
+) {
+    let mut file = logfile.lock().unwrap();
+    if let Some(marker) = marker {
+        let _ = writeln!(file, "[X-CRS-Test \"{}\"]", marker);
+    }
+    for matched in tx.matched_rules().iter().filter(|m| m.rule.log) {
+        let _ = writeln!(file, "{}", matched.error_log());
+    }
+    let _ = file.flush();
 }
 
 /// Create an error HTTP response
@@ -272,63 +317,27 @@ fn create_blocking_response(
         .unwrap()
 }
 
+/// `name` as Go's net/http writes a header name: each letter that starts it or follows
+/// a `-` uppercase, the others lowercase.
+fn canonical_header_name(name: &str) -> String {
+    let mut starts_word = true;
+    name.chars()
+        .map(|c| {
+            let c = if starts_word {
+                c.to_ascii_uppercase()
+            } else {
+                c.to_ascii_lowercase()
+            };
+            starts_word = c == '-';
+            c
+        })
+        .collect()
+}
+
 /// Get command line argument value
 fn get_arg(args: &[String], name: &str) -> Option<String> {
     args.iter()
         .position(|arg| arg == name)
         .and_then(|pos| args.get(pos + 1))
         .cloned()
-}
-
-/// Write ModSecurity-compatible audit log for rule triggers
-fn write_audit_log(
-    logfile: &Arc<Mutex<std::fs::File>>,
-    tx: &coraza::transaction::Transaction,
-    _interruption: &coraza::transaction::Interruption,
-    marker: Option<&str>,
-) {
-    let mut file = logfile.lock().unwrap();
-
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
-    // Write FTW marker header if present (for test correlation)
-    if let Some(marker_value) = marker {
-        let _ = writeln!(file, "[{}] [X-CRS-Test \"{}\"]", timestamp, marker_value);
-    }
-
-    // Write ALL matched rules (not just the final blocking one)
-    // This is critical for CRS test compatibility
-    for matched in tx.matched_rules() {
-        let _ = writeln!(
-            file,
-            "[{}] [id \"{}\"] [msg \"{}\"] [data \"{}\"] [severity \"{}\"]",
-            timestamp, matched.rule_id, matched.msg, matched.data, matched.severity
-        );
-    }
-
-    let _ = writeln!(file, "[{}] [tx_id \"{}\"]", timestamp, tx.id());
-    let _ = file.flush();
-}
-
-/// Write audit log for successful requests (no rule triggers)
-/// FTW needs this for test correlation even when no rules match
-fn write_request_log(
-    logfile: &Arc<Mutex<std::fs::File>>,
-    tx: &coraza::transaction::Transaction,
-    marker: &str,
-) {
-    let mut file = logfile.lock().unwrap();
-
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
-    // Write marker so FTW can correlate this request
-    let _ = writeln!(file, "[{}] [X-CRS-Test \"{}\"]", timestamp, marker);
-    let _ = writeln!(file, "[{}] [tx_id \"{}\"]", timestamp, tx.id());
-    let _ = file.flush();
 }

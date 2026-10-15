@@ -7,6 +7,7 @@
 //! They return boolean results indicating whether the match succeeded.
 
 pub mod detection;
+pub mod external;
 pub mod ip;
 pub mod macros;
 mod pattern;
@@ -14,19 +15,29 @@ mod simple;
 pub mod validation;
 
 pub use detection::{DetectSQLi, DetectXSS, detect_sqli, detect_xss};
-pub use ip::{IpMatch, IpMatchFromFile, ip_match, ip_match_from_file};
+pub use external::{InspectFile, Rbl, inspect_file, rbl};
+pub use ip::{
+    IpMatch, IpMatchFromDataset, IpMatchFromFile, ip_match, ip_match_from_dataset,
+    ip_match_from_file,
+};
 pub use macros::{Macro, MacroError};
 
+use std::collections::BTreeMap;
+use std::path::Path;
+
 use crate::transaction::Transaction;
-pub use pattern::{Pm, PmFromFile, Rx, StrMatch, Within, pm, pm_from_file, rx, strmatch, within};
+pub use pattern::{
+    Pm, PmFromDataset, PmFromFile, RestPath, Rx, StrMatch, Within, pm, pm_from_dataset,
+    pm_from_file, rest_path, rx, strmatch, within,
+};
 pub use simple::{
     BeginsWith, Contains, EndsWith, Eq, Ge, Gt, Le, Lt, StrEq, begins_with, contains, ends_with,
     eq, ge, gt, le, lt, streq,
 };
 pub use validation::{
-    NoMatch, UnconditionalMatch, ValidateByteRange, ValidateUrlEncoding, ValidateUtf8Encoding,
-    no_match, unconditional_match, validate_byte_range, validate_url_encoding,
-    validate_utf8_encoding,
+    NoMatch, UnconditionalMatch, ValidateByteRange, ValidateNid, ValidateUrlEncoding,
+    ValidateUtf8Encoding, no_match, unconditional_match, validate_byte_range, validate_nid,
+    validate_url_encoding, validate_utf8_encoding,
 };
 
 /// Trait for rule operators.
@@ -47,9 +58,34 @@ pub trait Operator {
     fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool;
 }
 
+/// Named lists of items (`SecDataset`), for `@pmFromDataset` and `@ipMatchFromDataset`.
+pub type Datasets = BTreeMap<String, Vec<String>>;
+
+/// What creating an operator may need besides its name and argument.
+#[derive(Debug, Clone, Copy)]
+pub struct OperatorContext<'a> {
+    /// Directory a relative file argument (of `@pmFromFile` and `@ipMatchFromFile`) is
+    /// relative to; empty for the working directory. SecLang rules use the directory of
+    /// the file they are in.
+    pub base_dir: &'a Path,
+
+    /// Datasets the `…FromDataset` operators can name
+    pub datasets: &'a Datasets,
+}
+
+impl Default for OperatorContext<'_> {
+    fn default() -> Self {
+        static NO_DATASETS: Datasets = BTreeMap::new();
+        Self {
+            base_dir: Path::new(""),
+            datasets: &NO_DATASETS,
+        }
+    }
+}
+
 /// Declares [`OperatorEnum`] from one table of operators: each row names the variant
 /// (and the type it wraps), its SecLang names (lowercase, without `@`), and a
-/// constructor from the operator's argument string.
+/// constructor from the operator's argument string and [`OperatorContext`].
 macro_rules! operators {
     ($($variant:ident: $($name:literal)|+ => $new:expr,)+) => {
         /// Any operator, for static dispatch.
@@ -66,17 +102,30 @@ macro_rules! operators {
 
         impl OperatorEnum {
             /// Creates the operator with SecLang name `name` (case-insensitive, without `@`),
-            /// e.g. `OperatorEnum::new("rx", "^admin")`.
+            /// e.g. `OperatorEnum::new("rx", "^admin")`, in the default [`OperatorContext`].
             ///
             /// # Errors
             ///
             /// Returns a message if the name is unknown or the argument is invalid for
             /// that operator.
             pub fn new(name: &str, argument: &str) -> Result<Self, String> {
+                Self::with_context(name, argument, &OperatorContext::default())
+            }
+
+            /// Like [`OperatorEnum::new`], in `context`.
+            ///
+            /// # Errors
+            ///
+            /// As [`OperatorEnum::new`].
+            pub fn with_context(
+                name: &str,
+                argument: &str,
+                context: &OperatorContext<'_>,
+            ) -> Result<Self, String> {
                 match name.to_ascii_lowercase().as_str() {
                     $($($name)|+ => {
-                        let new: fn(&str) -> Result<$variant, String> = $new;
-                        new(argument).map(Self::$variant)
+                        let new: fn(&str, &OperatorContext<'_>) -> Result<$variant, String> = $new;
+                        new(argument, context).map(Self::$variant)
                     })+
                     _ => Err(format!("unknown operator: {}", name)),
                 }
@@ -101,29 +150,38 @@ macro_rules! operators {
 }
 
 operators! {
-    Rx: "rx" => |arg| rx(arg).map_err(|e| e.to_string()),
-    Pm: "pm" => |arg| pm(arg).map_err(|e| e.to_string()),
-    PmFromFile: "pmfromfile" | "pmf" => pm_from_file,
-    StrMatch: "strmatch" => |arg| strmatch(arg).map_err(|e| e.to_string()),
-    Within: "within" => |arg| within(arg).map_err(|e| e.to_string()),
-    StrEq: "streq" => |arg| streq(arg).map_err(|e| e.to_string()),
-    Contains: "contains" => |arg| contains(arg).map_err(|e| e.to_string()),
-    BeginsWith: "beginswith" => |arg| begins_with(arg).map_err(|e| e.to_string()),
-    EndsWith: "endswith" => |arg| ends_with(arg).map_err(|e| e.to_string()),
-    Eq: "eq" => |arg| eq(arg).map_err(|e| e.to_string()),
-    Lt: "lt" => |arg| lt(arg).map_err(|e| e.to_string()),
-    Le: "le" => |arg| le(arg).map_err(|e| e.to_string()),
-    Gt: "gt" => |arg| gt(arg).map_err(|e| e.to_string()),
-    Ge: "ge" => |arg| ge(arg).map_err(|e| e.to_string()),
-    IpMatch: "ipmatch" => ip_match,
-    IpMatchFromFile: "ipmatchfromfile" | "ipmatchf" => ip_match_from_file,
-    ValidateByteRange: "validatebyterange" => validate_byte_range,
-    ValidateUrlEncoding: "validateurlencoding" => |_| Ok(validate_url_encoding()),
-    ValidateUtf8Encoding: "validateutf8encoding" => |_| Ok(validate_utf8_encoding()),
-    DetectSQLi: "detectsqli" => |_| Ok(detect_sqli()),
-    DetectXSS: "detectxss" => |_| Ok(detect_xss()),
-    UnconditionalMatch: "unconditionalmatch" => |_| Ok(unconditional_match()),
-    NoMatch: "nomatch" => |_| Ok(no_match()),
+    Rx: "rx" => |arg, _| rx(arg).map_err(|e| e.to_string()),
+    Pm: "pm" => |arg, _| pm(arg).map_err(|e| e.to_string()),
+    PmFromFile: "pmfromfile" | "pmf" => |arg, ctx| pm_from_file(ctx.base_dir.join(arg)),
+    PmFromDataset: "pmfromdataset" => |arg, ctx| pm_from_dataset(arg, ctx.datasets),
+    StrMatch: "strmatch" => |arg, _| strmatch(arg).map_err(|e| e.to_string()),
+    Within: "within" => |arg, _| within(arg).map_err(|e| e.to_string()),
+    StrEq: "streq" => |arg, _| streq(arg).map_err(|e| e.to_string()),
+    Contains: "contains" => |arg, _| contains(arg).map_err(|e| e.to_string()),
+    BeginsWith: "beginswith" => |arg, _| begins_with(arg).map_err(|e| e.to_string()),
+    EndsWith: "endswith" => |arg, _| ends_with(arg).map_err(|e| e.to_string()),
+    Eq: "eq" => |arg, _| eq(arg).map_err(|e| e.to_string()),
+    Lt: "lt" => |arg, _| lt(arg).map_err(|e| e.to_string()),
+    Le: "le" => |arg, _| le(arg).map_err(|e| e.to_string()),
+    Gt: "gt" => |arg, _| gt(arg).map_err(|e| e.to_string()),
+    Ge: "ge" => |arg, _| ge(arg).map_err(|e| e.to_string()),
+    IpMatch: "ipmatch" => |arg, _| ip_match(arg),
+    IpMatchFromFile: "ipmatchfromfile" | "ipmatchf" => |arg, ctx| {
+        ip_match_from_file(ctx.base_dir.join(arg))
+    },
+    IpMatchFromDataset: "ipmatchfromdataset" => |arg, ctx| ip_match_from_dataset(arg, ctx.datasets),
+    ValidateByteRange: "validatebyterange" => |arg, _| validate_byte_range(arg),
+    ValidateUrlEncoding: "validateurlencoding" => |_, _| Ok(validate_url_encoding()),
+    ValidateUtf8Encoding: "validateutf8encoding" => |_, _| Ok(validate_utf8_encoding()),
+    DetectSQLi: "detectsqli" => |_, _| Ok(detect_sqli()),
+    DetectXSS: "detectxss" => |_, _| Ok(detect_xss()),
+    // Go Coraza's @geoLookup matches unconditionally too
+    UnconditionalMatch: "unconditionalmatch" | "geolookup" => |_, _| Ok(unconditional_match()),
+    RestPath: "restpath" => |arg, _| rest_path(arg),
+    ValidateNid: "validatenid" => |arg, _| validate_nid(arg),
+    InspectFile: "inspectfile" => |arg, _| Ok(inspect_file(arg)),
+    Rbl: "rbl" => |arg, _| Ok(rbl(arg)),
+    NoMatch: "nomatch" => |_, _| Ok(no_match()),
 }
 
 #[cfg(test)]

@@ -83,7 +83,7 @@ impl From<io::Error> for BodyProcessorError {
 }
 
 /// Options passed to body processors
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BodyProcessorOptions {
     /// MIME type of the request body (e.g., "multipart/form-data; boundary=...")
     pub mime: String,
@@ -102,6 +102,23 @@ pub struct BodyProcessorOptions {
 
     /// Keep uploaded files after transaction
     pub keep_files: bool,
+
+    /// Deepest nesting of objects and arrays a JSON body may have
+    pub json_depth_limit: usize,
+}
+
+impl Default for BodyProcessorOptions {
+    fn default() -> Self {
+        Self {
+            mime: String::new(),
+            upload_dir: String::new(),
+            file_mode: 0,
+            dir_mode: 0,
+            file_limit: 0,
+            keep_files: false,
+            json_depth_limit: crate::config::DEFAULT_JSON_DEPTH_LIMIT,
+        }
+    }
 }
 
 /// Body processor trait for processing request and response bodies
@@ -162,40 +179,46 @@ pub trait BodyProcessor: Send + Sync {
     ) -> Result<(), BodyProcessorError>;
 }
 
-/// The built-in body processors.
+/// The built-in body processors, named as `REQBODY_PROCESSOR` and
+/// `ctl:requestBodyProcessor` name them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyProcessorKind {
-    /// Keeps the body as-is (`REQUEST_BODY` only)
+    /// Keeps the body as-is (`REQUEST_BODY` only): `RAW`
     Raw,
-    /// `application/x-www-form-urlencoded`
+    /// `application/x-www-form-urlencoded`: `URLENCODED`
     UrlEncoded,
-    /// `multipart/form-data`
+    /// `multipart/form-data`: `MULTIPART`
     Multipart,
-    /// `application/json`
+    /// JSON: `JSON`
     Json,
-    /// `application/xml`, `text/xml`
+    /// XML: `XML`
     Xml,
 }
 
 impl BodyProcessorKind {
-    /// The processor for a request `Content-Type` value, matched by case-insensitive
-    /// prefix (as in Go Coraza); `None` if no processor parses that content type.
+    /// The processor a request `Content-Type` value selects, matched by
+    /// case-insensitive prefix: urlencoded and multipart only. As in Go Coraza, JSON
+    /// and XML bodies need `ctl:requestBodyProcessor`.
     pub fn for_content_type(content_type: &str) -> Option<Self> {
-        const BY_PREFIX: [(&str, BodyProcessorKind); 5] = [
-            (
-                "application/x-www-form-urlencoded",
-                BodyProcessorKind::UrlEncoded,
-            ),
-            ("multipart/form-data", BodyProcessorKind::Multipart),
-            ("application/json", BodyProcessorKind::Json),
-            ("application/xml", BodyProcessorKind::Xml),
-            ("text/xml", BodyProcessorKind::Xml),
-        ];
-        let content_type = content_type.to_ascii_lowercase();
-        BY_PREFIX
-            .iter()
-            .find(|(prefix, _)| content_type.starts_with(prefix))
-            .map(|&(_, kind)| kind)
+        let content_type = content_type.trim().to_ascii_lowercase();
+        if content_type.starts_with("application/x-www-form-urlencoded") {
+            Some(Self::UrlEncoded)
+        } else if content_type.starts_with("multipart/form-data") {
+            Some(Self::Multipart)
+        } else {
+            None
+        }
+    }
+
+    /// The processor's name, e.g. `URLENCODED`.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Raw => "RAW",
+            Self::UrlEncoded => "URLENCODED",
+            Self::Multipart => "MULTIPART",
+            Self::Json => "JSON",
+            Self::Xml => "XML",
+        }
     }
 
     /// Parses a request body into `tx`; see [`BodyProcessor::process_request`].
@@ -237,6 +260,27 @@ impl BodyProcessorKind {
     }
 }
 
+impl std::str::FromStr for BodyProcessorKind {
+    type Err = crate::types::ParseValueError;
+
+    /// Parses a processor name, case-insensitive: `URLENCODED`, `MULTIPART`, `JSON`,
+    /// `XML` or `RAW`.
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        [
+            Self::Raw,
+            Self::UrlEncoded,
+            Self::Multipart,
+            Self::Json,
+            Self::Xml,
+        ]
+        .into_iter()
+        .find(|kind| kind.name().eq_ignore_ascii_case(name))
+        .ok_or_else(|| {
+            crate::types::ParseValueError::new("unknown body processor", name.to_string())
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,20 +288,12 @@ mod tests {
     #[test]
     fn for_content_type_matches_by_prefix_ignoring_case() {
         assert_eq!(
-            BodyProcessorKind::for_content_type("Application/JSON; charset=utf-8"),
-            Some(BodyProcessorKind::Json)
+            BodyProcessorKind::for_content_type("Application/X-WWW-Form-Urlencoded; charset=utf-8"),
+            Some(BodyProcessorKind::UrlEncoded)
         );
         assert_eq!(
             BodyProcessorKind::for_content_type("multipart/form-data; boundary=x"),
             Some(BodyProcessorKind::Multipart)
-        );
-        assert_eq!(
-            BodyProcessorKind::for_content_type("text/xml"),
-            Some(BodyProcessorKind::Xml)
-        );
-        assert_eq!(
-            BodyProcessorKind::for_content_type("application/json-patch+json"),
-            Some(BodyProcessorKind::Json)
         );
     }
 
@@ -265,5 +301,20 @@ mod tests {
     fn for_content_type_rejects_unparsed_types() {
         assert_eq!(BodyProcessorKind::for_content_type("text/plain"), None);
         assert_eq!(BodyProcessorKind::for_content_type(""), None);
+        // As in Go, JSON and XML need ctl:requestBodyProcessor
+        assert_eq!(
+            BodyProcessorKind::for_content_type("application/json"),
+            None
+        );
+        assert_eq!(BodyProcessorKind::for_content_type("text/xml"), None);
+    }
+
+    #[test]
+    fn names_round_trip() {
+        for name in ["RAW", "URLENCODED", "MULTIPART", "JSON", "XML"] {
+            let kind: BodyProcessorKind = name.to_lowercase().parse().unwrap();
+            assert_eq!(kind.name(), name);
+        }
+        assert!("YAML".parse::<BodyProcessorKind>().is_err());
     }
 }

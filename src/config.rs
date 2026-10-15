@@ -6,7 +6,18 @@
 //! [`WafConfig`] holds every setting a WAF instance can be configured with, whether
 //! set programmatically or by SecLang directives through [`crate::seclang::Parser`].
 
-use crate::types::{AuditEngineStatus, BodyLimitAction, RuleEngineStatus};
+use crate::types::{
+    AuditEngineStatus, AuditLogFormat, AuditLogPart, AuditLogParts, AuditLogType, BodyLimitAction,
+    RuleEngineStatus,
+};
+
+/// Default maximum number of arguments per collection (`SecArgumentsLimit`), as in Go
+/// Coraza.
+pub const DEFAULT_ARGUMENT_LIMIT: usize = 1000;
+
+/// Default deepest nesting of a JSON body (`SecRequestBodyJsonDepthLimit` and
+/// `SecResponseBodyJsonDepthLimit`), as in Go Coraza.
+pub const DEFAULT_JSON_DEPTH_LIMIT: usize = 1024;
 
 /// Configuration for a WAF instance.
 ///
@@ -58,11 +69,52 @@ pub struct WafConfig {
     /// What happens when the response body exceeds its limit (`SecResponseBodyLimitAction`).
     pub response_body_limit_action: BodyLimitAction,
 
+    /// Response content types, without parameters, whose body is inspected; none by
+    /// default, as in Go Coraza (`SecResponseBodyMimeType`). See
+    /// [`crate::transaction::Transaction::is_response_body_processable`].
+    pub response_body_mime_types: Vec<String>,
+
+    /// Deepest nesting of objects and arrays a JSON request body may have
+    /// (`SecRequestBodyJsonDepthLimit`).
+    pub request_body_json_depth_limit: usize,
+
+    /// Deepest nesting of objects and arrays a JSON response body may have
+    /// (`SecResponseBodyJsonDepthLimit`).
+    pub response_body_json_depth_limit: usize,
+
     /// Audit logging mode (`SecAuditEngine`).
     pub audit_engine: AuditEngineStatus,
 
     /// Path of the audit log file; empty when unset (`SecAuditLog`).
     pub audit_log: String,
+
+    // The library writes no audit log: the audit log settings are for the embedder.
+    /// Format of audit log entries (`SecAuditLogFormat`).
+    pub audit_log_format: AuditLogFormat,
+
+    /// Parts each audit log entry holds, `A` and `Z` included (`SecAuditLogParts`).
+    pub audit_log_parts: AuditLogParts,
+
+    /// Where audit log entries are written (`SecAuditLogType`).
+    pub audit_log_type: AuditLogType,
+
+    /// Regular expression of the response statuses that make a transaction relevant to
+    /// `SecAuditEngine RelevantOnly`; empty for none (`SecAuditLogRelevantStatus`).
+    pub audit_log_relevant_status: String,
+
+    /// Permission bits for directories of `Concurrent` audit logs, e.g. `0o755`
+    /// (`SecAuditLogDirMode`).
+    pub audit_log_dir_mode: u32,
+
+    /// Permission bits for audit log files, e.g. `0o644` (`SecAuditLogFileMode`).
+    pub audit_log_file_mode: u32,
+
+    /// Directory of `Concurrent` audit logs; empty when unset (`SecAuditLogStorageDir`).
+    pub audit_log_storage_dir: String,
+
+    /// Path of the debug log, for the embedder: the library writes none; empty when
+    /// unset (`SecDebugLog`).
+    pub debug_log: String,
 
     /// Lifetime of persistent collection entries, in seconds (`SecCollectionTimeout`).
     pub collection_timeout: i64,
@@ -113,12 +165,30 @@ impl Default for WafConfig {
             request_body_limit_action: BodyLimitAction::Reject,
             response_body_access: false,
             response_body_limit: 512 * 1024,
-            response_body_limit_action: BodyLimitAction::Reject,
+            response_body_limit_action: BodyLimitAction::ProcessPartial,
+            response_body_mime_types: Vec::new(),
+            request_body_json_depth_limit: DEFAULT_JSON_DEPTH_LIMIT,
+            response_body_json_depth_limit: DEFAULT_JSON_DEPTH_LIMIT,
             audit_engine: AuditEngineStatus::Off,
             audit_log: String::new(),
+            audit_log_format: AuditLogFormat::Native,
+            audit_log_parts: vec![
+                AuditLogPart::Header,
+                AuditLogPart::RequestHeaders,
+                AuditLogPart::RequestBody,
+                AuditLogPart::ResponseHeaders,
+                AuditLogPart::Trailer,
+                AuditLogPart::EndMarker,
+            ],
+            audit_log_type: AuditLogType::Serial,
+            audit_log_relevant_status: String::new(),
+            audit_log_dir_mode: 0o755,
+            audit_log_file_mode: 0o644,
+            audit_log_storage_dir: String::new(),
+            debug_log: String::new(),
             collection_timeout: 3600,
             debug_log_level: 0,
-            argument_limit: 1000,
+            argument_limit: DEFAULT_ARGUMENT_LIMIT,
             web_app_id: String::new(),
             sensor_id: String::new(),
             server_signature: String::new(),

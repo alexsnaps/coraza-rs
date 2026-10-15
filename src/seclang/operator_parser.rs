@@ -10,7 +10,7 @@
 //! - `pattern` - Default to @rx (implicit)
 //! - `!pattern` - Negated @rx (implicit)
 
-use crate::operators::OperatorEnum;
+use crate::operators::{OperatorContext, OperatorEnum};
 use crate::rules::RuleOperator;
 
 use crate::seclang::CompileError;
@@ -54,6 +54,14 @@ type ParseResult<T> = Result<T, CompileError>;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn parse_operator(input: &str) -> ParseResult<RuleOperator> {
+    parse_operator_in(input, &OperatorContext::default())
+}
+
+/// Like [`parse_operator`], creating the operator in `context`.
+pub(crate) fn parse_operator_in(
+    input: &str,
+    context: &OperatorContext<'_>,
+) -> ParseResult<RuleOperator> {
     // Normalize input to ensure it starts with @ or !@
     let normalized = normalize_operator(input);
 
@@ -66,7 +74,7 @@ pub fn parse_operator(input: &str) -> ParseResult<RuleOperator> {
     // Extract operator name without @ or !@ prefix
     let op_name = extract_operator_name(op_raw);
 
-    let operator = OperatorEnum::new(op_name, op_data)
+    let operator = OperatorEnum::with_context(op_name, op_data, context)
         .map_err(|e| CompileError::new(format!("failed to create @{} operator: {}", op_name, e)))?;
 
     Ok(RuleOperator::new(operator, op_raw, op_data))

@@ -4,19 +4,22 @@
 //! Transformation functions for WAF data processing.
 //!
 //! Transformations are functions that modify input data before it's passed to
-//! rule operators. They return:
-//! - The transformed string
+//! rule operators. They work on bytes, as in Go Coraza, so that a digest or a decoded
+//! escape such as `%ff` keeps its bytes for the next transformation. They return:
+//! - The transformed bytes
 //! - A boolean indicating if the data was changed
 //! - An optional error (for logging only, doesn't stop execution)
 
 pub mod complex;
 mod encoding;
 pub mod escape;
+mod html_entities;
 mod simple;
+mod unicode_bestfit;
 
 pub use complex::{
     cmd_line, html_entity_decode, normalise_path, normalise_path_win, remove_comments,
-    replace_comments,
+    remove_comments_char, replace_comments,
 };
 pub use encoding::{
     base64_decode, base64_decode_ext, base64_encode, hex_decode, hex_encode, length, md5_hash,
@@ -31,13 +34,37 @@ pub use simple::{
 /// Result type for transformation functions.
 ///
 /// The tuple contains:
-/// - `String`: The transformed data
+/// - `Vec<u8>`: The transformed data, which need not be UTF-8
 /// - `bool`: Whether the data was changed
 /// - `Option<TransformationError>`: Optional error (for logging only)
-pub type TransformationResult = (String, bool, Option<TransformationError>);
+pub type TransformationResult = (Vec<u8>, bool, Option<TransformationError>);
 
 /// A transformation function, as used in a [`crate::rules::TransformationChain`].
-pub type Transformation = fn(&str) -> TransformationResult;
+pub type Transformation = fn(&[u8]) -> TransformationResult;
+
+/// `bytes` as text: as they are if they are UTF-8, or with each invalid sequence
+/// replaced by U+FFFD.
+///
+/// Collection values and operators work on text, so the bytes a transformation chain
+/// produces become text here, once, for the operator.
+pub(crate) fn text_from_bytes(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes)
+        .unwrap_or_else(|invalid| String::from_utf8_lossy(invalid.as_bytes()).into_owned())
+}
+
+/// `text` with each byte that isn't part of a UTF-8 sequence replaced by U+FFFD, as Go
+/// does when it reads a string as characters (`for range`, `strings.Map`).
+fn chars_lossy(text: &[u8]) -> String {
+    let mut chars = String::with_capacity(text.len());
+    for chunk in text.utf8_chunks() {
+        chars.push_str(chunk.valid());
+        chars.extend(std::iter::repeat_n(
+            char::REPLACEMENT_CHARACTER,
+            chunk.invalid().len(),
+        ));
+    }
+    chars
+}
 
 /// Error type for transformation operations.
 ///
@@ -93,6 +120,7 @@ pub fn by_name(name: &str) -> Option<Transformation> {
         "normalisepath" | "normalizepath" => normalise_path,
         "normalisepathwin" | "normalizepathwin" => normalise_path_win,
         "removecomments" => remove_comments,
+        "removecommentschar" => remove_comments_char,
         "removenulls" => remove_nulls,
         "removewhitespace" => remove_whitespace,
         "replacecomments" => replace_comments,
@@ -111,6 +139,22 @@ pub fn by_name(name: &str) -> Option<Transformation> {
     Some(function)
 }
 
+/// `transformation` applied to `text`, its result as text, for tests of transformations
+/// whose output is UTF-8.
+///
+/// # Panics
+///
+/// If the output isn't UTF-8.
+#[cfg(test)]
+pub(crate) fn on_text(
+    transformation: Transformation,
+    text: &str,
+) -> (String, bool, Option<TransformationError>) {
+    let (output, changed, error) = transformation(text.as_bytes());
+    let output = String::from_utf8(output).expect("the transformation's output is UTF-8");
+    (output, changed, error)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,8 +162,16 @@ mod tests {
     #[test]
     fn by_name_is_case_insensitive() {
         let f = by_name("urlDecode").unwrap();
-        assert_eq!(f("a%20b").0, "a b");
+        assert_eq!(f(b"a%20b").0, b"a b");
         assert!(by_name("URLDECODE").is_some());
+    }
+
+    #[test]
+    fn chars_lossy_replaces_each_invalid_byte() {
+        assert_eq!(chars_lossy("é".as_bytes()), "é");
+        assert_eq!(chars_lossy(b"a\xffb"), "a\u{FFFD}b");
+        // A truncated sequence is one replacement per byte, as in Go, not one per sequence
+        assert_eq!(chars_lossy(b"\xf0\x9f\x98!"), "\u{FFFD}\u{FFFD}\u{FFFD}!");
     }
 
     #[test]

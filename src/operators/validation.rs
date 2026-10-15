@@ -375,9 +375,143 @@ pub fn validate_utf8_encoding() -> ValidateUtf8Encoding {
     ValidateUtf8Encoding
 }
 
+/// `@validateNid KIND REGEX`: finds national ids with REGEX and checks each, as Go
+/// Coraza does: `cl` for Chilean RUTs (their check digit), `us` for US social security
+/// numbers (their area, group and serial, and not all the same or consecutive digits).
+///
+/// Matches if one of the first 10 found is valid; each valid one is captured, at the
+/// index it was found at.
+#[derive(Debug, Clone)]
+pub struct ValidateNid {
+    kind: NidKind,
+    regex: regex::Regex,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum NidKind {
+    /// Chile
+    Cl,
+    /// United States
+    Us,
+}
+
+impl Operator for ValidateNid {
+    fn evaluate(&self, mut tx: Option<&mut Transaction>, input: &str) -> bool {
+        let mut valid = false;
+        for (index, found) in self.regex.find_iter(input).take(10).enumerate() {
+            let nid = found.as_str();
+            let checks = match self.kind {
+                NidKind::Cl => is_rut(nid),
+                NidKind::Us => is_ssn(nid),
+            };
+            if checks {
+                valid = true;
+                if let Some(tx) = tx.as_deref_mut() {
+                    tx.capture_field(index, nid);
+                }
+            }
+        }
+        valid
+    }
+}
+
+/// Creates a `@validateNid` operator from `KIND REGEX`.
+///
+/// # Errors
+///
+/// If KIND is neither `cl` nor `us`, or REGEX isn't a valid regular expression.
+pub fn validate_nid(argument: &str) -> Result<ValidateNid, String> {
+    let invalid = || format!("invalid @validateNid argument: {argument:?}");
+    let (kind, pattern) = argument.split_once(' ').ok_or_else(invalid)?;
+    let kind = match kind {
+        "cl" => NidKind::Cl,
+        "us" => NidKind::Us,
+        _ => return Err(invalid()),
+    };
+    let regex = regex::Regex::new(pattern).map_err(|e| format!("{}: {e}", invalid()))?;
+    Ok(ValidateNid { kind, regex })
+}
+
+/// Whether `nid` is a Chilean RUT whose last character is its check digit.
+fn is_rut(nid: &str) -> bool {
+    if nid.len() < 8 {
+        return false;
+    }
+    let nid: String = nid
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == 'k')
+        .collect();
+    let Some(check) = nid.chars().last() else {
+        return false;
+    };
+    let mut rut: u64 = nid[..nid.len() - 1].parse().unwrap_or(0);
+    let mut sum = 0;
+    let mut factor = 2;
+    while rut != 0 {
+        sum += rut % 10 * factor;
+        factor = if factor == 7 { 2 } else { factor + 1 };
+        rut /= 10;
+    }
+    let expected = match sum % 11 {
+        0 => '0',
+        1 => 'k',
+        remainder => char::from_digit((11 - remainder) as u32, 10).unwrap_or('?'),
+    };
+    expected == check
+}
+
+/// Whether `nid` is a plausible US social security number.
+fn is_ssn(nid: &str) -> bool {
+    let digits: Vec<u32> = nid.chars().filter_map(|c| c.to_digit(10)).collect();
+    if digits.len() < 9 {
+        return false;
+    }
+    let number = |range: std::ops::Range<usize>| {
+        digits[range]
+            .iter()
+            .fold(0, |number, digit| number * 10 + digit)
+    };
+    let (area, group, serial) = (number(0..3), number(3..5), number(5..9));
+    if area == 0 || group == 0 || serial == 0 || area >= 740 || area == 666 {
+        return false;
+    }
+    let all_equal = digits.windows(2).all(|pair| pair[0] == pair[1]);
+    let consecutive = digits.windows(2).all(|pair| pair[1] == pair[0] + 1);
+    !all_equal && !consecutive
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_rut() {
+        // Go Coraza's validate_nid_test.go
+        for rut in [
+            "11.111.111-1",
+            "16100407-3",
+            "8.492.655-8",
+            "84926558",
+            "111111111",
+            "5348281-3",
+            "10727393-k",
+            "10727393-K",
+        ] {
+            assert!(is_rut(rut), "{rut}");
+        }
+        for rut in [
+            "11.111.111-k",
+            "16100407-2",
+            "8.492.655-7",
+            "84926557",
+            "111111112",
+            "5348281-4",
+            "",
+        ] {
+            assert!(!is_rut(rut), "{rut}");
+        }
+    }
     use crate::transaction::Transaction;
 
     #[test]

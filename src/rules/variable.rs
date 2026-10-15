@@ -62,8 +62,9 @@ impl VariableException {
 
     /// Check if a key matches this exception.
     ///
-    /// Keys are compared case-insensitively.
-    fn matches(&self, key: &str) -> bool {
+    /// Keys are compared case-insensitively, as in Go Coraza; an empty name, which only
+    /// `ctl:ruleRemoveTarget*` gives, matches every key.
+    pub(crate) fn matches(&self, key: &str) -> bool {
         let key_lower = key.to_lowercase();
 
         if let Some(ref rx) = self.key_rx {
@@ -71,10 +72,18 @@ impl VariableException {
         }
 
         if let Some(ref s) = self.key_str {
-            return s.to_lowercase() == key_lower;
+            return s.is_empty() || s.to_lowercase() == key_lower;
         }
 
         false
+    }
+}
+
+/// Two exceptions are equal when they exclude by the same name, or the same pattern.
+impl PartialEq for VariableException {
+    fn eq(&self, other: &Self) -> bool {
+        self.key_str == other.key_str
+            && self.key_rx.as_ref().map(Regex::as_str) == other.key_rx.as_ref().map(Regex::as_str)
     }
 }
 
@@ -191,23 +200,45 @@ impl VariableSpec {
     /// Vector of MatchData containing the matched variable, key, and value.
     /// If count mode is enabled, returns a single MatchData with the count as the value.
     pub fn get_matches(&self, tx: &Transaction) -> Vec<MatchData> {
+        self.matches_excluding(tx, |_| false)
+    }
+
+    /// Like [`VariableSpec::get_matches`], for the rule `rule_id`: also without the keys
+    /// `ctl:ruleRemoveTarget*` removed from it in this transaction.
+    pub(crate) fn get_matches_for_rule(&self, tx: &Transaction, rule_id: i32) -> Vec<MatchData> {
+        self.matches_excluding(tx, |key| {
+            tx.is_rule_target_removed(rule_id, self.variable, key)
+        })
+    }
+
+    fn matches_excluding(
+        &self,
+        tx: &Transaction,
+        removed: impl Fn(&str) -> bool,
+    ) -> Vec<MatchData> {
         let Some(collection) = tx.collection(self.variable) else {
             return Vec::new();
         };
 
+        let select = |map: &crate::collection::Map| match &self.key {
+            Some(VariableKey::Regex(rx)) => map.find_regex(rx),
+            Some(VariableKey::String(key)) => map.find_string(key),
+            None => map.find_all(),
+        };
         // Extract matches based on key type; single-value variables have no keys
         let mut matches = match (collection, &self.key) {
-            (VariableCollection::Map(map), Some(VariableKey::Regex(rx))) => map.find_regex(rx),
-            (VariableCollection::Map(map), Some(VariableKey::String(key))) => map.find_string(key),
-            (VariableCollection::Map(map), None) => map.find_all(),
+            (VariableCollection::Map(map), _) => select(map),
+            (VariableCollection::Names(variable, map), _) => select(map)
+                .into_iter()
+                .map(|m| MatchData::new(variable, m.key.clone(), m.key))
+                .collect(),
             (VariableCollection::Single(single), None) => single.find_all(),
             (VariableCollection::Single(_), Some(_)) => Vec::new(),
         };
 
         // Filter out exceptions
-        if !self.exceptions.is_empty() {
-            matches.retain(|m| !self.exceptions.iter().any(|ex| ex.matches(&m.key)));
-        }
+        matches
+            .retain(|m| !self.exceptions.iter().any(|ex| ex.matches(&m.key)) && !removed(&m.key));
 
         // Return count or values
         if self.count {

@@ -6,3 +6,4 @@
 //! This module contains low-level utilities used throughout the WAF.
 
 pub mod strings;
+pub(crate) mod time;
