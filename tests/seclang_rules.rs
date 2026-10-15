@@ -316,3 +316,14 @@ fn data_files_are_found_next_to_the_config_naming_them() {
     let mut tx = request_with_arg(&waf, "ip", "10.1.2.3");
     assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(2));
 }
+
+#[test]
+fn negated_variables_exclude_keys_from_the_rest_of_the_rule() {
+    let waf = waf(r#"SecRule ARGS|!ARGS:id "@streq x" "id:1,phase:1,deny,status:403""#);
+
+    let mut tx = request_with_arg(&waf, "id", "x");
+    assert!(tx.process_request_headers().is_none());
+
+    let mut tx = request_with_arg(&waf, "other", "x");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+}

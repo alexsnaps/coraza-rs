@@ -23,6 +23,11 @@ Suggested order: 1 → 2 → 5, then 3 and 4. The first three items of 1 account
     directory of the rule's file; `@pmFromFile` and `@ipMatchFromFile` resolve a relative path against it, as Go
     does, and the hard-coded guesses are gone. Outside the parser (`OperatorEnum::new`, `compile_sec_rule`), a
     relative path stays relative to the working directory. The CRS load check now skips 73 directives.
+- [x] **Negated variables inside a rule.** Found while working on the next item: `!ARGS:id` became a variable of its
+  own that selected `id` and then excluded it, so it matched nothing, while the rule's `ARGS` still inspected `id`.
+  CRS's own exclusions, such as `REQUEST_COOKIES|!REQUEST_COOKIES:/__utm/` on 941100, had no effect.
+  - Done: a negated element excludes its key from the collection's earlier variables in the list, as Go's
+    `AddVariableNegation` does; one without a key is a compile error.
 - [ ] **`SecRuleUpdateTargetById` and `SecRuleUpdateTargetByTag`.** 55 skipped: all of CRS's false-positive
   exclusions in `REQUEST-999-COMMON-EXCEPTIONS-AFTER.conf`, such as `!REQUEST_COOKIES:/^_ga(?:_\w+)?$/` on 941100.
   - These add targets or exclusions to a rule. `WafBuilder::update_rule_variables_by_id` (`src/waf.rs:436`) replaces
