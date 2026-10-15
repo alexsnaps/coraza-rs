@@ -920,8 +920,8 @@ impl Transaction {
             (uri_without_anchor, "")
         };
 
-        // Set cleaned request URI (path only, without query string)
-        self.request_uri.set(path);
+        // The path and query string, as in ModSecurity: the request URI without fragment
+        self.request_uri.set(uri_without_anchor);
 
         // Extract basename (last component of path)
         if let Some(last_slash) = path.rfind(['/', '\\']) {
@@ -1552,8 +1552,8 @@ mod tests {
         let mut tx = Transaction::new("tx-010");
         tx.process_uri("/search?q=test&page=2", "POST", "HTTP/2.0");
 
-        // REQUEST_URI should be path only (without query string)
-        assert_eq!(tx.request_uri.get(), "/search");
+        // REQUEST_URI keeps the query string, as in ModSecurity and Go Coraza
+        assert_eq!(tx.request_uri.get(), "/search?q=test&page=2");
         assert_eq!(tx.request_filename.get(), "/search");
         assert_eq!(tx.request_basename.get(), "search");
         assert_eq!(tx.query_string.get(), "q=test&page=2");
@@ -1566,10 +1566,10 @@ mod tests {
     #[test]
     fn test_process_uri_with_anchor() {
         let mut tx = Transaction::new("tx-011");
-        tx.process_uri("/page#section", "GET", "HTTP/1.1");
+        tx.process_uri("/page?a=1#section", "GET", "HTTP/1.1");
 
-        assert_eq!(tx.request_uri_raw.get(), "/page#section");
-        assert_eq!(tx.request_uri.get(), "/page"); // Anchor removed
+        assert_eq!(tx.request_uri_raw.get(), "/page?a=1#section");
+        assert_eq!(tx.request_uri.get(), "/page?a=1"); // Anchor removed
     }
 
     #[test]

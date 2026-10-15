@@ -105,7 +105,7 @@ fn test_full_request_variable_population() {
     tx.add_request_header("Cookie", "session=abc123; user=admin");
 
     assert_eq!(tx.request_method(), "POST");
-    assert_eq!(tx.request_uri(), "/api/users");
+    assert_eq!(tx.request_uri(), "/api/users?id=123");
     assert_eq!(tx.request_protocol(), "HTTP/1.1");
     assert_eq!(tx.query_string(), "id=123");
     assert_eq!(tx.args_get().get("id"), vec!["123"]);
@@ -322,7 +322,7 @@ fn test_complete_transaction_flow() {
     tx.add_request_header("User-Agent", "curl/7.68.0");
 
     assert_eq!(tx.request_method(), "POST");
-    assert_eq!(tx.request_uri(), "/api/login");
+    assert_eq!(tx.request_uri(), "/api/login?redirect=/dashboard");
     assert_eq!(tx.args_get().get("redirect"), vec!["/dashboard"]);
 
     // 3. Request body phase with URL-encoded data

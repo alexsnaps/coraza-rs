@@ -9,7 +9,7 @@ Detection is not a gap: on the 335,284 inputs of libinjection's sample files (de
 same SQLi verdicts and fingerprints as libinjection-go v0.3.4, the version Go Coraza pins, and flags 32 more XSS inputs,
 none fewer.
 
-Suggested order: 1 → 2 → 5, then 3 and 4. The first three items of 1 account for 80 of the 93 skipped directives.
+Suggested order: 1 → 2 → 3 → 6, then 4 and 5. The first three items of 1 account for 80 of the 93 skipped directives.
 
 ## 1. CRS rules dropped at load (measured)
 
@@ -66,7 +66,33 @@ Suggested order: 1 → 2 → 5, then 3 and 4. The first three items of 1 account
   - The body parser is chosen by a prefix match on `Content-Type` instead. So rule 200006 of
     `coraza.conf-recommended`, which sends `application/*+json` bodies to the JSON parser, has no effect.
 
-## 3. Other missing directives
+## 3. Variables that parse but are never set
+
+Found while working on 1.4: the list in 5 compared only names. 65 variables parse, but `Transaction::collection`
+(`variable_storage!` in `src/transaction/mod.rs`) maps them to nothing, so a rule on them never matches and a macro
+naming them expands to nothing. CRS v4.30.0 uses the ones below.
+
+- [x] **`REQUEST_URI` held only the path.** Go and ModSecurity keep the query string (`/search?q=1`); every CRS rule
+  on `REQUEST_URI` saw less than it should.
+  - Done: `REQUEST_URI` is the request URI without its fragment.
+- [ ] **`XML`.** 354 uses, as `XML:/*` and `XML://@*` in most request rules. In Go it is the same collection as
+  `REQUEST_XML`, which the XML body processor fills.
+- [ ] **`MATCHED_VAR`, `MATCHED_VAR_NAME`, `MATCHED_VARS` and `MATCHED_VARS_NAMES`.** Mostly in `logdata`, but 13
+  chained rules inspect `MATCHED_VAR(S)`.
+- [ ] **The names variables:** `ARGS_NAMES` (190 uses), `REQUEST_COOKIES_NAMES` (165), `REQUEST_HEADERS_NAMES`,
+  `ARGS_GET_NAMES`, and the unused `ARGS_POST_NAMES` and `RESPONSE_HEADERS_NAMES`.
+- [ ] **`REQBODY_PROCESSOR`, `ARGS_COMBINED_SIZE`, `UNIQUE_ID` and `MULTIPART_INVALID_QUOTING`.**
+  - `REQBODY_PROCESSOR` drives 901340/901350 and three 920 rules.
+  - `UNIQUE_ID` drives CRS's sampling (901450).
+- [ ] **The rest, which CRS doesn't use.**
+  - `ARGS_PATH`, `AUTH_TYPE`, `DURATION`, `ENV`, `FILES_TMP_CONTENT`, `FULL_REQUEST`, `FULL_REQUEST_LENGTH`, `GEO`,
+    `HIGHEST_SEVERITY`, `INBOUND_DATA_ERROR`, `IP`, `JSON`, `OUTBOUND_DATA_ERROR`, `PATH_INFO`, `REMOTE_HOST`, `RULE`,
+    `SESSIONID`, `STATUS_LINE`, `URLENCODED_ERROR`, `USERID`.
+  - The other `MULTIPART_*` flags and `MULTIPART_FILENAME`/`MULTIPART_NAME`.
+  - `REQBODY_PROCESSOR_ERROR(_MSG)`, `RESBODY_*`.
+  - `TIME` and the `TIME_*` parts.
+
+## 4. Other missing directives
 
 Go Coraza has 69 `Sec*` directives; we have 26. Section 1 covers 11 of the 43 missing.
 
@@ -84,7 +110,7 @@ Go Coraza has 69 `Sec*` directives; we have 26. Section 1 covers 11 of the 43 mi
   `SecPcreMatchLimit`, `SecPcreMatchLimitRecursion`, `SecRulePerfTime`, `SecRuleScript`, `SecRuleUpdateTargetByMsg`,
   `SecTmpDir` and `SecUnicodeMap`. In Go, `SecRemoteRules` is an error ("not implemented").
 
-## 4. Operators, actions and names
+## 5. Operators, actions and names
 
 None of these is used by CRS v4.30.0.
 
@@ -98,7 +124,7 @@ None of these is used by CRS v4.30.0.
   - `FILES_TMPNAMES`: ours is `FILES_TMP_NAMES` (`src/types/variables.rs:297`).
   - `t:normalisePath` and `t:normalisePathWin`, which Go accepts alongside the `normalize` spellings.
 
-## 5. Measure
+## 6. Measure
 
 - [ ] **Load CRS with nothing skipped.** Re-run the load check above until `Parser::skipped()` is empty.
 - [ ] **Run CRS v4.30.0's FTW tests and record the pass rate.** Not run yet; `ftw-runner/` drives
