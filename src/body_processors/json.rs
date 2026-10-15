@@ -23,7 +23,6 @@ impl BodyProcessor for JsonBodyProcessor {
     ) -> Result<(), BodyProcessorError> {
         // Convert body to string
         let body_str = String::from_utf8_lossy(body).to_string();
-        let body_len = body.len();
 
         let json_value = parse_json(&body_str, options.json_depth_limit)?;
 
@@ -33,10 +32,6 @@ impl BodyProcessor for JsonBodyProcessor {
         for (key, value) in &flattened {
             tx.add_post_argument(key, value);
         }
-
-        // Store REQUEST_BODY and REQUEST_BODY_LENGTH
-        tx.request_body.set(body_str);
-        tx.request_body_length.set(body_len.to_string());
 
         Ok(())
     }
@@ -325,12 +320,9 @@ mod tests {
         assert_eq!(tx.args_post().get("json.username"), vec!["admin"]);
         assert_eq!(tx.args_post().get("json.password"), vec!["secret"]);
 
-        // Check REQUEST_BODY stored
-        assert_eq!(
-            tx.request_body.get(),
-            r#"{"username": "admin", "password": "secret"}"#
-        );
-        assert_eq!(tx.request_body_length.get(), "43");
+        // As in Go Coraza and ModSecurity, only URLENCODED and RAW set REQUEST_BODY
+        assert_eq!(tx.request_body.get(), "");
+        assert_eq!(tx.request_body_length.get(), "0");
     }
 
     #[test]
@@ -386,10 +378,9 @@ mod tests {
             .process_request(body, &mut tx, &BodyProcessorOptions::default())
             .unwrap();
 
-        // Empty object - no ARGS_POST entries (but REQUEST_BODY is set)
+        // Empty object - no ARGS_POST entries
         // Note: We can't check if collection is empty easily, but we can check specific keys don't exist
         assert!(tx.args_post().get("json").is_empty());
-        assert_eq!(tx.request_body.get(), "{}");
     }
 
     #[test]

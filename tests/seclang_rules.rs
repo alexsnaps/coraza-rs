@@ -171,6 +171,7 @@ fn rules_can_inspect_the_request_body() {
     "#);
 
     let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
     tx.process_request_headers();
     let interruption = tx.process_request_body(b"an attack payload").unwrap();
 
@@ -801,7 +802,7 @@ fn bodies_are_inspected_only_with_body_access() {
         ));
 
         let mut tx = waf.new_transaction();
-        tx.add_request_header("Content-Type", "text/plain");
+        tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
         tx.process_request_headers();
         let interruption = tx.process_request_body(b"a secret").unwrap();
         assert_eq!(
@@ -1073,6 +1074,7 @@ fn request_bodies_reaching_the_limit_are_rejected_or_cut() {
         ));
 
         let mut tx = waf.new_transaction();
+        tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
         tx.process_request_headers();
         let interruption = tx.process_request_body(b"0123456789abcdef").unwrap();
 

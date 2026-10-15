@@ -837,7 +837,12 @@ impl Transaction {
             request_line: Single::new(RuleVariable::RequestLine),
             query_string: Single::new(RuleVariable::QueryString),
             request_body: Single::new(RuleVariable::RequestBody),
-            request_body_length: Single::new(RuleVariable::RequestBodyLength),
+            // Set, with REQUEST_BODY, only by the URLENCODED and RAW body processors
+            request_body_length: {
+                let mut request_body_length = Single::new(RuleVariable::RequestBodyLength);
+                request_body_length.set("0");
+                request_body_length
+            },
             reqbody_error: flag(RuleVariable::ReqbodyError),
             reqbody_error_msg: Single::new(RuleVariable::ReqbodyErrorMsg),
             reqbody_processor: Single::new(RuleVariable::ReqbodyProcessor),
@@ -1749,11 +1754,6 @@ impl Transaction {
     /// Stores the request body in REQUEST_BODY and parses it with the processor
     /// REQBODY_PROCESSOR names, if any.
     fn inspect_request_body(&mut self, body: &[u8]) {
-        // Store raw body
-        let body_str = String::from_utf8_lossy(body).to_string();
-        self.request_body.set(&body_str);
-        self.request_body_length.set(body.len().to_string());
-
         // Get Content-Type to determine body processor
         let content_type_values = self.request_headers().get("content-type");
         let content_type = content_type_values
@@ -1792,10 +1792,11 @@ impl Transaction {
     /// Process request body with appropriate body processor.
     ///
     /// This method:
-    /// 1. Stores the raw body in REQUEST_BODY and REQUEST_BODY_LENGTH
-    /// 2. Determines the body processor from Content-Type
-    /// 3. Calls the appropriate body processor to parse the body
-    /// 4. Updates last_phase to RequestBody
+    /// 1. Takes the body processor `REQBODY_PROCESSOR` names (set from Content-Type, or
+    ///    by `ctl:requestBodyProcessor`)
+    /// 2. Calls it to parse the body; the URLENCODED and RAW processors also keep the
+    ///    body in REQUEST_BODY and REQUEST_BODY_LENGTH, as in Go Coraza and ModSecurity
+    /// 3. Updates last_phase to RequestBody
     ///
     /// Returns an interruption if a disruptive action was triggered.
     ///
@@ -2690,9 +2691,30 @@ value1\r\n\
 
         assert!(result.is_ok());
 
-        // Body is stored but not parsed
-        assert_eq!(tx.request_body.get(), "some data");
-        assert_eq!(tx.request_body_length.get(), "9");
+        // Without a body processor, as in Go Coraza and ModSecurity, the body is
+        // neither parsed nor kept in REQUEST_BODY
+        assert_eq!(tx.request_body.get(), "");
+        assert_eq!(tx.request_body_length.get(), "0");
+    }
+
+    #[test]
+    fn test_request_body_variable_only_from_urlencoded_and_raw() {
+        let body = br#"{"a":"b"}"#;
+        for (content_type, forced, request_body) in [
+            ("application/x-www-form-urlencoded", false, r#"{"a":"b"}"#),
+            ("text/plain", true, r#"{"a":"b"}"#),
+            ("text/plain", false, ""),
+            ("application/json", false, ""),
+        ] {
+            let mut tx = Transaction::new("tx");
+            tx.add_request_header("Content-Type", content_type);
+            tx.force_request_body_variable = forced;
+            tx.process_request_headers();
+            tx.process_request_body(body).unwrap();
+            assert_eq!(tx.request_body.get(), request_body, "{content_type}");
+            let length = if request_body.is_empty() { "0" } else { "9" };
+            assert_eq!(tx.request_body_length.get(), length, "{content_type}");
+        }
     }
 
     #[test]

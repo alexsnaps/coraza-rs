@@ -299,6 +299,11 @@ None of these is used by CRS v4.30.0.
   leaving `"zzz&auml` with its opening quote.
   - Done: as in Go Coraza, a `;` inside a quoted string doesn't end the parameter, and a backslash escapes only
     RFC 2045's special characters, as Go's `mime` package unquotes (`"C:\dev\x.txt"` keeps its backslashes).
+- [x] **`REQUEST_BODY` held every body.** Found by the FTW tests: the Java rules (944100 to 944210, about 30 tests)
+  fired on XML bodies whose element and attribute names hold the strings they look for, through `REQUEST_BODY`.
+  Go Coraza, like ModSecurity, sets `REQUEST_BODY` and `REQUEST_BODY_LENGTH` only in the URLENCODED and RAW body
+  processors, so not for XML, JSON or multipart bodies; CRS forces URLENCODED (901340) for bodies without one.
+  - Done: as in Go; `REQUEST_BODY_LENGTH` is `0` until then.
 - [ ] **Run CRS v4.30.0's FTW tests and record the pass rate.** Not run yet; `ftw-runner/` drives
   `examples/ftw_server_async.rs`.
   - Go Coraza's CI runs all 5,260 tests (`testing/coreruleset`). It ignores 7 (`.ftw.yml`) and changes the expected
