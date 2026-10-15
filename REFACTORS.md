@@ -90,7 +90,7 @@ probed bugs.
 - [ ] **Use a `match` on the lowercased name, next to the type, for every built-in set.** Keep a runtime registry
   only where plugins are actually needed.
   - Directives: `HashMap` rebuilt on every `Parser::new()` (`src/seclang/parser.rs:151`). **Done.**
-  - Actions: 33 one-line factories in a `OnceLock` map (`src/actions/mod.rs`).
+  - Actions: 32 one-line factories in a `OnceLock` map (`src/actions/mod.rs`). **Done.**
   - Operators: `match`, but the operator list is written in four places (`src/rules/operator.rs:21`, 23 `From`
     impls, `src/seclang/operator_parser.rs:179`, re-exports). `IpMatchFromFile` exists but is in neither the enum
     nor the parser. `ParsedOperator` (`operator_parser.rs:43`) duplicates `RuleOperator`.

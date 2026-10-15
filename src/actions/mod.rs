@@ -65,9 +65,7 @@ mod metadata;
 mod special;
 mod variables;
 
-use std::collections::HashMap;
 use std::fmt;
-use std::sync::OnceLock;
 
 use crate::operators::Macro;
 use crate::rules::TransformationChain;
@@ -296,170 +294,8 @@ pub trait Action: Send + Sync {
     fn action_type(&self) -> ActionType;
 }
 
-/// Action factory function type.
-///
-/// The registry stores factory functions that create new action instances.
+/// A function that creates a new action instance, as taken by [`register`].
 type ActionFactory = fn() -> Box<dyn Action>;
-
-/// Global action registry.
-static ACTION_REGISTRY: OnceLock<HashMap<String, ActionFactory>> = OnceLock::new();
-
-/// Helper functions to create action instances (for registry)
-fn create_id() -> Box<dyn Action> {
-    Box::new(IdAction)
-}
-fn create_msg() -> Box<dyn Action> {
-    Box::new(MsgAction)
-}
-fn create_tag() -> Box<dyn Action> {
-    Box::new(TagAction)
-}
-fn create_severity() -> Box<dyn Action> {
-    Box::new(SeverityAction)
-}
-fn create_rev() -> Box<dyn Action> {
-    Box::new(RevAction)
-}
-fn create_ver() -> Box<dyn Action> {
-    Box::new(VerAction)
-}
-fn create_maturity() -> Box<dyn Action> {
-    Box::new(MaturityAction)
-}
-fn create_phase() -> Box<dyn Action> {
-    Box::new(PhaseAction)
-}
-fn create_log() -> Box<dyn Action> {
-    Box::new(LogAction)
-}
-fn create_nolog() -> Box<dyn Action> {
-    Box::new(NologAction)
-}
-fn create_auditlog() -> Box<dyn Action> {
-    Box::new(AuditlogAction)
-}
-fn create_noauditlog() -> Box<dyn Action> {
-    Box::new(NoauditlogAction)
-}
-fn create_logdata() -> Box<dyn Action> {
-    Box::new(LogdataAction)
-}
-fn create_deny() -> Box<dyn Action> {
-    Box::new(DenyAction)
-}
-fn create_drop() -> Box<dyn Action> {
-    Box::new(DropAction)
-}
-fn create_allow() -> Box<dyn Action> {
-    Box::new(AllowAction::new())
-}
-fn create_block() -> Box<dyn Action> {
-    Box::new(BlockAction)
-}
-fn create_redirect() -> Box<dyn Action> {
-    Box::new(RedirectAction::new())
-}
-fn create_pass() -> Box<dyn Action> {
-    Box::new(PassAction)
-}
-fn create_setvar() -> Box<dyn Action> {
-    Box::new(SetvarAction::new())
-}
-fn create_chain() -> Box<dyn Action> {
-    Box::new(ChainAction)
-}
-fn create_skip() -> Box<dyn Action> {
-    Box::new(SkipAction::new())
-}
-fn create_skipafter() -> Box<dyn Action> {
-    Box::new(SkipAfterAction::new())
-}
-fn create_capture() -> Box<dyn Action> {
-    Box::new(CaptureAction)
-}
-fn create_multimatch() -> Box<dyn Action> {
-    Box::new(MultimatchAction)
-}
-fn create_status() -> Box<dyn Action> {
-    Box::new(StatusAction)
-}
-fn create_t() -> Box<dyn Action> {
-    Box::new(TAction)
-}
-fn create_ctl() -> Box<dyn Action> {
-    Box::new(CtlAction::new())
-}
-
-// Deferred action factories (from Phase 6, Step 10)
-
-fn create_exec() -> Box<dyn Action> {
-    Box::new(deferred::ExecAction::new())
-}
-
-fn create_expirevar() -> Box<dyn Action> {
-    Box::new(deferred::ExpirevarAction::new())
-}
-
-fn create_setenv() -> Box<dyn Action> {
-    Box::new(deferred::SetenvAction::new())
-}
-
-fn create_initcol() -> Box<dyn Action> {
-    Box::new(deferred::InitcolAction::new())
-}
-
-/// Initialize the action registry with built-in actions.
-fn init_registry() -> HashMap<String, ActionFactory> {
-    let mut registry = HashMap::new();
-
-    // Metadata actions
-    registry.insert("id".to_string(), create_id as ActionFactory);
-    registry.insert("msg".to_string(), create_msg as ActionFactory);
-    registry.insert("tag".to_string(), create_tag as ActionFactory);
-    registry.insert("severity".to_string(), create_severity as ActionFactory);
-    registry.insert("rev".to_string(), create_rev as ActionFactory);
-    registry.insert("ver".to_string(), create_ver as ActionFactory);
-    registry.insert("maturity".to_string(), create_maturity as ActionFactory);
-    registry.insert("phase".to_string(), create_phase as ActionFactory);
-
-    // Logging actions
-    registry.insert("log".to_string(), create_log as ActionFactory);
-    registry.insert("nolog".to_string(), create_nolog as ActionFactory);
-    registry.insert("auditlog".to_string(), create_auditlog as ActionFactory);
-    registry.insert("noauditlog".to_string(), create_noauditlog as ActionFactory);
-    registry.insert("logdata".to_string(), create_logdata as ActionFactory);
-
-    // Disruptive actions
-    registry.insert("deny".to_string(), create_deny as ActionFactory);
-    registry.insert("drop".to_string(), create_drop as ActionFactory);
-    registry.insert("allow".to_string(), create_allow as ActionFactory);
-    registry.insert("block".to_string(), create_block as ActionFactory);
-    registry.insert("redirect".to_string(), create_redirect as ActionFactory);
-    registry.insert("pass".to_string(), create_pass as ActionFactory);
-
-    // Variable manipulation actions
-    registry.insert("setvar".to_string(), create_setvar as ActionFactory);
-
-    // Flow control actions
-    registry.insert("chain".to_string(), create_chain as ActionFactory);
-    registry.insert("skip".to_string(), create_skip as ActionFactory);
-    registry.insert("skipafter".to_string(), create_skipafter as ActionFactory);
-
-    // Special actions
-    registry.insert("capture".to_string(), create_capture as ActionFactory);
-    registry.insert("multimatch".to_string(), create_multimatch as ActionFactory);
-    registry.insert("status".to_string(), create_status as ActionFactory);
-    registry.insert("t".to_string(), create_t as ActionFactory);
-    registry.insert("ctl".to_string(), create_ctl as ActionFactory);
-
-    // Deferred actions (from Phase 6)
-    registry.insert("exec".to_string(), create_exec as ActionFactory);
-    registry.insert("expirevar".to_string(), create_expirevar as ActionFactory);
-    registry.insert("setenv".to_string(), create_setenv as ActionFactory);
-    registry.insert("initcol".to_string(), create_initcol as ActionFactory);
-
-    registry
-}
 
 /// Register a new action in the global registry.
 ///
@@ -529,13 +365,42 @@ pub fn register(_name: &str, _factory: ActionFactory) {
 /// let action = get("deny").unwrap();
 /// ```
 pub fn get(name: &str) -> Result<Box<dyn Action>, ActionError> {
-    let registry = ACTION_REGISTRY.get_or_init(init_registry);
-    let name_lower = name.to_lowercase();
-
-    registry
-        .get(&name_lower)
-        .map(|factory| factory())
-        .ok_or_else(|| ActionError::UnknownAction(name.to_string()))
+    let action: Box<dyn Action> = match name.to_ascii_lowercase().as_str() {
+        "id" => Box::new(IdAction),
+        "msg" => Box::new(MsgAction),
+        "tag" => Box::new(TagAction),
+        "severity" => Box::new(SeverityAction),
+        "rev" => Box::new(RevAction),
+        "ver" => Box::new(VerAction),
+        "maturity" => Box::new(MaturityAction),
+        "phase" => Box::new(PhaseAction),
+        "log" => Box::new(LogAction),
+        "nolog" => Box::new(NologAction),
+        "auditlog" => Box::new(AuditlogAction),
+        "noauditlog" => Box::new(NoauditlogAction),
+        "logdata" => Box::new(LogdataAction),
+        "deny" => Box::new(DenyAction),
+        "drop" => Box::new(DropAction),
+        "allow" => Box::new(AllowAction::new()),
+        "block" => Box::new(BlockAction),
+        "redirect" => Box::new(RedirectAction::new()),
+        "pass" => Box::new(PassAction),
+        "setvar" => Box::new(SetvarAction::new()),
+        "chain" => Box::new(ChainAction),
+        "skip" => Box::new(SkipAction::new()),
+        "skipafter" => Box::new(SkipAfterAction::new()),
+        "capture" => Box::new(CaptureAction),
+        "multimatch" => Box::new(MultimatchAction),
+        "status" => Box::new(StatusAction),
+        "t" => Box::new(TAction),
+        "ctl" => Box::new(CtlAction::new()),
+        "exec" => Box::new(deferred::ExecAction::new()),
+        "expirevar" => Box::new(deferred::ExpirevarAction::new()),
+        "setenv" => Box::new(deferred::SetenvAction::new()),
+        "initcol" => Box::new(deferred::InitcolAction::new()),
+        _ => return Err(ActionError::UnknownAction(name.to_string())),
+    };
+    Ok(action)
 }
 
 #[cfg(test)]
