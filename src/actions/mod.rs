@@ -104,9 +104,8 @@ pub enum ActionType {
 
 /// Metadata and flags of one rule (ID, message, severity, logging flags, ...).
 ///
-/// Actions fill this in when the rule is compiled ([`Action::init`]) and read it
-/// when the rule matches ([`Action::evaluate`]). The evaluated rule itself is
-/// [`crate::rules::Rule`].
+/// Actions fill this in when the rule is compiled ([`Action::parse`]) and read it
+/// when the rule matches. The evaluated rule itself is [`crate::rules::Rule`].
 #[derive(Debug, Clone)]
 pub struct RuleMetadata {
     /// Rule ID (mandatory, set by id action)
