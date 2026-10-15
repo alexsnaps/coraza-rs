@@ -3,18 +3,24 @@
 
 //! SecLang parser implementation.
 //!
-//! This module implements the core parser for ModSecurity SecLang directives.
-//! The parser uses a simple line-by-line approach (not a full grammar parser):
+//! This module implements the core parser for ModSecurity SecLang directives, one at a
+//! time:
 //!
-//! 1. Read lines with continuation (`\`) support
-//! 2. Skip comments (`#`)
+//! 1. Read the directive's lines, with continuation (`\`) support
+//! 2. Skip comments (`#`) and blank lines
 //! 3. Handle multi-line backtick blocks
 //! 4. Extract directive name and options
 //! 5. Dispatch to directive handler
 
+use std::borrow::Cow;
 use std::ops::RangeInclusive;
 use std::path::Path;
 use std::str::FromStr;
+
+use winnow::combinator::{alt, cut_err, eof, not, repeat_till, terminated};
+use winnow::error::{EmptyError, ErrMode};
+use winnow::token::{rest, take_until};
+use winnow::{ModalResult, Parser as _};
 
 use crate::config::WafConfig;
 use crate::operators::{Datasets, OperatorContext};
@@ -345,62 +351,29 @@ impl Parser {
     /// - Multi-line backtick blocks (for SecDataset)
     /// - Directive dispatch
     fn parse_string(&mut self, data: &str) -> ParseResult<()> {
-        let mut line_buffer = String::new();
-        let mut in_backticks = false;
+        let mut input = data;
+        loop {
+            let start = input;
+            let directive = written_directive.parse_next(&mut input);
+            // On the directive's last line; a block left open is read to the input's
+            let read = &start[..start.len() - input.len()];
+            self.state.current_line += read.lines().count();
+            let directive = match directive {
+                Ok(directive) => directive,
+                // Only blank lines and comments are left, or a directive continued past
+                // the last line, which is dropped
+                Err(ErrMode::Backtrack(_)) => return Ok(()),
+                Err(_) => return Err(self.error("backticks left open".to_string())),
+            };
 
-        for line in data.lines() {
-            self.state.current_line += 1;
-            let trimmed = line.trim();
-
-            // Skip empty lines
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            // Skip comments (lines starting with #)
-            if trimmed.starts_with('#') {
-                continue;
-            }
-
-            // Handle backtick blocks (multi-line for SecDataset)
-            // Line ending with ` starts a block, line starting with ` ends it
-            if !in_backticks && trimmed.ends_with('`') {
-                in_backticks = true;
-            } else if in_backticks && trimmed.starts_with('`') {
-                in_backticks = false;
-            }
-
-            if in_backticks {
-                line_buffer.push_str(trimmed);
-                line_buffer.push('\n');
-                continue;
-            }
-
-            // Handle line continuation (\ at end)
-            if trimmed.ends_with('\\') {
-                // Remove the trailing backslash and continue accumulating
-                line_buffer.push_str(trimmed.trim_end_matches('\\'));
-            } else {
-                // Complete line - process it
-                line_buffer.push_str(trimmed);
-                let result = self.evaluate_line(&line_buffer);
-                line_buffer.clear();
-                match result {
-                    Err(e) if self.skip_failed => {
-                        self.rules.discard_open_chain();
-                        self.skipped.push(e);
-                    }
-                    result => result?,
+            match self.evaluate_line(&directive) {
+                Err(e) if self.skip_failed => {
+                    self.rules.discard_open_chain();
+                    self.skipped.push(e);
                 }
+                result => result?,
             }
         }
-
-        // Check for unclosed backtick blocks
-        if in_backticks {
-            return Err(self.error("backticks left open".to_string()));
-        }
-
-        Ok(())
     }
 
     /// Evaluate a single complete directive line
@@ -488,6 +461,58 @@ impl Default for Parser {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The next directive, as written: its lines up to one not ending with `\`, joined
+/// without their trailing backslashes, blank lines and comments left out.
+///
+/// A line ending with a backtick opens a block, which the next line starting with one
+/// closes: the lines of the block are kept with their newline, `\` included.
+///
+/// Fails as a backtrack at the end of the input, and as a cut if a block is left open.
+fn written_directive<'i>(input: &mut &'i str) -> ModalResult<Cow<'i, str>, EmptyError> {
+    // Borrowed while it is a single line
+    let mut written = Cow::Borrowed("");
+    loop {
+        let mut line = content_line(input)?;
+        if line.ends_with('`') {
+            let (inside, closing) = backtick_block(input)?;
+            for line in [line].into_iter().chain(inside) {
+                written += line;
+                written += "\n";
+            }
+            line = closing;
+        }
+        written += line.trim_end_matches('\\');
+        if !line.ends_with('\\') {
+            return Ok(written);
+        }
+    }
+}
+
+/// What follows the line opening a backtick block: the lines inside it, then the one
+/// closing it, which starts with a backtick.
+fn backtick_block<'i>(input: &mut &'i str) -> ModalResult<(Vec<&'i str>, &'i str), EmptyError> {
+    let closing = content_line.verify(|line: &str| line.starts_with('`'));
+    cut_err(repeat_till(0.., content_line, closing)).parse_next(input)
+}
+
+/// The next line, trimmed, that is neither blank nor a comment.
+fn content_line<'i>(input: &mut &'i str) -> ModalResult<&'i str, EmptyError> {
+    loop {
+        let line = line(input)?;
+        if !(line.is_empty() || line.starts_with('#')) {
+            return Ok(line);
+        }
+    }
+}
+
+/// The next line, trimmed.
+fn line<'i>(input: &mut &'i str) -> ModalResult<&'i str, EmptyError> {
+    not(eof).parse_next(input)?;
+    alt((terminated(take_until(0.., '\n'), '\n'), rest))
+        .map(str::trim)
+        .parse_next(input)
 }
 
 /// Handler of the directive with the given lowercase name; `None` if unknown.
@@ -1315,6 +1340,59 @@ On
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("backticks left open"));
+    }
+
+    #[test]
+    fn test_written_directives() {
+        let mut input = "# comment\n\n  SecRuleEngine \\\n  On  \r\n\
+                         SecDataset d `\n  a\\\n# skipped\nb\n`\nSecMarker END";
+        let mut next = || written_directive.parse_next(&mut input);
+        assert_eq!(next(), Ok("SecRuleEngine On".into()));
+        assert_eq!(next(), Ok("SecDataset d `\na\\\nb\n`".into()));
+        assert_eq!(next(), Ok("SecMarker END".into()));
+        assert!(matches!(next(), Err(ErrMode::Backtrack(_))));
+    }
+
+    #[test]
+    fn test_written_directive_continued_past_the_end_is_dropped() {
+        let mut input = "SecMarker A \\\n# comment\n";
+        assert!(matches!(
+            written_directive.parse_next(&mut input),
+            Err(ErrMode::Backtrack(_))
+        ));
+    }
+
+    #[test]
+    fn test_written_directive_with_block_left_open() {
+        let mut input = "SecDataset d `\na\n";
+        assert!(matches!(
+            written_directive.parse_next(&mut input),
+            Err(ErrMode::Cut(_))
+        ));
+    }
+
+    #[test]
+    fn test_directives_are_located_on_their_last_line() {
+        let mut parser = Parser::new();
+        parser
+            .from_string("# rules\nSecAction \\\n  \"id:1,pass\"\n\nSecMarker END")
+            .unwrap();
+        let waf = parser.into_waf().unwrap();
+        let metadata = waf.find_rule_by_id(1).unwrap().metadata();
+        assert_eq!(
+            (metadata.line, metadata.raw.as_str()),
+            (3, "SecAction \"id:1,pass\"")
+        );
+
+        let mut parser = Parser::new();
+        let err = parser
+            .from_string("SecRuleEngine \\\n\nInvalid\n")
+            .unwrap_err();
+        assert_eq!(err.line, 3);
+        let err = parser
+            .from_string("SecMarker A\nSecDataset d `\na\n\n")
+            .unwrap_err();
+        assert_eq!((err.line, err.message.as_str()), (4, "backticks left open"));
     }
 
     #[test]

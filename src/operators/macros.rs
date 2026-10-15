@@ -115,27 +115,23 @@ impl Macro {
         match tx {
             None => self.original.clone(),
             Some(tx) => {
-                if self.tokens.len() == 1 {
-                    Self::expand_token(tx, &self.tokens[0])
-                } else {
-                    let mut result = String::new();
-                    for token in &self.tokens {
-                        result.push_str(&Self::expand_token(tx, token));
-                    }
-                    result
+                // Rules' msg and logdata are expanded for every rule evaluated
+                let mut result = String::with_capacity(self.original.len());
+                for token in &self.tokens {
+                    result.push_str(Self::expand_token(tx, token));
                 }
+                result
             }
         }
     }
 
-    fn expand_token(tx: &Transaction, token: &MacroToken) -> String {
-        match (&token.variable, &token.key) {
-            (Some(var), key) => {
-                let key_str = key.as_deref();
-                tx.get_variable(*var, key_str)
-                    .unwrap_or_else(|| token.text.clone())
-            }
-            (None, _) => token.text.clone(),
+    /// The token's text, or the value of its variable if that is set.
+    fn expand_token<'a>(tx: &'a Transaction, token: &'a MacroToken) -> &'a str {
+        match token.variable {
+            Some(variable) => tx
+                .variable_value(variable, token.key.as_deref())
+                .unwrap_or(&token.text),
+            None => &token.text,
         }
     }
 
@@ -377,5 +373,22 @@ mod tests {
         let tx = mock_tx();
         // Returns original text if key not found
         assert_eq!(m.expand(Some(&tx)), "TX.missing");
+    }
+
+    #[test]
+    fn test_expand_kinds_of_variables() {
+        let mut tx = mock_tx();
+        tx.process_connection("10.0.0.1", 1234, "10.0.0.2", 80);
+
+        let m = Macro::new("from %{REMOTE_ADDR}").unwrap();
+        assert_eq!(m.expand(Some(&tx)), "from 10.0.0.1");
+        // A collection's keys are looked up ignoring case
+        let m = Macro::new("%{TX.SCORE}").unwrap();
+        assert_eq!(m.expand(Some(&tx)), "42");
+        // A names collection expands to the key, if present
+        let m = Macro::new("%{ARGS_NAMES.count}/%{ARGS_NAMES.missing}").unwrap();
+        assert_eq!(m.expand(Some(&tx)), "count/ARGS_NAMES.missing");
+        let m = Macro::new("a %{TX.missing} b %{TX.score}").unwrap();
+        assert_eq!(m.expand(Some(&tx)), "a TX.missing b 42");
     }
 }

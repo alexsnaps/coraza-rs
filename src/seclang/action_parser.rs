@@ -10,6 +10,11 @@
 //! - `msg:'Attack detected'` - Quoted value
 //! - `msg:'O\'Reilly'` - Escaped quotes
 
+use winnow::combinator::{alt, opt, preceded, repeat};
+use winnow::error::EmptyError;
+use winnow::prelude::*;
+use winnow::token::{any, take_till, take_while};
+
 use crate::seclang::CompileError;
 use crate::utils::strings::maybe_remove_quotes;
 
@@ -23,6 +28,17 @@ pub struct ParsedAction {
 
     /// Action value (trimmed, quotes removed); empty if the action has none
     pub value: String,
+}
+
+impl ParsedAction {
+    /// The action written `key:value`, with its key trimmed and lowercased and its value
+    /// trimmed and unquoted.
+    fn new(key: &str, value: &str) -> Self {
+        Self {
+            key: key.trim().to_lowercase(),
+            value: maybe_remove_quotes(value.trim()).to_string(),
+        }
+    }
 }
 
 /// Parse actions from SecRule syntax
@@ -64,113 +80,56 @@ pub struct ParsedAction {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn parse_actions(input: &str) -> ParseResult<Vec<ParsedAction>> {
-    let mut result = Vec::new();
     if input.trim().is_empty() {
-        return Ok(result);
+        return Ok(Vec::new());
     }
-
-    let bytes = input.as_bytes();
-    let mut before_key = -1_isize; // index before first char of key
-    let mut after_key = -1_isize; // index after last char of key and before first char of value
-    let mut in_quotes = false;
-
-    // Start at index 1 to skip opening character
-    let mut i = 1;
-    while i < bytes.len() {
-        let c = bytes[i];
-
-        // Check if previous character was escape
-        if i > 0 && bytes[i - 1] == b'\\' {
-            // Escaped character, skip processing
-            i += 1;
-            continue;
-        }
-
-        // Toggle quote state
-        if c == b'\'' {
-            in_quotes = !in_quotes;
-            i += 1;
-            continue;
-        }
-
-        // Inside quotes, skip processing
-        if in_quotes {
-            i += 1;
-            continue;
-        }
-
-        match c {
-            b':' => {
-                if after_key != -1 {
-                    // Already found colon (reading value), skip
-                    i += 1;
-                    continue;
-                }
-                after_key = i as isize;
-            }
-            b',' => {
-                // Extract key and value
-                let val = if after_key == -1 {
-                    // No value, bare action
-                    after_key = i as isize;
-                    String::new()
-                } else {
-                    let start = (after_key + 1) as usize;
-                    let end = i;
-                    String::from_utf8_lossy(&bytes[start..end]).to_string()
-                };
-
-                let key_start = (before_key + 1) as usize;
-                let key_end = after_key as usize;
-                let key = String::from_utf8_lossy(&bytes[key_start..key_end]).to_string();
-
-                // Append action
-                append_action(&mut result, key, val)?;
-
-                // Reset state
-                before_key = i as isize;
-                after_key = -1;
-            }
-            _ => {}
-        }
-
-        i += 1;
-    }
-
-    // Check for unclosed quotes
-    if in_quotes {
-        return Err(CompileError::new(format!(
-            "unclosed quotes in action line: {}",
-            input
-        )));
-    }
-
-    // Process final action
-    let val = if after_key == -1 {
-        // No value, bare action
-        after_key = bytes.len() as isize;
-        String::new()
-    } else {
-        let start = (after_key + 1) as usize;
-        String::from_utf8_lossy(&bytes[start..]).to_string()
-    };
-
-    let key_start = (before_key + 1) as usize;
-    let key_end = after_key as usize;
-    let key = String::from_utf8_lossy(&bytes[key_start..key_end]).to_string();
-
-    append_action(&mut result, key, val)?;
-
-    Ok(result)
+    // Any text is an action list but for one with a quote left open
+    action_list
+        .parse(input)
+        .map_err(|_| CompileError::new(format!("unclosed quotes in action line: {}", input)))
 }
 
-/// Appends an action, with its key trimmed and lowercased and its value trimmed and unquoted.
-fn append_action(result: &mut Vec<ParsedAction>, key: String, value: String) -> ParseResult<()> {
-    result.push(ParsedAction {
-        key: key.trim().to_lowercase(),
-        value: maybe_remove_quotes(value.trim()).to_string(),
+/// `KEY[:VALUE]` actions separated by commas.
+///
+/// A comma, or a colon, doesn't separate between quotes (`'`) or after a backslash. As in
+/// Go Coraza, the list's first character never separates nor opens a quote.
+fn action_list(input: &mut &str) -> winnow::Result<Vec<ParsedAction>, EmptyError> {
+    let first_key = (alt((escaped, any.take())), segment([',', ':'])).take();
+    let mut actions = vec![action(first_key).parse_next(input)?];
+    repeat(0.., preceded(',', action(segment([',', ':']))))
+        .fold(|| (), |(), action| actions.push(action))
+        .parse_next(input)?;
+    Ok(actions)
+}
+
+/// An action, its key read by `key`: `KEY`, or `KEY:VALUE` where VALUE runs to the next
+/// separating comma.
+fn action<'i>(
+    key: impl Parser<&'i str, &'i str, EmptyError>,
+) -> impl Parser<&'i str, ParsedAction, EmptyError> {
+    (key, opt(preceded(':', segment([',']))))
+        .map(|(key, value)| ParsedAction::new(key, value.unwrap_or_default()))
+}
+
+/// Text up to the first of `separators` that is neither quoted nor escaped.
+fn segment<'i, const N: usize>(separators: [char; N]) -> impl Parser<&'i str, &'i str, EmptyError> {
+    let unquoted = take_till(1.., move |c| {
+        matches!(c, '\\' | '\'') || separators.contains(&c)
     });
-    Ok(())
+    repeat::<_, _, (), _, _>(0.., alt((unquoted, quoted, escaped))).take()
+}
+
+/// `'...'`, in which a backslash escapes the closing quote.
+fn quoted<'i>(input: &mut &'i str) -> winnow::Result<&'i str, EmptyError> {
+    let unescaped = take_till(1.., |c| matches!(c, '\\' | '\''));
+    let inside = repeat::<_, _, (), _, _>(0.., alt((unescaped, escaped)));
+    ('\'', inside, '\'').take().parse_next(input)
+}
+
+/// Backslashes and the character after them, which they escape: as in Go Coraza, a
+/// character after a backslash is escaped even when that backslash is.
+fn escaped<'i>(input: &mut &'i str) -> winnow::Result<&'i str, EmptyError> {
+    (take_while(1.., '\\'), opt(any)).take().parse_next(input)
 }
 
 #[cfg(test)]
@@ -278,5 +237,32 @@ mod tests {
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].key, "msg");
         assert_eq!(actions[0].value, "Double quoted");
+    }
+
+    #[test]
+    fn test_parse_separators_escaped_or_quoted() {
+        let actions = parse_actions("msg:a\\,b,tag:'x:y,z',setvar:tx.a=b:c").unwrap();
+        let pairs: Vec<_> = actions
+            .iter()
+            .map(|a| (a.key.as_str(), a.value.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [("msg", "a\\,b"), ("tag", "x:y,z"), ("setvar", "tx.a=b:c")]
+        );
+    }
+
+    #[test]
+    fn test_parse_escaped_backslash_still_escapes() {
+        // As in Go Coraza, the quote after `\\` is escaped, so the value's is left open
+        assert!(parse_actions("msg:'a\\\\',deny").is_err());
+    }
+
+    #[test]
+    fn test_parse_first_character_never_separates() {
+        // As in Go Coraza
+        let actions = parse_actions(",deny").unwrap();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].key, ",deny");
     }
 }
