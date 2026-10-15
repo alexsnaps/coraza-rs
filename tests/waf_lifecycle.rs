@@ -439,8 +439,8 @@ fn test_waf_handles_invalid_body_gracefully() {
     tx.add_request_header("Content-Type", "application/json");
     let result = tx.process_request_body(b"{invalid json}");
 
-    // Should return Ok (error logged but not fatal)
-    assert!(result.is_ok());
+    // Not an interruption: rules see the error in REQBODY_ERROR
+    assert!(result.is_none());
 }
 
 #[test]

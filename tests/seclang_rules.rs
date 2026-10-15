@@ -256,7 +256,7 @@ fn allow_skips_the_rest_of_the_transaction() {
 
     let mut tx = waf.new_transaction();
     assert!(tx.process_request_headers().is_none());
-    assert_eq!(tx.process_request_body(b"").unwrap(), None);
+    assert_eq!(tx.process_request_body(b""), None);
 }
 
 #[test]
@@ -269,10 +269,7 @@ fn allow_phase_skips_only_the_current_phase() {
 
     let mut tx = waf.new_transaction();
     assert!(tx.process_request_headers().is_none());
-    assert_eq!(
-        tx.process_request_body(b"").unwrap().map(|i| i.rule_id),
-        Some(3)
-    );
+    assert_eq!(tx.process_request_body(b"").map(|i| i.rule_id), Some(3));
 }
 
 #[test]
@@ -285,7 +282,7 @@ fn allow_request_skips_the_request_phases_only() {
 
     let mut tx = waf.new_transaction();
     assert!(tx.process_request_headers().is_none());
-    assert_eq!(tx.process_request_body(b"").unwrap(), None);
+    assert_eq!(tx.process_request_body(b""), None);
     let interruption = tx.process_response_headers(200, "HTTP/1.1");
     assert_eq!(interruption.map(|i| i.rule_id), Some(3));
 }
@@ -351,7 +348,7 @@ fn an_interruption_ends_the_phase_and_the_request() {
     let interruption = tx.process_request_headers().expect("rule 1 denies");
     assert_eq!((interruption.rule_id, interruption.status), (1, 403));
 
-    let later = tx.process_request_body(b"").unwrap();
+    let later = tx.process_request_body(b"");
     assert_eq!(later.map(|i| i.rule_id), Some(1));
     assert_eq!(tx_var(&tx, "same_phase"), None);
     assert_eq!(tx_var(&tx, "later_phase"), None);
@@ -455,7 +452,7 @@ fn rules_can_inspect_the_request_body() {
     let mut tx = waf.new_transaction();
     tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
     tx.process_request_headers();
-    let interruption = tx.process_request_body(b"an attack payload").unwrap();
+    let interruption = tx.process_request_body(b"an attack payload");
 
     assert_eq!(interruption.map(|i| i.rule_id), Some(1));
 }
@@ -490,7 +487,7 @@ fn ctl_rule_engine_applies_to_later_phases() {
     let mut tx = waf.new_transaction();
     tx.process_request_headers();
 
-    assert_eq!(tx.process_request_body(b"").unwrap(), None);
+    assert_eq!(tx.process_request_body(b""), None);
 }
 
 #[test]
@@ -528,7 +525,7 @@ fn malformed_bodies_are_reported_to_rules() {
     let mut tx = waf.new_transaction();
     tx.add_request_header("Content-Type", "application/json");
     tx.process_request_headers();
-    let interruption = tx.process_request_body(b"{not json").unwrap();
+    let interruption = tx.process_request_body(b"{not json");
 
     assert_eq!(interruption.map(|i| i.rule_id), Some(1));
     assert!(
@@ -556,7 +553,7 @@ fn well_formed_bodies_raise_no_body_error() {
     tx.add_request_header("Content-Type", "application/json");
     tx.process_request_headers();
 
-    assert_eq!(tx.process_request_body(br#"{"a": 1}"#).unwrap(), None);
+    assert_eq!(tx.process_request_body(br#"{"a": 1}"#), None);
 }
 
 #[test]
@@ -595,7 +592,7 @@ fn detect_sqli_blocks_and_captures_the_fingerprint() {
     // sqlmap's payload for MySQL's full-text search
     let mut tx = request_with_arg(&waf, "q", "1' IN BOOLEAN MODE) UNION ALL SELECT NULL#");
     tx.process_request_headers();
-    let interruption = tx.process_request_body(b"").unwrap();
+    let interruption = tx.process_request_body(b"");
 
     assert_eq!(interruption.map(|i| i.rule_id), Some(942100));
     assert_eq!(tx_var(&tx, "0").as_deref(), Some("sk)UE"));
@@ -612,7 +609,7 @@ fn detect_xss_blocks_recent_event_handlers() {
 
     let mut tx = request_with_arg(&waf, "q", "<a onauxclick=alert(1)>");
     tx.process_request_headers();
-    let interruption = tx.process_request_body(b"").unwrap();
+    let interruption = tx.process_request_body(b"");
 
     assert_eq!(interruption.map(|i| i.rule_id), Some(941100));
 }
@@ -739,7 +736,7 @@ fn block_passes_without_defaults() {
 
     let mut tx = request_with_arg(&waf, "q", "x");
     assert!(tx.process_request_headers().is_none());
-    assert_eq!(tx.process_request_body(b"").unwrap(), None);
+    assert_eq!(tx.process_request_body(b""), None);
 }
 
 #[test]
@@ -820,7 +817,7 @@ fn body_arguments_of_every_processor_are_in_args() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", content_type);
         tx.process_request_headers();
-        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        let interruption = tx.process_request_body(body.as_bytes());
         assert_eq!(interruption.map(|i| i.rule_id), Some(1), "{content_type}");
     }
 }
@@ -868,7 +865,7 @@ fn repeated_multipart_part_headers_are_flagged() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
         tx.process_request_headers();
-        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        let interruption = tx.process_request_body(body.as_bytes());
         assert_eq!(interruption.is_some(), flagged, "{part_headers:?}");
         assert_eq!(
             tx.get_variable(coraza::RuleVariable::MultipartStrictError, None)
@@ -946,7 +943,7 @@ fn json_bodies_deeper_than_the_limit_are_body_errors() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", "application/json");
         tx.process_request_headers();
-        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        let interruption = tx.process_request_body(body.as_bytes());
         assert_eq!(interruption.is_some(), too_deep, "{body}");
     }
 }
@@ -995,7 +992,7 @@ fn the_request_body_processor_is_chosen_as_in_go() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", content_type);
         tx.process_request_headers();
-        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        let interruption = tx.process_request_body(body.as_bytes());
         assert_eq!(interruption.is_some(), parsed, "{content_type}");
         assert_eq!(
             tx.get_variable(ReqbodyProcessor, None).as_deref(),
@@ -1018,9 +1015,7 @@ fn forcing_the_request_body_variable_defaults_to_urlencoded() {
     tx.process_request_headers();
 
     assert_eq!(
-        tx.process_request_body(b"a=evil")
-            .unwrap()
-            .map(|i| i.rule_id),
+        tx.process_request_body(b"a=evil").map(|i| i.rule_id),
         Some(1)
     );
 }
@@ -1108,7 +1103,7 @@ fn bodies_are_inspected_only_with_body_access() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
         tx.process_request_headers();
-        let interruption = tx.process_request_body(b"a secret").unwrap();
+        let interruption = tx.process_request_body(b"a secret");
         assert_eq!(
             interruption.is_some(),
             inspected,
@@ -1144,7 +1139,7 @@ fn xml_is_the_parsed_request_xml() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", "text/xml");
         tx.process_request_headers();
-        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        let interruption = tx.process_request_body(body.as_bytes());
         assert_eq!(interruption.map(|i| i.rule_id), rule_id, "{body}");
     }
 }
@@ -1198,7 +1193,7 @@ fn names_variables_are_the_keys_of_their_collections() {
     let mut tx = waf.new_transaction();
     tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
     tx.process_request_headers();
-    let interruption = tx.process_request_body(b"evil_post=x").unwrap();
+    let interruption = tx.process_request_body(b"evil_post=x");
     assert_eq!(interruption.map(|i| i.rule_id), Some(5));
 
     let mut tx = waf.new_transaction();
@@ -1221,13 +1216,13 @@ fn args_combined_size_and_unique_id_describe_the_transaction() {
     tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
     tx.process_request_headers();
     assert_eq!(tx_var(&tx, "id_seen").as_deref(), Some("1"));
-    let interruption = tx.process_request_body(b"b=5678").unwrap();
+    let interruption = tx.process_request_body(b"b=5678");
     assert_eq!(interruption.map(|i| i.rule_id), Some(1));
 
     let mut tx = waf.new_transaction();
     tx.process_uri("/?a=1234", "GET", "HTTP/1.1");
     tx.process_request_headers();
-    assert_eq!(tx.process_request_body(b"").unwrap(), None);
+    assert_eq!(tx.process_request_body(b""), None);
 }
 
 #[test]
@@ -1245,7 +1240,7 @@ fn quoted_extended_multipart_filenames_are_invalid_quoting() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
         tx.process_request_headers();
-        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        let interruption = tx.process_request_body(body.as_bytes());
         assert_eq!(interruption.is_some(), flagged, "{disposition}");
     }
 }
@@ -1356,7 +1351,7 @@ fn multipart_part_names_and_filenames_are_variables() {
     let mut tx = waf.new_transaction();
     tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
     tx.process_request_headers();
-    let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+    let interruption = tx.process_request_body(body.as_bytes());
 
     assert_eq!(tx_var(&tx, "name").as_deref(), Some("1"));
     assert_eq!(interruption.map(|i| i.rule_id), Some(2));
@@ -1380,7 +1375,7 @@ fn request_bodies_reaching_the_limit_are_rejected_or_cut() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
         tx.process_request_headers();
-        let interruption = tx.process_request_body(b"0123456789abcdef").unwrap();
+        let interruption = tx.process_request_body(b"0123456789abcdef");
 
         assert_eq!(interruption.map(|i| i.status), interrupted, "{action}");
         assert_eq!(tx_var(&tx, "seen").as_deref(), seen, "{action}");
@@ -1855,7 +1850,7 @@ fn extended_multipart_filenames_are_decoded_with_their_charset_and_language() {
     let mut tx = waf.new_transaction();
     tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
     tx.process_request_headers();
-    tx.process_request_body(body.as_bytes()).unwrap();
+    tx.process_request_body(body.as_bytes());
 
     let values = |variable| {
         let mut values: Vec<String> = match tx.collection(variable) {

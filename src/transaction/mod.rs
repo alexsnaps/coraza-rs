@@ -1791,12 +1791,12 @@ impl Transaction {
     /// assert_eq!(tx.args_post().get("username"), vec!["admin"]);
     /// assert_eq!(tx.args_post().get("password"), vec!["secret"]);
     /// ```
-    pub fn process_request_body(&mut self, body: &[u8]) -> Result<Option<Interruption>, String> {
+    pub fn process_request_body(&mut self, body: &[u8]) -> Option<Interruption> {
         // Check if already processed
         if let Some(phase) = self.last_phase
             && phase >= RulePhase::RequestBody
         {
-            return Ok(None);
+            return None;
         }
 
         // As in Go Coraza, an empty body or one without access is left alone
@@ -1809,7 +1809,7 @@ impl Transaction {
                 match self.config.request_body_limit_action {
                     BodyLimitAction::Reject => {
                         self.last_phase = Some(RulePhase::RequestBody);
-                        return Ok(Some(self.interrupt_for_body_limit(413)));
+                        return Some(self.interrupt_for_body_limit(413));
                     }
                     BodyLimitAction::ProcessPartial => body = &body[..limit],
                 }
@@ -1823,7 +1823,7 @@ impl Transaction {
         // Evaluate rules for Phase 2 (Request Body)
         self.evaluate_rules(RulePhase::RequestBody);
 
-        Ok(self.interruption().cloned())
+        self.interruption().cloned()
     }
 
     /// Process response headers and populate response variables.
@@ -2488,8 +2488,7 @@ mod tests {
         let body = b"username=admin&password=secret&role=admin";
         let result = tx.process_request_body(body);
 
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none()); // No interruption
+        assert!(result.is_none()); // No interruption
 
         // Check ARGS_POST populated
         assert_eq!(tx.args_post().get("username"), vec!["admin"]);
@@ -2517,7 +2516,7 @@ mod tests {
         let body = br#"{"user": "admin", "id": 123}"#;
         let result = tx.process_request_body(body);
 
-        assert!(result.is_ok());
+        assert!(result.is_none());
 
         // Check JSON flattening in ARGS_POST
         assert_eq!(tx.args_post().get("json.user"), vec!["admin"]);
@@ -2534,7 +2533,7 @@ mod tests {
         let body = br#"<user name="admin"><id>123</id></user>"#;
         let result = tx.process_request_body(body);
 
-        assert!(result.is_ok());
+        assert!(result.is_none());
 
         // Check REQUEST_XML populated
         assert_eq!(tx.request_xml.get("//@*"), vec!["admin"]);
@@ -2557,7 +2556,7 @@ value1\r\n\
 
         let result = tx.process_request_body(body);
 
-        assert!(result.is_ok());
+        assert!(result.is_none());
 
         // Check ARGS_POST populated from multipart
         assert_eq!(tx.args_post().get("field1"), vec!["value1"]);
@@ -2571,7 +2570,7 @@ value1\r\n\
         let body = b"some data";
         let result = tx.process_request_body(body);
 
-        assert!(result.is_ok());
+        assert!(result.is_none());
 
         // Without a body processor, as in Go Coraza and ModSecurity, the body is
         // neither parsed nor kept in REQUEST_BODY
@@ -2592,7 +2591,7 @@ value1\r\n\
             tx.add_request_header("Content-Type", content_type);
             tx.force_request_body_variable = forced;
             tx.process_request_headers();
-            tx.process_request_body(body).unwrap();
+            tx.process_request_body(body);
             assert_eq!(tx.request_body.get(), request_body, "{content_type}");
             let length = if request_body.is_empty() { "0" } else { "9" };
             assert_eq!(tx.request_body_length.get(), length, "{content_type}");
@@ -2605,11 +2604,11 @@ value1\r\n\
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
 
         let body1 = b"key1=value1";
-        tx.process_request_body(body1).unwrap();
+        tx.process_request_body(body1);
 
         // Try to process again
         let body2 = b"key2=value2";
-        tx.process_request_body(body2).unwrap();
+        tx.process_request_body(body2);
 
         // Should still have first body only
         assert_eq!(tx.request_body.get(), "key1=value1");
@@ -2743,7 +2742,7 @@ value1\r\n\
 
         // Process request body
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
-        tx.process_request_body(b"key=value").unwrap();
+        tx.process_request_body(b"key=value");
         assert_eq!(tx.last_phase, Some(RulePhase::RequestBody));
 
         // Process response headers

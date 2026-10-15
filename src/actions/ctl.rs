@@ -436,7 +436,7 @@ mod tests {
         );
 
         // Too late once the request body phase started
-        tx.process_request_body(b"").unwrap();
+        tx.process_request_body(b"");
         CtlAction::parse("requestBodyProcessor=XML")
             .unwrap()
             .evaluate(&mut tx);
@@ -628,7 +628,7 @@ mod tests {
 
         let mut tx = Transaction::new("test-8");
         // Simulate being in request body phase
-        tx.process_request_body(b"test").unwrap();
+        tx.process_request_body(b"test");
 
         assert!(tx.request_body_access()); // default is true
 

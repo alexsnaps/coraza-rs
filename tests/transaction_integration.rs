@@ -258,7 +258,7 @@ fn test_complete_transaction_flow() {
     // 3. Request body phase with URL-encoded data
     let body = b"username=admin&password=P%40ssw0rd";
     let result = tx.process_request_body(body);
-    assert!(result.is_ok());
+    assert!(result.is_none());
 
     // Verify body was processed
     assert_eq!(tx.args_post().get("username"), vec!["admin"]);
@@ -311,7 +311,7 @@ fn test_multipart_file_upload_flow() {
 
     // Process multipart body
     let result = tx.process_request_body(multipart_body.as_bytes());
-    assert!(result.is_ok());
+    assert!(result.is_none());
 
     // Verify file was captured
     assert_eq!(tx.files().get("file"), vec!["test.txt"]);
@@ -347,7 +347,7 @@ fn test_json_api_request_with_nested_data() {
     }"#;
 
     let result = tx.process_request_body(json_body);
-    assert!(result.is_ok());
+    assert!(result.is_none());
 
     // Verify nested JSON flattened correctly
     assert_eq!(

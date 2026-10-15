@@ -102,8 +102,7 @@ fn transaction(waf: &Waf, form: Option<&[u8]>) {
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
     }
     tx.process_request_headers();
-    tx.process_request_body(form.unwrap_or_default())
-        .expect("request body is processed");
+    tx.process_request_body(form.unwrap_or_default());
     tx.add_response_header("Content-Type", "application/json");
     tx.process_response_headers(200, "HTTP/1.1");
     tx.process_response_body(b"");
