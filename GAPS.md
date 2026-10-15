@@ -325,6 +325,11 @@ None of these is used by CRS v4.30.0.
   and file name) and `Content-Type` were listed.
   - Done: as in Go Coraza, every header of a part, `Name: value` with the name canonical (`Content-Type` for
     `CoNtEnT-TyPe`) and the value as sent.
+- [x] **`ctl:ruleRemoveTarget*` had no effect.** Found by the FTW tests (941180-7): the removed targets were recorded
+  in the transaction but no rule consulted them, so CRS 941010, which removes `REQUEST_FILENAME` from the XSS rules
+  for plain paths, did nothing, nor would any exclusion written this way.
+  - Done: as in Go Coraza, a rule (and its chain's links, under its id) leaves out the keys removed from it, also
+    when counting (`&ARGS`). The key can be a `/regex/`, as in Go; names and patterns match whatever the key's case.
 - [ ] **Run CRS v4.30.0's FTW tests and record the pass rate.** Not run yet; `ftw-runner/` drives
   `examples/ftw_server_async.rs`.
   - Go Coraza's CI runs all 5,260 tests (`testing/coreruleset`). It ignores 7 (`.ftw.yml`) and changes the expected

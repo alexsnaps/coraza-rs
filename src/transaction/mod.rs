@@ -684,7 +684,8 @@ pub struct Transaction {
     /// Variable exclusions per rule ID
     /// (set by ctl:ruleRemoveTargetById, ctl:ruleRemoveTargetByTag, ctl:ruleRemoveTargetByMsg)
     /// Map: rule_id -> Vec<(variable, key)>
-    rule_remove_target_by_id: std::collections::BTreeMap<i32, Vec<(RuleVariable, String)>>,
+    rule_remove_target_by_id:
+        std::collections::BTreeMap<i32, Vec<(RuleVariable, crate::rules::VariableException)>>,
 
     /// All rules that matched during this transaction (for audit logging)
     matched_rules: Vec<MatchedRule>,
@@ -2264,10 +2265,22 @@ impl Transaction {
         variable: RuleVariable,
         key: impl Into<String>,
     ) {
+        let exception = crate::rules::VariableException::new_string(key.into());
+        self.remove_rule_target(rule_id, variable, exception);
+    }
+
+    /// Excludes the keys of `variable` that `exception` matches from rule `rule_id`, for
+    /// this transaction.
+    pub(crate) fn remove_rule_target(
+        &mut self,
+        rule_id: i32,
+        variable: RuleVariable,
+        exception: crate::rules::VariableException,
+    ) {
         self.rule_remove_target_by_id
             .entry(rule_id)
             .or_default()
-            .push((variable, key.into()));
+            .push((variable, exception));
     }
 
     /// Checks if a rule should be skipped for this transaction.
@@ -2307,11 +2320,13 @@ impl Transaction {
     /// assert!(!tx.is_rule_target_removed(123, RuleVariable::Args, "other"));
     /// ```
     pub fn is_rule_target_removed(&self, rule_id: i32, variable: RuleVariable, key: &str) -> bool {
-        if let Some(targets) = self.rule_remove_target_by_id.get(&rule_id) {
-            targets.iter().any(|(v, k)| *v == variable && k == key)
-        } else {
-            false
-        }
+        self.rule_remove_target_by_id
+            .get(&rule_id)
+            .is_some_and(|targets| {
+                targets
+                    .iter()
+                    .any(|(removed, exception)| *removed == variable && exception.matches(key))
+            })
     }
 }
 

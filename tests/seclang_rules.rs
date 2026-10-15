@@ -1600,3 +1600,28 @@ fn transformations_producing_invalid_utf8_are_safe() {
     tx.args_mut().add("d", "%ff%fe");
     assert!(tx.process_request_headers().is_none());
 }
+
+#[test]
+fn ctl_removes_targets_from_rules_for_the_transaction() {
+    // CRS 941010 removes REQUEST_FILENAME from the XSS rules this way
+    let waf = waf(r#"
+        SecRule REQUEST_FILENAME "@unconditionalMatch" "id:1,phase:1,pass,nolog,ctl:ruleRemoveTargetByTag=t;REQUEST_FILENAME,ctl:ruleRemoveTargetById=3;ARGS:/^IGN/"
+        SecRule REQUEST_FILENAME|ARGS "@contains evil" "id:2,phase:1,pass,tag:t,setvar:tx.two=+1"
+        SecRule &ARGS "@eq 1" "id:3,phase:1,pass,chain"
+            SecRule ARGS "@contains evil" "t:none,setvar:tx.three=1"
+    "#);
+
+    let run = |uri: &str| {
+        let mut tx = waf.new_transaction();
+        tx.process_uri(uri, "GET", "HTTP/1.1");
+        tx.process_request_headers();
+        (tx_var(&tx, "two"), tx_var(&tx, "three"))
+    };
+    // REQUEST_FILENAME is no longer inspected by rule 2, ARGS still is
+    assert_eq!(run("/evil").0, None);
+    assert_eq!(run("/x?a=evil").0.as_deref(), Some("1"));
+    // A regex key, matched whatever its case, removes the arguments it selects, also from
+    // a chain's links and from a count
+    assert_eq!(run("/x?a=1&ignored=evil").1, None);
+    assert_eq!(run("/x?ignored=1&a=evil").1.as_deref(), Some("1"));
+}

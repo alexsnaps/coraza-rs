@@ -9,6 +9,7 @@
 //!
 use crate::actions::{ActionError, RuleMetadata};
 use crate::body_processors::BodyProcessorKind;
+use crate::rules::VariableException;
 use crate::transaction::Transaction;
 use crate::types::{
     AuditEngineStatus, ParseValueError, RuleEngineStatus, RulePhase, RuleVariable,
@@ -16,6 +17,8 @@ use crate::types::{
 };
 use std::ops::RangeInclusive;
 use std::str::FromStr;
+
+use regex::RegexBuilder;
 
 /// A `ctl` command with its value, parsed when the rule is compiled.
 #[derive(Debug, Clone, PartialEq)]
@@ -48,8 +51,9 @@ enum CtlCommand {
 #[derive(Debug, Clone, PartialEq)]
 struct RuleTarget {
     variable: RuleVariable,
-    /// Lowercase key; empty excludes the whole collection
-    key: String,
+    /// The keys excluded: by name, empty for the whole collection, or by `/regex/`;
+    /// either matched whatever the key's case, as in Go Coraza
+    key: VariableException,
 }
 
 impl CtlCommand {
@@ -158,13 +162,17 @@ fn split_target(value: &str) -> Result<(&str, RuleTarget), ActionError> {
         .trim()
         .parse::<RuleVariable>()
         .map_err(|_| invalid(format!("unknown collection '{}'", collection.trim())))?;
-    Ok((
-        rules,
-        RuleTarget {
-            variable,
-            key: key.to_lowercase(),
-        },
-    ))
+    let key = key.trim();
+    let key = match key.strip_prefix('/').and_then(|key| key.strip_suffix('/')) {
+        Some("") => return Err(invalid("empty regex in the target's key".to_string())),
+        Some(pattern) => RegexBuilder::new(pattern)
+            .case_insensitive(true)
+            .build()
+            .map(VariableException::new_regex)
+            .map_err(|e| invalid(format!("invalid regex in the target's key: {e}")))?,
+        None => VariableException::new_string(key.to_lowercase()),
+    };
+    Ok((rules, RuleTarget { variable, key }))
 }
 
 /// `ctl` action - Change WAF configuration at runtime.
@@ -287,16 +295,16 @@ impl CtlAction {
                 }
             }
             CtlCommand::RuleRemoveTargetById(id, target) => {
-                tx.remove_rule_target_by_id(*id, target.variable, target.key.as_str());
+                tx.remove_rule_target(*id, target.variable, target.key.clone());
             }
             CtlCommand::RuleRemoveTargetByTag(tag, target) => {
                 for id in rule_ids(tx, |rule| rule.tags.contains(tag)) {
-                    tx.remove_rule_target_by_id(id, target.variable, target.key.as_str());
+                    tx.remove_rule_target(id, target.variable, target.key.clone());
                 }
             }
             CtlCommand::RuleRemoveTargetByMsg(msg, target) => {
                 for id in rule_ids(tx, |rule| has_msg(rule, msg)) {
-                    tx.remove_rule_target_by_id(id, target.variable, target.key.as_str());
+                    tx.remove_rule_target(id, target.variable, target.key.clone());
                 }
             }
             CtlCommand::AuditEngine(status) => tx.set_audit_engine(*status),
@@ -387,7 +395,7 @@ mod tests {
                 123,
                 RuleTarget {
                     variable: RuleVariable::Args,
-                    key: "user".to_string()
+                    key: VariableException::new_string("user".to_string())
                 }
             )
         );
@@ -397,7 +405,7 @@ mod tests {
                 "t".to_string(),
                 RuleTarget {
                     variable: RuleVariable::RequestFilename,
-                    key: String::new()
+                    key: VariableException::new_string(String::new())
                 }
             )
         );

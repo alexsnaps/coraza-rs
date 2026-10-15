@@ -292,7 +292,7 @@ impl Rule {
 
         let mut matched_values = Vec::new();
         for var_spec in &self.variables {
-            for var_match in var_spec.get_matches(tx) {
+            for var_match in var_spec.get_matches_for_rule(tx, id) {
                 // With multiMatch, the value before and after each transformation that
                 // changed it is tested; otherwise only the fully transformed value.
                 // TODO: Log transformation errors
