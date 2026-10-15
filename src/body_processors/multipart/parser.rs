@@ -344,25 +344,72 @@ struct HeaderParam {
 }
 
 /// Parse header parameters like: `form-data; name="value"; filename="file.txt"`, in order
+///
+/// As in Go Coraza, a `;` inside a quoted string doesn't end the parameter, and a
+/// quoted value is unquoted as Go's `mime` package does it.
 fn parse_header_params(header: &str) -> Vec<HeaderParam> {
     let mut params = Vec::new();
 
-    for part in header.split(';') {
+    for part in split_header_params(header) {
         let part = part.trim();
 
         if let Some(eq_pos) = part.find('=') {
             let name = part[..eq_pos].trim().to_lowercase();
             let value = part[eq_pos + 1..].trim();
-            let unquoted = value.strip_prefix('"').and_then(|v| v.strip_suffix('"'));
+            let unquoted = unquote(value);
             params.push(HeaderParam {
                 name,
-                value: unquoted.unwrap_or(value).to_string(),
                 quoted: unquoted.is_some(),
+                value: unquoted.unwrap_or_else(|| value.to_string()),
             });
         }
     }
 
     params
+}
+
+/// The `;`-separated parts of `header`, a `;` in a quoted string (where a backslash
+/// escapes the next character) not separating them.
+fn split_header_params(header: &str) -> Vec<&str> {
+    let bytes = header.as_bytes();
+    let mut parts = Vec::new();
+    let mut in_quotes = false;
+    let mut start = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if in_quotes => i += 1,
+            b'"' => in_quotes = !in_quotes,
+            b';' if !in_quotes => {
+                parts.push(&header[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    parts.push(&header[start..]);
+    parts
+}
+
+/// The content of `value` if it is a quoted string, with a backslash before one of
+/// RFC 2045's special characters removed; other backslashes are kept, as Go's `mime`
+/// package keeps them for the paths MSIE sends unescaped (`"C:\dev\x.txt"`).
+fn unquote(value: &str) -> Option<String> {
+    const SPECIALS: &str = "()<>@,;:\\\"/[]?=";
+    let inner = value.strip_prefix('"')?.strip_suffix('"')?;
+    let mut unquoted = String::with_capacity(inner.len());
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        match chars.peek() {
+            Some(&next) if c == '\\' && SPECIALS.contains(next) => {
+                unquoted.push(next);
+                chars.next();
+            }
+            _ => unquoted.push(c),
+        }
+    }
+    Some(unquoted)
 }
 
 /// Find the end of headers (blank line)
@@ -587,6 +634,28 @@ value\r\n\
             params,
             [quoted("name", "field"), quoted("filename", "file.txt")]
         );
+    }
+
+    #[test]
+    fn test_parse_header_params_quoted_strings() {
+        // A ';' or an escaped quote inside a quoted string is part of the value, as in Go
+        let params =
+            parse_header_params(r#"form-data; name="zzz&auml;&euml;zzz"; filename="a\"b;c"; x=1"#);
+        let values: Vec<_> = params
+            .iter()
+            .map(|p| (p.name.as_str(), p.value.as_str()))
+            .collect();
+        assert_eq!(
+            values,
+            [
+                ("name", "zzz&auml;&euml;zzz"),
+                ("filename", "a\"b;c"),
+                ("x", "1")
+            ]
+        );
+        // A backslash escapes only a special character: MSIE sends paths unescaped
+        let params = parse_header_params(r#"form-data; filename="C:\dev\x.txt""#);
+        assert_eq!(params[0].value, r"C:\dev\x.txt");
     }
 
     #[test]

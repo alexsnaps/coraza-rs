@@ -294,6 +294,11 @@ None of these is used by CRS v4.30.0.
   - Done: such a regex ignores case instead, for selecting and for excluding (`!REQUEST_HEADERS:/^X-/`). Unlike
     Go's lowercasing, this leaves escapes such as `\D` alone. Which variables have case-sensitive keys is now one
     method (`RuleVariable::has_case_sensitive_keys`), which the transaction's collections follow too.
+- [x] **Multipart parameters were split on every `;`.** Found by the FTW tests: 920120 fired on 19 of its negative
+  tests, whose part names hold HTML entities (`name="zzz&auml;&euml;zzz"`): the name was cut at the first `;`,
+  leaving `"zzz&auml` with its opening quote.
+  - Done: as in Go Coraza, a `;` inside a quoted string doesn't end the parameter, and a backslash escapes only
+    RFC 2045's special characters, as Go's `mime` package unquotes (`"C:\dev\x.txt"` keeps its backslashes).
 - [ ] **Run CRS v4.30.0's FTW tests and record the pass rate.** Not run yet; `ftw-runner/` drives
   `examples/ftw_server_async.rs`.
   - Go Coraza's CI runs all 5,260 tests (`testing/coreruleset`). It ignores 7 (`.ftw.yml`) and changes the expected
