@@ -314,6 +314,12 @@ None of these is used by CRS v4.30.0.
   `Cookie: 'msdasql'` as a cookie named `'msdasql'` with an empty value.
   - Done: cookies are parsed as Go does: a pair without `=` is a name; only control characters and spaces are
     trimmed (U+00A0 stays, as a backend keeps it); a bare `=` is skipped.
+- [x] **`@rx` differed from Go's.** Found by the FTW tests: 942420 to 942432 (8 tests) spell `‘`, `’` and `´` by
+  their UTF-8 bytes (`\x{e2}\x80[\x98\x99]`), which Go Coraza matches on bytes when the escapes spell bytes that
+  aren't UTF-8; here they were characters (U+00E2...) and never matched. Go's default build also compiles every
+  pattern in multiline mode (`(?sm)`), ours in `(?s)` only. And a group that didn't take part ended the capture,
+  leaving the later `TX.N` unset, where Go sets it empty.
+  - Done: all three as in Go. Go captures `TX.0` to `TX.8`; this keeps ModSecurity's `TX.0` to `TX.9`.
 - [ ] **Run CRS v4.30.0's FTW tests and record the pass rate.** Not run yet; `ftw-runner/` drives
   `examples/ftw_server_async.rs`.
   - Go Coraza's CI runs all 5,260 tests (`testing/coreruleset`). It ignores 7 (`.ftw.yml`) and changes the expected

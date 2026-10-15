@@ -10,18 +10,24 @@ use std::path::Path;
 
 use crate::operators::{Datasets, Macro, MacroError, Operator};
 use crate::transaction::Transaction;
+use crate::utils::strings::x2c;
 use aho_corasick::AhoCorasick;
 use regex::Regex;
 
 /// Regular expression operator.
 ///
-/// Performs pattern matching using RE2-compatible regular expressions.
-/// By default enables dotall mode where `.` matches newlines for compatibility
-/// with ModSecurity.
+/// Performs pattern matching using RE2-compatible regular expressions, as Go Coraza's
+/// default build does: in dotall mode, where `.` matches newlines (as in ModSecurity),
+/// and multiline mode, where `^` and `$` also match at line boundaries.
 ///
-/// Supports macro expansion for pattern values.
+/// A pattern whose `\xHH` escapes spell bytes that aren't UTF-8, such as CRS's
+/// `\x{e2}\x80[\x98\x99]` for `‘` and `’`, is matched on the value's bytes instead, as
+/// written, as Go Coraza's binary matcher does: each escape is one byte, and classes
+/// such as `\w` and case-insensitivity are ASCII only.
 ///
-/// Note: This simplified version does not support capturing groups (yet).
+/// Supports macro expansion for pattern values. With `capture`, the match and its
+/// first 9 groups are stored in `TX.0` to `TX.9`, a group that didn't take part as
+/// empty.
 ///
 /// # Examples
 ///
@@ -40,7 +46,125 @@ use regex::Regex;
 pub struct Rx {
     macro_param: Macro,
     // Cached regex when no macro expansion is needed
-    cached_regex: Option<Regex>,
+    cached_regex: Option<CompiledRx>,
+}
+
+/// An `@rx` pattern, compiled to match text, or bytes when its escapes spell bytes
+/// that aren't UTF-8.
+#[derive(Debug, Clone)]
+enum CompiledRx {
+    Text(Regex),
+    Bytes(regex::bytes::Regex),
+}
+
+impl CompiledRx {
+    fn new(pattern: &str) -> Result<Self, regex::Error> {
+        if spells_non_utf8_bytes(pattern) {
+            regex::bytes::RegexBuilder::new(&unbrace_byte_escapes(pattern))
+                .unicode(false)
+                .build()
+                .map(Self::Bytes)
+        } else {
+            Regex::new(&format!("(?sm){pattern}")).map(Self::Text)
+        }
+    }
+
+    fn is_match(&self, input: &str) -> bool {
+        match self {
+            Self::Text(regex) => regex.is_match(input),
+            Self::Bytes(regex) => regex.is_match(input.as_bytes()),
+        }
+    }
+
+    /// The first match and its groups, as text, `None` for a group that didn't take
+    /// part; `None` if nothing matches.
+    fn captures(&self, input: &str) -> Option<Vec<Option<String>>> {
+        match self {
+            Self::Text(regex) => regex.captures(input).map(|captures| {
+                captures
+                    .iter()
+                    .map(|group| group.map(|group| group.as_str().to_string()))
+                    .collect()
+            }),
+            Self::Bytes(regex) => regex.captures(input.as_bytes()).map(|captures| {
+                captures
+                    .iter()
+                    .map(|group| {
+                        group.map(|group| String::from_utf8_lossy(group.as_bytes()).into_owned())
+                    })
+                    .collect()
+            }),
+        }
+    }
+}
+
+/// Whether the bytes `pattern`'s `\xHH` and `\x{HH}` escapes spell, with its other
+/// characters, aren't UTF-8, as Go Coraza decides to match a pattern on bytes.
+fn spells_non_utf8_bytes(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    let mut spelled = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match byte_escape(&bytes[i..]) {
+            Some((byte, length)) => {
+                spelled.push(byte);
+                i += length;
+            }
+            None if bytes[i] == b'\\' && i + 1 < bytes.len() => {
+                spelled.extend_from_slice(&bytes[i..i + 2]);
+                i += 2;
+            }
+            None => {
+                spelled.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    std::str::from_utf8(&spelled).is_err()
+}
+
+/// `pattern` with each `\x{HH}` written `\xHH`, which a byte regex reads as a byte
+/// rather than as the character U+00HH.
+fn unbrace_byte_escapes(pattern: &str) -> String {
+    let mut unbraced = String::with_capacity(pattern.len());
+    let mut rest = pattern;
+    while let Some(c) = rest.chars().next() {
+        let length = match byte_escape(rest.as_bytes()) {
+            Some((byte, length)) => {
+                unbraced.push_str(&format!("\\x{byte:02x}"));
+                length
+            }
+            None => {
+                // An escaped character keeps its backslash
+                let escaped = match c {
+                    '\\' => rest[1..].chars().next().map_or(0, char::len_utf8),
+                    _ => 0,
+                };
+                let length = c.len_utf8() + escaped;
+                unbraced.push_str(&rest[..length]);
+                length
+            }
+        };
+        rest = &rest[length..];
+    }
+    unbraced
+}
+
+/// The byte a `\xHH` or `\x{HH}` escape at the start of `pattern` writes, and the
+/// escape's length.
+fn byte_escape(pattern: &[u8]) -> Option<(u8, usize)> {
+    let digits = |digits: &[u8]| {
+        digits
+            .iter()
+            .all(u8::is_ascii_hexdigit)
+            .then(|| x2c(digits))
+    };
+    match pattern {
+        [b'\\', b'x', b'{', high, low, b'}', ..] => Some((digits(&[*high, *low])?, 6)),
+        [b'\\', b'x', b'{', digit, b'}', ..] => Some((digits(&[b'0', *digit])?, 5)),
+        [b'\\', b'x', high, low, ..] => Some((digits(&[*high, *low])?, 4)),
+        _ => None,
+    }
 }
 
 impl Operator for Rx {
@@ -54,7 +178,7 @@ impl Operator for Rx {
             Some(regex) => regex,
             None => {
                 let pattern = self.macro_param.expand(tx.as_deref());
-                match Regex::new(&format!("(?s){}", pattern)) {
+                match CompiledRx::new(&pattern) {
                     Ok(regex) => {
                         expanded = regex;
                         &expanded
@@ -64,34 +188,23 @@ impl Operator for Rx {
             }
         };
 
-        if capturing {
-            // Capturing mode: find all matches including groups
-            if let Some(captures) = regex.captures(input) {
-                if let Some(tx_mut) = tx {
-                    // Store full match and up to 9 capturing groups (ModSecurity limit)
-                    for i in 0..=9 {
-                        if let Some(capture) = captures.get(i) {
-                            tx_mut.capture_field(i, capture.as_str());
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                true
-            } else {
-                false
-            }
-        } else {
-            // Non-capturing mode: fast path using is_match
-            regex.is_match(input)
+        if !capturing {
+            return regex.is_match(input);
         }
+        let Some(groups) = regex.captures(input) else {
+            return false;
+        };
+        if let Some(tx) = tx {
+            // The full match and up to 9 capturing groups (ModSecurity limit)
+            for (i, group) in groups.iter().take(10).enumerate() {
+                tx.capture_field(i, group.as_deref().unwrap_or(""));
+            }
+        }
+        true
     }
 }
 
 /// Creates a new `rx` operator.
-///
-/// The pattern is automatically wrapped with `(?s)` to enable dotall mode,
-/// where `.` matches newlines (ModSecurity compatibility).
 ///
 /// # Errors
 ///
@@ -105,8 +218,7 @@ pub fn rx(pattern: &str) -> Result<Rx, Box<dyn std::error::Error>> {
     let cached_regex = if pattern.contains("%{") {
         None
     } else {
-        let pattern_with_flags = format!("(?s){}", pattern);
-        Some(Regex::new(&pattern_with_flags)?)
+        Some(CompiledRx::new(pattern)?)
     };
 
     Ok(Rx {
@@ -769,6 +881,50 @@ mod tests {
         assert_eq!(capture(&tx, 1), Some("123".to_string()));
         assert_eq!(capture(&tx, 2), Some("456".to_string()));
         assert_eq!(capture(&tx, 3), Some("7890".to_string()));
+    }
+
+    #[test]
+    fn test_rx_is_multiline() {
+        // As in Go Coraza's default build: ^ and $ match at line boundaries too
+        let op = rx("^b$").unwrap();
+        assert!(op.evaluate(None::<&mut Transaction>, "a\nb\nc"));
+    }
+
+    #[test]
+    fn test_rx_byte_escapes() {
+        // CRS 942432 spells U+2019 and U+00B4 by their UTF-8 bytes, as Go Coraza matches
+        // such a pattern on bytes
+        let op = rx(r"\x{c2}\x{b4}|\x{e2}\x80[\x98\x99]").unwrap();
+        assert!(op.evaluate(None::<&mut Transaction>, "id=’"));
+        assert!(op.evaluate(None::<&mut Transaction>, "´"));
+        assert!(!op.evaluate(None::<&mut Transaction>, "\u{e2}\u{80}\u{99}"));
+        // An escaped backslash isn't an escape
+        assert!(!spells_non_utf8_bytes(r"\\xbc"));
+        assert!(
+            rx(r"\\xbc")
+                .unwrap()
+                .evaluate(None::<&mut Transaction>, r"\xbc")
+        );
+        // Escapes that spell UTF-8 stay characters, as in Go
+        assert!(!spells_non_utf8_bytes(r"\xe2\x80\x99"));
+    }
+
+    #[test]
+    fn test_rx_capturing_group_not_taking_part() {
+        // A group that didn't take part is captured empty, as in Go Coraza, and the
+        // ones after it are still captured
+        let op = rx("(a)?(b)").unwrap();
+        let mut tx = capturing_tx();
+        assert!(op.evaluate(Some(&mut tx), "b"));
+        assert_eq!(capture(&tx, 1), Some(String::new()));
+        assert_eq!(capture(&tx, 2), Some("b".to_string()));
+
+        // The same in a pattern matched on bytes
+        let op = rx(r"(x)?(\xe2\x80[\x98\x99])").unwrap();
+        let mut tx = capturing_tx();
+        assert!(op.evaluate(Some(&mut tx), "’"));
+        assert_eq!(capture(&tx, 1), Some(String::new()));
+        assert_eq!(capture(&tx, 2), Some("’".to_string()));
     }
 
     #[test]
