@@ -179,3 +179,26 @@ fn rules_can_inspect_the_response_status() {
 
     assert_eq!(interruption.map(|i| i.rule_id), Some(1));
 }
+
+#[test]
+fn invalid_ctl_values_are_parse_errors() {
+    let mut parser = Parser::new();
+    let err = parser
+        .from_string(r#"SecAction "id:1,phase:1,ctl:ruleEngine=bogus""#)
+        .unwrap_err();
+
+    assert!(err.message.contains("bogus"), "{}", err.message);
+}
+
+#[test]
+fn ctl_rule_engine_applies_to_later_phases() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,ctl:ruleEngine=DetectionOnly"
+        SecAction "id:2,phase:2,deny,status:403"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+
+    assert_eq!(tx.process_request_body(b"").unwrap(), None);
+}

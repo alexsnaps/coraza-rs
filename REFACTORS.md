@@ -102,7 +102,7 @@ probed bugs.
     still open: the upload options are not wired from `WafConfig` (needs config plumbed into the transaction).
   - Transformations: no lookup at all (see item 2). **Done** in item 2 (`transformations::by_name`).
 - [x] **Remove `actions::register`.** Public, and always panics with `todo!()` (`src/actions/mod.rs:502`).
-- [ ] **Parse `ctl` once.** `CtlAction` validates its value, stores the raw string, and re-parses it in `evaluate`
+- [x] **Parse `ctl` once.** `CtlAction` validates its value, stores the raw string, and re-parses it in `evaluate`
   (`src/actions/ctl.rs:263`). **(probe)** `ctl:ruleEngine=bogus` compiles and is silently ignored. Use data-carrying
   variants such as `CtlCommand::RuleEngine(RuleEngineStatus)`.
 - [ ] **Decide: `enum Action` instead of `Box<dyn Action>`.** 20 of 33 action types have an empty `evaluate`; they

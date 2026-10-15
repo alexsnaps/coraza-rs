@@ -7,58 +7,153 @@
 //! Changes made with CTL only affect the current transaction and don't modify
 //! the global configuration or other parallel transactions.
 //!
-//! **Note:** This is currently a parsing-only stub. Full transaction manipulation
-//! will be implemented in Phase 8 when the transaction system is complete.
-
-use crate::RuleVariable;
 use crate::actions::{Action, ActionError, ActionType, RuleMetadata};
 use crate::transaction::Transaction;
+use crate::types::{
+    AuditEngineStatus, ParseRuleEngineStatusError, RuleEngineStatus, RulePhase, RuleVariable,
+};
+use std::ops::RangeInclusive;
 use std::str::FromStr;
 
-/// CTL command types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Will be used in Phase 8
+/// A `ctl` command with its value, parsed when the rule is compiled.
+#[derive(Debug, Clone, PartialEq)]
 enum CtlCommand {
-    /// Remove specific targets from a rule by ID
-    RuleRemoveTargetById,
-    /// Remove specific targets from rules by tag
-    RuleRemoveTargetByTag,
-    /// Remove specific targets from rules by message
-    RuleRemoveTargetByMsg,
-    /// Set audit engine status (On/Off/RelevantOnly)
-    AuditEngine,
-    /// Set audit log parts (which sections to log)
-    AuditLogParts,
-    /// Force REQUEST_BODY variable creation
-    ForceRequestBodyVariable,
-    /// Enable/disable request body access
-    RequestBodyAccess,
-    /// Set request body size limit
-    RequestBodyLimit,
-    /// Set rule engine status (On/Off/DetectionOnly)
-    RuleEngine,
-    /// Remove rule(s) by ID (supports ranges)
-    RuleRemoveById,
-    /// Remove rules by message
-    RuleRemoveByMsg,
-    /// Remove rules by tag
-    RuleRemoveByTag,
-    /// Hash engine (not supported)
-    HashEngine,
-    /// Hash enforcement (not supported)
-    HashEnforcement,
-    /// Set request body processor (JSON/XML/URLENCODED/MULTIPART)
-    RequestBodyProcessor,
-    /// Force RESPONSE_BODY variable creation
-    ForceResponseBodyVariable,
-    /// Set response body processor
-    ResponseBodyProcessor,
-    /// Enable/disable response body access
-    ResponseBodyAccess,
-    /// Set response body size limit
-    ResponseBodyLimit,
-    /// Set debug log level
-    DebugLogLevel,
+    RuleEngine(RuleEngineStatus),
+    RequestBodyAccess(bool),
+    RequestBodyLimit(i64),
+    ForceRequestBodyVariable(bool),
+    ResponseBodyAccess(bool),
+    ResponseBodyLimit(i64),
+    ForceResponseBodyVariable(bool),
+    /// Inclusive range of rule IDs; a single ID is a one-element range
+    RuleRemoveById(RangeInclusive<i32>),
+    RuleRemoveByTag(String),
+    RuleRemoveByMsg(String),
+    RuleRemoveTargetById(i32, RuleTarget),
+    RuleRemoveTargetByTag(String, RuleTarget),
+    RuleRemoveTargetByMsg(String, RuleTarget),
+    /// Accepted (and validated where possible) but not acted on yet: `auditEngine`,
+    /// `auditLogParts`, `debugLogLevel`, `requestBodyProcessor`, `responseBodyProcessor`,
+    /// `hashEngine`, `hashEnforcement`
+    NotImplemented,
+}
+
+/// A variable excluded from rules by the `ruleRemoveTarget*` commands.
+#[derive(Debug, Clone, PartialEq)]
+struct RuleTarget {
+    variable: RuleVariable,
+    /// Lowercase key; empty excludes the whole collection
+    key: String,
+}
+
+impl CtlCommand {
+    /// Parses `command=value`, or `command=value;COLLECTION[:key]` for `ruleRemoveTarget*`.
+    fn parse(data: &str) -> Result<Self, ActionError> {
+        let (name, value) = data
+            .split_once('=')
+            .ok_or_else(|| invalid("expected 'command=value'".to_string()))?;
+
+        let command = match name {
+            "ruleEngine" => Self::RuleEngine(
+                value
+                    .parse()
+                    .map_err(|e: ParseRuleEngineStatusError| invalid(e.to_string()))?,
+            ),
+            "requestBodyAccess" => Self::RequestBodyAccess(parse_on_off(value)?),
+            "requestBodyLimit" => Self::RequestBodyLimit(parse_limit(value)?),
+            "forceRequestBodyVariable" => Self::ForceRequestBodyVariable(parse_on_off(value)?),
+            "responseBodyAccess" => Self::ResponseBodyAccess(parse_on_off(value)?),
+            "responseBodyLimit" => Self::ResponseBodyLimit(parse_limit(value)?),
+            "forceResponseBodyVariable" => Self::ForceResponseBodyVariable(parse_on_off(value)?),
+            "ruleRemoveById" => Self::RuleRemoveById(parse_id_range(value)?),
+            "ruleRemoveByTag" => Self::RuleRemoveByTag(value.to_string()),
+            "ruleRemoveByMsg" => Self::RuleRemoveByMsg(value.to_string()),
+            "ruleRemoveTargetById" => {
+                let (id, target) = split_target(value)?;
+                Self::RuleRemoveTargetById(parse_id(id)?, target)
+            }
+            "ruleRemoveTargetByTag" => {
+                let (tag, target) = split_target(value)?;
+                Self::RuleRemoveTargetByTag(tag.to_string(), target)
+            }
+            "ruleRemoveTargetByMsg" => {
+                let (msg, target) = split_target(value)?;
+                Self::RuleRemoveTargetByMsg(msg.to_string(), target)
+            }
+            "auditEngine" => {
+                AuditEngineStatus::from_str(value).map_err(|e| invalid(e.to_string()))?;
+                Self::NotImplemented
+            }
+            "debugLogLevel" => {
+                match value.parse::<u8>() {
+                    Ok(0..=9) => {}
+                    _ => return Err(invalid(format!("log level must be 0-9, got '{}'", value))),
+                }
+                Self::NotImplemented
+            }
+            "auditLogParts"
+            | "requestBodyProcessor"
+            | "responseBodyProcessor"
+            | "hashEngine"
+            | "hashEnforcement" => Self::NotImplemented,
+            _ => return Err(invalid(format!("unknown ctl command '{}'", name))),
+        };
+        Ok(command)
+    }
+}
+
+fn invalid(message: String) -> ActionError {
+    ActionError::InvalidArguments(message)
+}
+
+fn parse_on_off(value: &str) -> Result<bool, ActionError> {
+    match value.to_lowercase().as_str() {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        _ => Err(invalid(format!("expected 'on' or 'off', got '{}'", value))),
+    }
+}
+
+fn parse_limit(value: &str) -> Result<i64, ActionError> {
+    value
+        .parse()
+        .map_err(|_| invalid(format!("expected numeric limit, got '{}'", value)))
+}
+
+fn parse_id(value: &str) -> Result<i32, ActionError> {
+    value
+        .parse()
+        .map_err(|_| invalid(format!("expected rule id, got '{}'", value)))
+}
+
+/// `ID` or `START-END` (inclusive).
+fn parse_id_range(value: &str) -> Result<RangeInclusive<i32>, ActionError> {
+    match value.split_once('-') {
+        Some((start, end)) if !start.is_empty() => Ok(parse_id(start)?..=parse_id(end)?),
+        _ => parse_id(value).map(|id| id..=id),
+    }
+}
+
+/// Splits `rules;COLLECTION[:key]` into the rule selector and the target.
+fn split_target(value: &str) -> Result<(&str, RuleTarget), ActionError> {
+    let (rules, target) = value.split_once(';').ok_or_else(|| {
+        invalid(format!(
+            "expected 'value;COLLECTION[:key]', got '{}'",
+            value
+        ))
+    })?;
+    let (collection, key) = target.split_once(':').unwrap_or((target, ""));
+    let variable = collection
+        .trim()
+        .parse::<RuleVariable>()
+        .map_err(|_| invalid(format!("unknown collection '{}'", collection.trim())))?;
+    Ok((
+        rules,
+        RuleTarget {
+            variable,
+            key: key.to_lowercase(),
+        },
+    ))
 }
 
 /// `ctl` action - Change WAF configuration at runtime.
@@ -118,30 +213,12 @@ enum CtlCommand {
 #[derive(Debug)]
 pub struct CtlAction {
     command: CtlCommand,
-    value: String,
-    collection: Option<RuleVariable>,
-    key: Option<String>,
 }
 
 impl CtlAction {
     pub fn new() -> Self {
         Self {
-            command: CtlCommand::RuleEngine,
-            value: String::new(),
-            collection: None,
-            key: None,
-        }
-    }
-
-    /// Parse on/off toggle values.
-    fn parse_on_off(value: &str) -> Result<bool, ActionError> {
-        match value.to_lowercase().as_str() {
-            "on" => Ok(true),
-            "off" => Ok(false),
-            _ => Err(ActionError::InvalidArguments(format!(
-                "expected 'on' or 'off', got '{}'",
-                value
-            ))),
+            command: CtlCommand::NotImplemented,
         }
     }
 }
@@ -154,320 +231,68 @@ impl Default for CtlAction {
 
 impl Action for CtlAction {
     fn init(&mut self, _rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
-        // Parse syntax: command=value or command=value;collection:key
-        let (command_part, value_part) = data
-            .split_once('=')
-            .ok_or_else(|| ActionError::InvalidArguments("expected 'command=value'".to_string()))?;
-
-        // Split value and optional collection:key
-        let (value, collection_key) = if let Some((val, col)) = value_part.split_once(';') {
-            (val, Some(col))
-        } else {
-            (value_part, None)
-        };
-
-        // Parse collection and key if present
-        if let Some(col_key) = collection_key {
-            let (col_name, key) = if let Some((col, k)) = col_key.split_once(':') {
-                let key = if k.is_empty() {
-                    None
-                } else {
-                    Some(k.to_lowercase())
-                };
-                (col.trim(), key)
-            } else {
-                (col_key.trim(), None)
-            };
-
-            // Parse collection variable
-            if !col_name.is_empty() {
-                let collection = col_name.parse::<RuleVariable>().map_err(|_| {
-                    ActionError::InvalidArguments(format!("unknown collection '{}'", col_name))
-                })?;
-                self.collection = Some(collection);
-            }
-
-            self.key = key;
-        }
-
-        // Parse command
-        self.command = match command_part {
-            "auditEngine" => CtlCommand::AuditEngine,
-            "auditLogParts" => CtlCommand::AuditLogParts,
-            "requestBodyAccess" => CtlCommand::RequestBodyAccess,
-            "requestBodyLimit" => CtlCommand::RequestBodyLimit,
-            "requestBodyProcessor" => CtlCommand::RequestBodyProcessor,
-            "forceRequestBodyVariable" => CtlCommand::ForceRequestBodyVariable,
-            "responseBodyProcessor" => CtlCommand::ResponseBodyProcessor,
-            "responseBodyAccess" => CtlCommand::ResponseBodyAccess,
-            "responseBodyLimit" => CtlCommand::ResponseBodyLimit,
-            "forceResponseBodyVariable" => CtlCommand::ForceResponseBodyVariable,
-            "ruleEngine" => CtlCommand::RuleEngine,
-            "ruleRemoveById" => CtlCommand::RuleRemoveById,
-            "ruleRemoveByMsg" => CtlCommand::RuleRemoveByMsg,
-            "ruleRemoveByTag" => CtlCommand::RuleRemoveByTag,
-            "ruleRemoveTargetById" => CtlCommand::RuleRemoveTargetById,
-            "ruleRemoveTargetByMsg" => CtlCommand::RuleRemoveTargetByMsg,
-            "ruleRemoveTargetByTag" => CtlCommand::RuleRemoveTargetByTag,
-            "hashEngine" => CtlCommand::HashEngine,
-            "hashEnforcement" => CtlCommand::HashEnforcement,
-            "debugLogLevel" => CtlCommand::DebugLogLevel,
-            _ => {
-                return Err(ActionError::InvalidArguments(format!(
-                    "unknown ctl command '{}'",
-                    command_part
-                )));
-            }
-        };
-
-        // Basic validation for toggle commands
-        if matches!(
-            self.command,
-            CtlCommand::RequestBodyAccess
-                | CtlCommand::ResponseBodyAccess
-                | CtlCommand::ForceRequestBodyVariable
-                | CtlCommand::ForceResponseBodyVariable
-        ) {
-            Self::parse_on_off(value)?;
-        }
-
-        // Basic validation for limit commands
-        if matches!(
-            self.command,
-            CtlCommand::RequestBodyLimit | CtlCommand::ResponseBodyLimit
-        ) {
-            value.parse::<i64>().map_err(|_| {
-                ActionError::InvalidArguments(format!("expected numeric limit, got '{}'", value))
-            })?;
-        }
-
-        // Basic validation for debug log level
-        if matches!(self.command, CtlCommand::DebugLogLevel) {
-            let level = value.parse::<i32>().map_err(|_| {
-                ActionError::InvalidArguments(format!(
-                    "expected numeric log level, got '{}'",
-                    value
-                ))
-            })?;
-            if !(0..=9).contains(&level) {
-                return Err(ActionError::InvalidArguments(format!(
-                    "log level must be 0-9, got {}",
-                    level
-                )));
-            }
-        }
-
-        self.value = value.to_string();
+        self.command = CtlCommand::parse(data)?;
         Ok(())
     }
 
     fn evaluate(&self, _rule: &RuleMetadata, tx: &mut Transaction) {
-        use crate::RuleEngineStatus;
-        use crate::types::RulePhase;
-
-        match self.command {
-            CtlCommand::RuleEngine => {
-                // Parse and set rule engine status
-                if let Ok(status) = RuleEngineStatus::from_str(&self.value) {
-                    tx.set_rule_engine(status);
-                }
-                // Note: Errors are already caught during init(), silently ignore here
-            }
-
-            CtlCommand::RequestBodyAccess => {
-                // Only allow changing before request body phase
-                if let Some(phase) = tx.last_phase()
-                    && phase >= RulePhase::RequestBody
-                {
-                    // Too late to change, silently ignore
-                    return;
-                }
-
-                if let Ok(enabled) = Self::parse_on_off(&self.value) {
-                    tx.set_request_body_access(enabled);
+        match &self.command {
+            CtlCommand::RuleEngine(status) => tx.set_rule_engine(*status),
+            CtlCommand::RequestBodyAccess(enabled) => {
+                if before_phase(tx, RulePhase::RequestBody) {
+                    tx.set_request_body_access(*enabled);
                 }
             }
-
-            CtlCommand::RequestBodyLimit => {
-                // Only allow changing before request body phase
-                if let Some(phase) = tx.last_phase()
-                    && phase >= RulePhase::RequestBody
-                {
-                    return;
-                }
-
-                if let Ok(limit) = self.value.parse::<i64>() {
-                    tx.set_request_body_limit(limit);
+            CtlCommand::RequestBodyLimit(limit) => {
+                if before_phase(tx, RulePhase::RequestBody) {
+                    tx.set_request_body_limit(*limit);
                 }
             }
-
-            CtlCommand::ForceRequestBodyVariable => {
-                if let Ok(enabled) = Self::parse_on_off(&self.value) {
-                    tx.set_force_request_body_variable(enabled);
+            CtlCommand::ForceRequestBodyVariable(enabled) => {
+                tx.set_force_request_body_variable(*enabled);
+            }
+            CtlCommand::ResponseBodyAccess(enabled) => {
+                if before_phase(tx, RulePhase::ResponseBody) {
+                    tx.set_response_body_access(*enabled);
                 }
             }
-
-            CtlCommand::ResponseBodyAccess => {
-                // Only allow changing before response body phase
-                if let Some(phase) = tx.last_phase()
-                    && phase >= RulePhase::ResponseBody
-                {
-                    return;
-                }
-
-                if let Ok(enabled) = Self::parse_on_off(&self.value) {
-                    tx.set_response_body_access(enabled);
+            CtlCommand::ResponseBodyLimit(limit) => {
+                if before_phase(tx, RulePhase::ResponseBody) {
+                    tx.set_response_body_limit(*limit);
                 }
             }
-
-            CtlCommand::ResponseBodyLimit => {
-                // Only allow changing before response body phase
-                if let Some(phase) = tx.last_phase()
-                    && phase >= RulePhase::ResponseBody
-                {
-                    return;
-                }
-
-                if let Ok(limit) = self.value.parse::<i64>() {
-                    tx.set_response_body_limit(limit);
-                }
+            CtlCommand::ForceResponseBodyVariable(enabled) => {
+                tx.set_force_response_body_variable(*enabled);
             }
-
-            CtlCommand::ForceResponseBodyVariable => {
-                if let Ok(enabled) = Self::parse_on_off(&self.value) {
-                    tx.set_force_response_body_variable(enabled);
-                }
-            }
-
-            CtlCommand::RuleRemoveById => {
-                // Parse ID or ID range
-                if let Some(idx) = self.value.find('-')
-                    && idx > 0
-                    && let (Ok(start), Ok(end)) = (
-                        self.value[..idx].parse::<i32>(),
-                        self.value[idx + 1..].parse::<i32>(),
-                    )
-                {
-                    // Range: 100-199
-                    for id in start..=end {
-                        tx.remove_rule_by_id(id);
-                    }
-                } else if let Ok(id) = self.value.parse::<i32>() {
-                    // Single ID
+            CtlCommand::RuleRemoveById(ids) => {
+                for id in ids.clone() {
                     tx.remove_rule_by_id(id);
                 }
             }
-
-            CtlCommand::RuleRemoveByTag => {
-                // Collect rule IDs that match the tag, then add to exclusion list
-                let matching_ids: Vec<i32> = if let Some(rules) = tx.rules() {
-                    rules
-                        .get_rules()
-                        .iter()
-                        .filter(|rule| rule.metadata().tags.contains(&self.value))
-                        .map(|rule| rule.metadata().id)
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-
-                for id in matching_ids {
+            CtlCommand::RuleRemoveByTag(tag) => {
+                for id in rule_ids(tx, |rule| rule.tags.contains(tag)) {
                     tx.remove_rule_by_id(id);
                 }
             }
-
-            CtlCommand::RuleRemoveByMsg => {
-                // Collect rule IDs that match the message, then add to exclusion list
-                let matching_ids: Vec<i32> = if let Some(rules) = tx.rules() {
-                    rules
-                        .get_rules()
-                        .iter()
-                        .filter(|rule| {
-                            rule.metadata()
-                                .msg
-                                .as_ref()
-                                .is_some_and(|msg| msg.as_str() == self.value)
-                        })
-                        .map(|rule| rule.metadata().id)
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-
-                for id in matching_ids {
+            CtlCommand::RuleRemoveByMsg(msg) => {
+                for id in rule_ids(tx, |rule| has_msg(rule, msg)) {
                     tx.remove_rule_by_id(id);
                 }
             }
-
-            CtlCommand::RuleRemoveTargetById => {
-                // Parse format: "id;VARIABLE:key"
-                // The variable/key were already parsed in init()
-                if let (Ok(rule_id), Some(var)) = (self.value.parse::<i32>(), self.collection) {
-                    let key = self.key.as_deref().unwrap_or("");
-                    tx.remove_rule_target_by_id(rule_id, var, key);
+            CtlCommand::RuleRemoveTargetById(id, target) => {
+                tx.remove_rule_target_by_id(*id, target.variable, target.key.as_str());
+            }
+            CtlCommand::RuleRemoveTargetByTag(tag, target) => {
+                for id in rule_ids(tx, |rule| rule.tags.contains(tag)) {
+                    tx.remove_rule_target_by_id(id, target.variable, target.key.as_str());
                 }
             }
-
-            CtlCommand::RuleRemoveTargetByTag => {
-                // Collect rule IDs that match the tag, then add target exclusions
-                if let Some(var) = self.collection {
-                    let matching_ids: Vec<i32> = if let Some(rules) = tx.rules() {
-                        rules
-                            .get_rules()
-                            .iter()
-                            .filter(|rule| rule.metadata().tags.contains(&self.value))
-                            .map(|rule| rule.metadata().id)
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
-
-                    let key = self.key.as_deref().unwrap_or("");
-                    for id in matching_ids {
-                        tx.remove_rule_target_by_id(id, var, key);
-                    }
+            CtlCommand::RuleRemoveTargetByMsg(msg, target) => {
+                for id in rule_ids(tx, |rule| has_msg(rule, msg)) {
+                    tx.remove_rule_target_by_id(id, target.variable, target.key.as_str());
                 }
             }
-
-            CtlCommand::RuleRemoveTargetByMsg => {
-                // Collect rule IDs that match the message, then add target exclusions
-                if let Some(var) = self.collection {
-                    let matching_ids: Vec<i32> = if let Some(rules) = tx.rules() {
-                        rules
-                            .get_rules()
-                            .iter()
-                            .filter(|rule| {
-                                rule.metadata()
-                                    .msg
-                                    .as_ref()
-                                    .is_some_and(|msg| msg.as_str() == self.value)
-                            })
-                            .map(|rule| rule.metadata().id)
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
-
-                    let key = self.key.as_deref().unwrap_or("");
-                    for id in matching_ids {
-                        tx.remove_rule_target_by_id(id, var, key);
-                    }
-                }
-            }
-
-            // Body processor and audit settings - deferred to Phase 10
-            CtlCommand::RequestBodyProcessor
-            | CtlCommand::ResponseBodyProcessor
-            | CtlCommand::AuditEngine
-            | CtlCommand::AuditLogParts
-            | CtlCommand::DebugLogLevel => {
-                // Deferred to Phase 10 - requires additional infrastructure
-            }
-
-            // Not supported
-            CtlCommand::HashEngine | CtlCommand::HashEnforcement => {
-                // Hash engine is not supported in Coraza
-            }
+            CtlCommand::NotImplemented => {}
         }
     }
 
@@ -476,184 +301,128 @@ impl Action for CtlAction {
     }
 }
 
+/// Whether `phase` has not started yet; body settings can't change once their phase began.
+fn before_phase(tx: &Transaction, phase: RulePhase) -> bool {
+    tx.last_phase().is_none_or(|last| last < phase)
+}
+
+/// IDs of the WAF's top-level rules matching `selects`; empty for a transaction without a WAF.
+fn rule_ids(tx: &Transaction, selects: impl Fn(&RuleMetadata) -> bool) -> Vec<i32> {
+    tx.rules()
+        .map(|rules| {
+            rules
+                .get_rules()
+                .iter()
+                .map(|rule| rule.metadata())
+                .filter(|metadata| selects(metadata))
+                .map(|metadata| metadata.id)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn has_msg(rule: &RuleMetadata, msg: &str) -> bool {
+    rule.msg.as_ref().is_some_and(|m| m.as_str() == msg)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // Test parsing of all CTL commands
-    #[test]
-    fn test_ctl_parse_audit_engine() {
-        let mut action = CtlAction::new();
-        assert!(
-            action
-                .init(&mut RuleMetadata::new(), "auditEngine=On")
-                .is_ok()
-        );
-        assert_eq!(action.command, CtlCommand::AuditEngine);
-        assert_eq!(action.value, "On");
+    fn parse(data: &str) -> CtlCommand {
+        CtlCommand::parse(data).unwrap()
     }
 
     #[test]
-    fn test_ctl_parse_audit_log_parts() {
-        let mut action = CtlAction::new();
-        assert!(
-            action
-                .init(&mut RuleMetadata::new(), "auditLogParts=ABZ")
-                .is_ok()
+    fn test_ctl_parses_values_when_compiled() {
+        assert_eq!(
+            parse("ruleEngine=Off"),
+            CtlCommand::RuleEngine(RuleEngineStatus::Off)
         );
-        assert_eq!(action.command, CtlCommand::AuditLogParts);
-        assert_eq!(action.value, "ABZ");
+        assert_eq!(
+            parse("requestBodyAccess=On"),
+            CtlCommand::RequestBodyAccess(true)
+        );
+        assert_eq!(
+            parse("requestBodyLimit=12345"),
+            CtlCommand::RequestBodyLimit(12345)
+        );
+        assert_eq!(
+            parse("responseBodyAccess=off"),
+            CtlCommand::ResponseBodyAccess(false)
+        );
+        assert_eq!(
+            parse("ruleRemoveById=123"),
+            CtlCommand::RuleRemoveById(123..=123)
+        );
+        assert_eq!(
+            parse("ruleRemoveById=1-9"),
+            CtlCommand::RuleRemoveById(1..=9)
+        );
+        assert_eq!(
+            parse("ruleRemoveByTag=MY_TAG"),
+            CtlCommand::RuleRemoveByTag("MY_TAG".to_string())
+        );
+        assert_eq!(
+            parse("ruleRemoveByMsg=a;b"),
+            CtlCommand::RuleRemoveByMsg("a;b".to_string())
+        );
     }
 
     #[test]
-    fn test_ctl_parse_request_body_access() {
-        let mut action = CtlAction::new();
-        assert!(
-            action
-                .init(&mut RuleMetadata::new(), "requestBodyAccess=On")
-                .is_ok()
+    fn test_ctl_parses_rule_targets() {
+        assert_eq!(
+            parse("ruleRemoveTargetById=123;ARGS:User"),
+            CtlCommand::RuleRemoveTargetById(
+                123,
+                RuleTarget {
+                    variable: RuleVariable::Args,
+                    key: "user".to_string()
+                }
+            )
         );
-        assert_eq!(action.command, CtlCommand::RequestBodyAccess);
-        assert_eq!(action.value, "On");
+        assert_eq!(
+            parse("ruleRemoveTargetByTag=t;REQUEST_FILENAME:"),
+            CtlCommand::RuleRemoveTargetByTag(
+                "t".to_string(),
+                RuleTarget {
+                    variable: RuleVariable::RequestFilename,
+                    key: String::new()
+                }
+            )
+        );
     }
 
     #[test]
-    fn test_ctl_parse_request_body_limit() {
-        let mut action = CtlAction::new();
-        assert!(
-            action
-                .init(&mut RuleMetadata::new(), "requestBodyLimit=12345")
-                .is_ok()
-        );
-        assert_eq!(action.command, CtlCommand::RequestBodyLimit);
-        assert_eq!(action.value, "12345");
+    fn test_ctl_accepts_not_implemented_commands() {
+        for data in [
+            "auditEngine=RelevantOnly",
+            "auditLogParts=ABZ",
+            "requestBodyProcessor=XML",
+            "debugLogLevel=3",
+        ] {
+            assert_eq!(parse(data), CtlCommand::NotImplemented, "{}", data);
+        }
     }
 
     #[test]
-    fn test_ctl_parse_request_body_processor() {
-        let mut action = CtlAction::new();
-        assert!(
-            action
-                .init(&mut RuleMetadata::new(), "requestBodyProcessor=XML")
-                .is_ok()
-        );
-        assert_eq!(action.command, CtlCommand::RequestBodyProcessor);
-        assert_eq!(action.value, "XML");
-    }
-
-    #[test]
-    fn test_ctl_parse_rule_engine() {
-        let mut action = CtlAction::new();
-        assert!(
-            action
-                .init(&mut RuleMetadata::new(), "ruleEngine=Off")
-                .is_ok()
-        );
-        assert_eq!(action.command, CtlCommand::RuleEngine);
-        assert_eq!(action.value, "Off");
-    }
-
-    #[test]
-    fn test_ctl_parse_rule_remove_by_id() {
-        let mut action = CtlAction::new();
-        assert!(
-            action
-                .init(&mut RuleMetadata::new(), "ruleRemoveById=123")
-                .is_ok()
-        );
-        assert_eq!(action.command, CtlCommand::RuleRemoveById);
-        assert_eq!(action.value, "123");
-    }
-
-    #[test]
-    fn test_ctl_parse_rule_remove_by_id_range() {
-        let mut action = CtlAction::new();
-        assert!(
-            action
-                .init(&mut RuleMetadata::new(), "ruleRemoveById=1-9")
-                .is_ok()
-        );
-        assert_eq!(action.value, "1-9");
-    }
-
-    #[test]
-    fn test_ctl_parse_rule_remove_by_tag() {
-        let mut action = CtlAction::new();
-        assert!(
-            action
-                .init(&mut RuleMetadata::new(), "ruleRemoveByTag=MY_TAG")
-                .is_ok()
-        );
-        assert_eq!(action.command, CtlCommand::RuleRemoveByTag);
-        assert_eq!(action.value, "MY_TAG");
-    }
-
-    #[test]
-    fn test_ctl_parse_rule_remove_by_msg() {
-        let mut action = CtlAction::new();
-        assert!(
-            action
-                .init(&mut RuleMetadata::new(), "ruleRemoveByMsg=MY_MSG")
-                .is_ok()
-        );
-        assert_eq!(action.command, CtlCommand::RuleRemoveByMsg);
-        assert_eq!(action.value, "MY_MSG");
-    }
-
-    #[test]
-    fn test_ctl_parse_rule_remove_target_with_collection() {
-        let mut action = CtlAction::new();
-        assert!(
-            action
-                .init(
-                    &mut RuleMetadata::new(),
-                    "ruleRemoveTargetById=123;ARGS:user"
-                )
-                .is_ok()
-        );
-        assert_eq!(action.command, CtlCommand::RuleRemoveTargetById);
-        assert_eq!(action.value, "123");
-        assert_eq!(action.collection, Some(RuleVariable::Args));
-        assert_eq!(action.key, Some("user".to_string()));
-    }
-
-    #[test]
-    fn test_ctl_parse_rule_remove_target_no_key() {
-        let mut action = CtlAction::new();
-        assert!(
-            action
-                .init(
-                    &mut RuleMetadata::new(),
-                    "ruleRemoveTargetById=2;REQUEST_FILENAME:"
-                )
-                .is_ok()
-        );
-        assert_eq!(action.collection, Some(RuleVariable::RequestFilename));
-        assert_eq!(action.key, None);
-    }
-
-    #[test]
-    fn test_ctl_parse_response_body_access() {
-        let mut action = CtlAction::new();
-        assert!(
-            action
-                .init(&mut RuleMetadata::new(), "responseBodyAccess=On")
-                .is_ok()
-        );
-        assert_eq!(action.command, CtlCommand::ResponseBodyAccess);
-        assert_eq!(action.value, "On");
-    }
-
-    #[test]
-    fn test_ctl_parse_debug_log_level() {
-        let mut action = CtlAction::new();
-        assert!(
-            action
-                .init(&mut RuleMetadata::new(), "debugLogLevel=3")
-                .is_ok()
-        );
-        assert_eq!(action.command, CtlCommand::DebugLogLevel);
-        assert_eq!(action.value, "3");
+    fn test_ctl_rejects_invalid_values_when_compiled() {
+        for data in [
+            "ruleEngine=bogus",
+            "auditEngine=bogus",
+            "ruleRemoveById=abc",
+            "ruleRemoveTargetById=123",
+            "ruleRemoveTargetById=abc;ARGS:x",
+        ] {
+            assert!(
+                matches!(
+                    CtlCommand::parse(data),
+                    Err(ActionError::InvalidArguments(_))
+                ),
+                "{}",
+                data
+            );
+        }
     }
 
     // Test error cases
@@ -721,13 +490,13 @@ mod tests {
 
     #[test]
     fn test_ctl_parse_on_off() {
-        assert_eq!(CtlAction::parse_on_off("on"), Ok(true));
-        assert_eq!(CtlAction::parse_on_off("ON"), Ok(true));
-        assert_eq!(CtlAction::parse_on_off("On"), Ok(true));
-        assert_eq!(CtlAction::parse_on_off("off"), Ok(false));
-        assert_eq!(CtlAction::parse_on_off("OFF"), Ok(false));
-        assert_eq!(CtlAction::parse_on_off("Off"), Ok(false));
-        assert!(CtlAction::parse_on_off("maybe").is_err());
+        assert_eq!(parse_on_off("on"), Ok(true));
+        assert_eq!(parse_on_off("ON"), Ok(true));
+        assert_eq!(parse_on_off("On"), Ok(true));
+        assert_eq!(parse_on_off("off"), Ok(false));
+        assert_eq!(parse_on_off("OFF"), Ok(false));
+        assert_eq!(parse_on_off("Off"), Ok(false));
+        assert!(parse_on_off("maybe").is_err());
     }
 
     // CTL Execution Tests
