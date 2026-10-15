@@ -295,7 +295,7 @@ fn test_transaction_phase_progression() {
     assert_eq!(tx.last_phase(), Some(RulePhase::ResponseBody));
 
     // Process logging (Phase 5)
-    tx.process_logging();
+    tx.process_logging().unwrap();
     assert_eq!(tx.last_phase(), Some(RulePhase::Logging));
 }
 

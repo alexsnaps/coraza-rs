@@ -146,7 +146,7 @@ fn process_get_request(waf: &Waf, uri: &str) {
     let _ = tx.process_response_body(b"OK");
     println!("⚙️  Phase 4: Response body processed");
 
-    tx.process_logging();
+    tx.process_logging().expect("writing the audit log");
     println!("⚙️  Phase 5: Logging complete");
     println!("✅ Transaction completed successfully");
 }
@@ -184,7 +184,7 @@ fn process_post_request(waf: &Waf, uri: &str, body: &str) {
     let _ = tx.process_response_body(b"{\"status\":\"ok\"}");
     println!("⚙️  Phase 4: Response body processed");
 
-    tx.process_logging();
+    tx.process_logging().expect("writing the audit log");
     println!("⚙️  Phase 5: Logging complete");
     println!("✅ Transaction completed successfully");
 }

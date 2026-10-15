@@ -228,7 +228,9 @@ async fn handle_request(
     }
 
     // Phase 5: Logging
-    tx.process_logging();
+    if let Err(e) = tx.process_logging() {
+        eprintln!("failed to write the audit log: {e}");
+    }
 
     // Write audit log for successful requests (FTW needs this for correlation)
     if let Some(marker_value) = marker_header.as_deref() {

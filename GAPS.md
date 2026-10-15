@@ -203,6 +203,12 @@ Go Coraza has 69 `Sec*` directives; we have 26. Section 1 covers 11 of the 43 mi
     `accuracy`), every value it and its chain matched with `msg` and `logdata` expanded for it, and its disruptive
     action; `MatchedRule::error_log` writes the line Go writes, which the async FTW example now logs for each rule
     with `log`. Parsing counts lines from 1 in each file, where included files used to continue the count.
+  - Done for the audit log itself: `Transaction::audit_log` builds the entry as Go's `AuditLog()` does, in the
+    parts `SecAuditLogParts` or `ctl:auditLogParts` give; `process_logging` writes it with `SecAuditEngine On`, or
+    `RelevantOnly` as Go decides, and returns write errors where Go logs them. Formats `Native`, `JSON` and
+    `JSONLegacy`; writers `Serial` (including `/dev/stdout` and `/dev/stderr`) and `Concurrent`, opened when the
+    WAF is built. Timestamps are in UTC. `HTTPS` is refused when the WAF is built, as it needs an HTTP client with
+    TLS that no dependency provides.
 
 ## 5. Operators, actions and names
 

@@ -9,6 +9,10 @@ use std::sync::Arc;
 
 use crate::RuleVariable;
 use crate::actions::{AllowType, RuleMetadata};
+use crate::audit_log::{
+    AuditFile, AuditLog, AuditLogger, AuditMessage, AuditMessageData, AuditProducer, AuditRequest,
+    AuditResponse, AuditTransaction, mime_type_of,
+};
 use crate::body_processors::{BodyProcessorKind, BodyProcessorOptions};
 use crate::collection::{Map, MatchData, Single};
 use crate::config::WafConfig;
@@ -17,6 +21,7 @@ use crate::types::{
     AuditEngineStatus, AuditLogPart, AuditLogParts, BodyLimitAction, RuleEngineStatus, RulePhase,
     RuleSeverity,
 };
+use crate::utils::time::UtcTime;
 
 /// A rule, with its chain, that matched in a transaction, as recorded for logging.
 #[derive(Debug, Clone)]
@@ -575,8 +580,14 @@ pub struct Transaction {
     /// 255 before any
     highest_severity: Single,
 
+    /// When the transaction started
+    started: std::time::SystemTime,
+
     /// TIME, TIME_* - When the transaction started
     time: TimeVariables,
+
+    /// Where the transaction's audit log entry goes; none outside a WAF
+    audit_logger: Option<Arc<AuditLogger>>,
 
     /// URLENCODED_ERROR, FULL_REQUEST_LENGTH, DURATION, MULTIPART_DATA_AFTER - "0", as Go
     /// Coraza sets them and never changes them
@@ -709,50 +720,27 @@ struct TimeVariables {
 
 impl TimeVariables {
     fn since_epoch(seconds: u64) -> Self {
-        let days = seconds / 86_400;
-        let second_of_day = seconds % 86_400;
-        let (year, month, day) = civil_from_days(days);
+        let at = UtcTime::from_unix(seconds);
         let single = |variable, value: String| {
             let mut single = Single::new(variable);
             single.set(value);
             single
         };
-        let hour = format!("{:02}", second_of_day / 3600);
-        let min = format!("{:02}", second_of_day / 60 % 60);
-        let sec = format!("{:02}", second_of_day % 60);
+        let hour = format!("{:02}", at.hour);
+        let min = format!("{:02}", at.minute);
+        let sec = format!("{:02}", at.second);
         Self {
             time: single(RuleVariable::Time, format!("{hour}:{min}:{sec}")),
-            day: single(RuleVariable::TimeDay, day.to_string()),
+            day: single(RuleVariable::TimeDay, at.day.to_string()),
             epoch: single(RuleVariable::TimeEpoch, seconds.to_string()),
             hour: single(RuleVariable::TimeHour, hour),
             min: single(RuleVariable::TimeMin, min),
-            mon: single(RuleVariable::TimeMon, month.to_string()),
+            mon: single(RuleVariable::TimeMon, at.month.to_string()),
             sec: single(RuleVariable::TimeSec, sec),
-            // 1970-01-01 was a Thursday
-            wday: single(RuleVariable::TimeWday, ((days + 4) % 7).to_string()),
-            year: single(RuleVariable::TimeYear, year.to_string()),
+            wday: single(RuleVariable::TimeWday, at.weekday.to_string()),
+            year: single(RuleVariable::TimeYear, at.year.to_string()),
         }
     }
-}
-
-/// The (year, month 1-12, day 1-31) of a count of days since 1970-01-01, by Howard
-/// Hinnant's `civil_from_days`.
-fn civil_from_days(days: u64) -> (u64, u64, u64) {
-    let z = days + 719_468;
-    let era = z / 146_097;
-    let day_of_era = z % 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let shifted_month = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
-    let month = if shifted_month < 10 {
-        shifted_month + 3
-    } else {
-        shifted_month - 9
-    };
-    let year = year_of_era + era * 400 + u64::from(month <= 2);
-    (year, month, day)
 }
 
 /// Whether `uri` is a request URI as Go's `url.ParseRequestURI` accepts one: `*`, an
@@ -801,6 +789,7 @@ impl Transaction {
     /// Create a new transaction with the given ID.
     pub fn new(id: impl Into<String>) -> Self {
         let config = WafConfig::default();
+        let started = std::time::SystemTime::now();
         Self {
             unique_id: {
                 let mut unique_id = Single::new(RuleVariable::UniqueID);
@@ -869,11 +858,13 @@ impl Transaction {
                 highest_severity.set("255");
                 highest_severity
             },
+            started,
             time: TimeVariables::since_epoch(
-                std::time::SystemTime::now()
+                started
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |since| since.as_secs()),
             ),
+            audit_logger: None,
             urlencoded_error: flag(RuleVariable::UrlencodedError),
             full_request_length: flag(RuleVariable::FullRequestLength),
             duration: flag(RuleVariable::Duration),
@@ -918,6 +909,11 @@ impl Transaction {
     /// like `ctl:ruleRemoveByTag` and `ctl:ruleRemoveByMsg`.
     pub(crate) fn set_rules(&mut self, rules: Arc<RuleGroup>) {
         self.rules = Some(rules);
+    }
+
+    /// Makes the transaction write its audit log entry with `logger`.
+    pub(crate) fn set_audit_logger(&mut self, logger: Arc<AuditLogger>) {
+        self.audit_logger = Some(logger);
     }
 
     /// Makes the transaction use the settings of its WAF, starting with its own copy of
@@ -1957,9 +1953,14 @@ impl Transaction {
         self.interruption.clone()
     }
 
-    /// Process logging phase (final phase).
+    /// Process logging phase (final phase): runs its rules, then writes the transaction's
+    /// audit log entry, as Go Coraza decides: always with `SecAuditEngine On`, and with
+    /// `RelevantOnly` when a rule with `auditlog` matched or the status is one of
+    /// `SecAuditLogRelevantStatus` (the interruption's, or the response's).
     ///
-    /// This is the last phase where logging and audit actions occur.
+    /// # Errors
+    ///
+    /// If the audit log entry can't be written.
     ///
     /// # Example
     ///
@@ -1968,9 +1969,9 @@ impl Transaction {
     ///
     /// let mut tx = Transaction::new("tx-1");
     /// // ... process request and response ...
-    /// tx.process_logging();
+    /// tx.process_logging().unwrap();
     /// ```
-    pub fn process_logging(&mut self) {
+    pub fn process_logging(&mut self) -> std::io::Result<()> {
         // Update phase
         self.last_phase = Some(RulePhase::Logging);
 
@@ -1978,7 +1979,160 @@ impl Transaction {
         // Note: Logging phase rules run even if transaction is disrupted
         self.evaluate_rules(RulePhase::Logging);
 
-        // TODO: Audit logging will go here
+        let Some(logger) = self.audit_logger.clone() else {
+            return Ok(());
+        };
+        let logged = match self.audit_engine {
+            AuditEngineStatus::Off => false,
+            AuditEngineStatus::On => true,
+            AuditEngineStatus::RelevantOnly => {
+                let status = match &self.interruption {
+                    Some(interruption) => interruption.status.to_string(),
+                    None => self.response_status.get().to_string(),
+                };
+                let audited = self.matched_rules.iter().any(|m| m.rule.audit_log);
+                logger.is_relevant(audited, &status)
+            }
+        };
+        if logged {
+            logger.write(&self.audit_log())?;
+        }
+        Ok(())
+    }
+
+    /// The transaction's audit log entry, with the parts `SecAuditLogParts` (or
+    /// `ctl:auditLogParts`) give it, as Go Coraza builds it.
+    pub fn audit_log(&self) -> AuditLog {
+        let since_epoch = self
+            .started
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let at = UtcTime::from_unix(since_epoch.as_secs());
+        let mut transaction = AuditTransaction {
+            timestamp: format!(
+                "{:04}/{:02}/{:02} {:02}:{:02}:{:02}",
+                at.year, at.month, at.day, at.hour, at.minute, at.second
+            ),
+            unix_timestamp: i64::try_from(since_epoch.as_nanos()).unwrap_or(i64::MAX),
+            id: self.unique_id.get().to_string(),
+            client_ip: self.remote_addr.get().to_string(),
+            client_port: self.remote_port.get().parse().unwrap_or(0),
+            host_ip: self.server_addr.get().to_string(),
+            host_port: self.server_port.get().parse().unwrap_or(0),
+            server_id: self.server_name.get().to_string(),
+            request: AuditRequest {
+                method: self.request_method.get().to_string(),
+                protocol: self.request_protocol.get().to_string(),
+                uri: self.request_uri.get().to_string(),
+                length: self.full_request_length.get().parse().unwrap_or(0),
+                ..AuditRequest::default()
+            },
+            highest_severity: self.highest_severity.get().to_string(),
+            is_interrupted: self.interruption.is_some(),
+            ..AuditTransaction::default()
+        };
+
+        let parts = &self.audit_log_parts;
+        let has = |part| parts.contains(&part);
+        if has(AuditLogPart::RequestHeaders) {
+            transaction.request.headers = Some(self.request_headers.entries());
+        }
+        if has(AuditLogPart::RequestBody) {
+            transaction.request.body = self.request_body.get().to_string();
+        }
+        if has(AuditLogPart::UploadedFiles) {
+            transaction.request.files = Some(
+                self.files
+                    .find_all()
+                    .into_iter()
+                    .map(|file| AuditFile {
+                        size: self
+                            .files_sizes
+                            .get(&file.value)
+                            .first()
+                            .and_then(|size| size.parse().ok())
+                            .unwrap_or(0),
+                        mime: mime_type_of(&file.value).to_string(),
+                        name: file.value,
+                    })
+                    .collect(),
+            );
+        }
+        if has(AuditLogPart::IntermediaryResponseBody) || has(AuditLogPart::ResponseHeaders) {
+            let mut response = AuditResponse::default();
+            if has(AuditLogPart::IntermediaryResponseBody) {
+                response.body = self.response_body.get().to_string();
+            }
+            if has(AuditLogPart::ResponseHeaders) {
+                response.status = self.response_status.get().parse().unwrap_or(0);
+                response.headers = Some(self.response_headers.entries());
+            }
+            transaction.response = Some(response);
+        }
+        let trailer = has(AuditLogPart::Trailer);
+        if trailer {
+            let started_ns = transaction.unix_timestamp;
+            let elapsed = std::time::SystemTime::now()
+                .duration_since(self.started)
+                .map_or(0, |elapsed| elapsed.as_nanos());
+            transaction.producer = Some(AuditProducer {
+                rule_engine: self.rule_engine.as_str().to_string(),
+                stopwatch: format!(
+                    "{started_ns} {elapsed}; combined=0, p1=0, p2=0, p3=0, p4=0, p5=0"
+                ),
+                rulesets: self.config.component_names.clone(),
+                ..AuditProducer::default()
+            });
+        }
+
+        let audited = self.matched_rules.iter().filter(|m| m.rule.audit_log);
+        let messages = if has(AuditLogPart::RulesMatched) {
+            audited
+                .flat_map(|matched| {
+                    matched.matches.iter().map(move |data| {
+                        let rule = &matched.rule;
+                        AuditMessage {
+                            actionset: self.config.component_names.join(" "),
+                            message: data.message.clone(),
+                            error_message: if trailer {
+                                matched.error_log()
+                            } else {
+                                String::new()
+                            },
+                            data: AuditMessageData {
+                                file: rule.file.clone(),
+                                line: rule.line,
+                                id: rule.id,
+                                rev: rule.rev.clone(),
+                                msg: data.message.clone(),
+                                data: data.data.clone(),
+                                severity: rule.severity.map_or(-1, |s| s.as_int() as i8),
+                                ver: rule.ver.clone(),
+                                maturity: rule.maturity,
+                                accuracy: rule.accuracy,
+                                tags: rule.tags.clone(),
+                                raw: rule.raw.clone(),
+                            },
+                        }
+                    })
+                })
+                .collect()
+        } else if trailer {
+            audited
+                .map(|matched| AuditMessage {
+                    error_message: matched.error_log(),
+                    ..AuditMessage::default()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        AuditLog {
+            parts: self.audit_log_parts.clone(),
+            transaction,
+            messages,
+        }
     }
 
     // ===== CTL Action Methods =====
@@ -2610,7 +2764,7 @@ value1\r\n\
     fn test_process_logging() {
         let mut tx = Transaction::new("tx-030");
 
-        tx.process_logging();
+        tx.process_logging().unwrap();
 
         // Check phase updated
         assert_eq!(tx.last_phase, Some(RulePhase::Logging));
@@ -2655,7 +2809,7 @@ value1\r\n\
         assert_eq!(tx.last_phase, Some(RulePhase::ResponseBody));
 
         // Process logging
-        tx.process_logging();
+        tx.process_logging().unwrap();
         assert_eq!(tx.last_phase, Some(RulePhase::Logging));
     }
 

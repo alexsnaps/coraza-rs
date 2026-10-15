@@ -216,6 +216,17 @@ impl Map {
         self.data.len()
     }
 
+    /// Every key, lowercase in a case-insensitive map, with its values, sorted by key.
+    pub fn entries(&self) -> std::collections::BTreeMap<String, Vec<String>> {
+        self.data
+            .iter()
+            .map(|(key, values)| {
+                let values = values.iter().map(|kv| kv.value.clone()).collect();
+                (key.clone(), values)
+            })
+            .collect()
+    }
+
     /// Number of values, counting each value of a repeated key.
     pub fn value_count(&self) -> usize {
         self.data.values().map(Vec::len).sum()

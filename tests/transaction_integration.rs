@@ -356,7 +356,7 @@ fn test_complete_transaction_flow() {
     assert!(tx.response_body().contains("success"));
 
     // 6. Logging phase
-    tx.process_logging();
+    tx.process_logging().unwrap();
 
     // Verify final phase tracking
     assert_eq!(tx.last_phase(), Some(RulePhase::Logging));

@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use crate::actions::Action;
+use crate::audit_log::AuditLogger;
 use crate::config::WafConfig;
 use crate::rules::{Rule, RuleGroup, VariableSpec};
 use crate::transaction::Transaction;
@@ -89,6 +90,9 @@ pub struct Waf {
 
     /// Rules in evaluation order, shared with transactions for CTL rule exclusion
     rules: Arc<RuleGroup>,
+
+    /// Where transactions write their audit log entries
+    audit_logger: Arc<AuditLogger>,
 }
 
 impl Waf {
@@ -150,6 +154,7 @@ impl Waf {
         let mut tx = Transaction::new(id);
 
         tx.set_config(Arc::clone(&self.config));
+        tx.set_audit_logger(Arc::clone(&self.audit_logger));
 
         // Share rules reference for CTL tag/msg-based exclusions
         tx.set_rules(Arc::clone(&self.rules));
@@ -253,8 +258,10 @@ impl WafBuilder {
     /// Returns `ConfigError` if the configuration is invalid (see [`Waf::new`]).
     pub fn build(self) -> Result<Waf, ConfigError> {
         validate_config(&self.config)?;
+        let audit_logger = AuditLogger::open(&self.config).map_err(ConfigError::new)?;
 
         Ok(Waf {
+            audit_logger: Arc::new(audit_logger),
             config: Arc::new(self.config),
             rules: Arc::new(self.rules),
         })

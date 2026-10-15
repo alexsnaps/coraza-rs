@@ -1313,3 +1313,101 @@ fn matched_rules_give_go_error_log_lines() {
         ]
     );
 }
+
+fn audited_waf(dir: &std::path::Path, extra: &str) -> Waf {
+    waf(&format!(
+        r#"
+        SecRuleEngine On
+        SecAuditEngine RelevantOnly
+        SecAuditLog {}
+        SecAuditLogParts ABFHKZ
+        {extra}
+        SecRule ARGS:q "@streq evil" "id:1,phase:1,deny,status:403,log,auditlog,msg:'Evil'"
+        "#,
+        dir.join("audit.log").display()
+    ))
+}
+
+fn audit_request(waf: &Waf, id: &str, q: &str) -> Transaction {
+    let mut tx = waf.new_transaction_with_id(id.to_string());
+    tx.process_connection("10.0.0.1", 4242, "10.0.0.2", 80);
+    tx.process_uri(&format!("/x?q={q}"), "GET", "HTTP/1.1");
+    tx.add_request_header("Host", "example.com");
+    tx.process_request_headers();
+    tx.process_logging().unwrap();
+    tx
+}
+
+#[test]
+fn relevant_transactions_are_audit_logged_natively() {
+    let dir = tempfile::tempdir().unwrap();
+    let waf = audited_waf(dir.path(), "");
+
+    audit_request(&waf, "tx-benign", "fine");
+    audit_request(&waf, "tx-evil", "evil");
+
+    let log = std::fs::read_to_string(dir.path().join("audit.log")).unwrap();
+    assert!(!log.contains("tx-benign"), "{log}");
+    let boundary = log.lines().next().unwrap().strip_suffix("A--").unwrap();
+    for expected in [
+        format!("{boundary}A--\n"),
+        "tx-evil 10.0.0.1 4242 10.0.0.2 80\n".to_string(),
+        format!("{boundary}B--\nGET /x?q=evil HTTP/1.1\nhost: example.com\n\n"),
+        format!("{boundary}H--\n[client \"10.0.0.1\"] Coraza: Access denied (phase 1). Evil "),
+        format!("{boundary}K--\nSecRule ARGS:q \"@streq evil\""),
+        format!("{boundary}Z--\n"),
+    ] {
+        assert!(log.contains(&expected), "{expected:?} not in {log}");
+    }
+}
+
+#[test]
+fn audit_log_entries_can_be_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let waf = audited_waf(dir.path(), "SecAuditLogFormat JSON");
+
+    audit_request(&waf, "tx-evil", "evil");
+
+    let log = std::fs::read_to_string(dir.path().join("audit.log")).unwrap();
+    let entry: serde_json::Value = serde_json::from_str(log.trim_end()).unwrap();
+    assert_eq!(entry["transaction"]["id"], "tx-evil");
+    assert_eq!(entry["transaction"]["client_ip"], "10.0.0.1");
+    assert_eq!(entry["transaction"]["request"]["uri"], "/x?q=evil");
+    assert_eq!(entry["transaction"]["is_interrupted"], true);
+    assert_eq!(entry["messages"][0]["data"]["id"], 1);
+    assert_eq!(entry["messages"][0]["message"], "Evil");
+}
+
+#[test]
+fn concurrent_audit_logs_write_a_file_per_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("store");
+    let waf = audited_waf(
+        dir.path(),
+        &format!(
+            "SecAuditLogType Concurrent\nSecAuditLogStorageDir {}",
+            store.display()
+        ),
+    );
+
+    audit_request(&waf, "tx-evil", "evil");
+
+    let index = std::fs::read_to_string(dir.path().join("audit.log")).unwrap();
+    let path = index.trim_end().rsplit(" - ").next().unwrap();
+    assert!(path.starts_with(&store.display().to_string()), "{index}");
+    assert!(path.ends_with("-tx-evil"), "{index}");
+    let entry = std::fs::read_to_string(path).unwrap();
+    assert!(entry.contains("[id \"1\"]"), "{entry}");
+}
+
+#[test]
+fn https_audit_logs_are_not_supported() {
+    let mut parser = Parser::new();
+    parser
+        .from_string(
+            "SecAuditEngine On\nSecAuditLogType HTTPS\nSecAuditLog https://example.com/log",
+        )
+        .unwrap();
+    let err = parser.into_waf().unwrap_err();
+    assert!(err.to_string().contains("HTTPS"), "{err}");
+}
