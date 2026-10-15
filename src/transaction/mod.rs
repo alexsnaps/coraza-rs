@@ -932,62 +932,12 @@ impl Transaction {
         }
     }
 
-    /// Extract GET arguments from a query string.
-    ///
-    /// Parses URL-encoded query string like "key1=value1&key2=value2"
-    /// and adds to ARGS_GET collection.
+    /// Adds the arguments of a query string to ARGS_GET and ARGS.
     fn extract_get_arguments(&mut self, query: &str) {
-        for pair in query.split('&') {
-            if pair.is_empty() {
-                continue;
-            }
-
-            if let Some(eq_pos) = pair.find('=') {
-                let key = &pair[..eq_pos];
-                let value = &pair[eq_pos + 1..];
-
-                // URL decode key and value
-                let key = Self::url_decode(key);
-                let value = Self::url_decode(value);
-
-                self.args_get_mut().add(&key, &value);
-                self.args_mut().add(&key, &value);
-            } else {
-                // Key without value (e.g., "?flag")
-                let key = Self::url_decode(pair);
-                self.args_get_mut().add(&key, "");
-                self.args_mut().add(&key, "");
-            }
+        for (key, value) in crate::body_processors::urlencoded::parse_query(query) {
+            self.args_get.add(&key, &value);
+            self.args.add(&key, &value);
         }
-    }
-
-    /// Simple URL decoder (decodes %XX sequences).
-    fn url_decode(s: &str) -> String {
-        let mut result = String::with_capacity(s.len());
-        let mut chars = s.chars();
-
-        while let Some(ch) = chars.next() {
-            if ch == '%' {
-                // Try to decode %XX sequence
-                let hex: String = chars.by_ref().take(2).collect();
-                if hex.len() == 2
-                    && let Ok(byte) = u8::from_str_radix(&hex, 16)
-                {
-                    result.push(byte as char);
-                    continue;
-                }
-                // If decoding failed, just keep the %
-                result.push('%');
-                result.push_str(&hex);
-            } else if ch == '+' {
-                // '+' decodes to space in query strings
-                result.push(' ');
-            } else {
-                result.push(ch);
-            }
-        }
-
-        result
     }
 
     /// Add a request header.
@@ -1925,5 +1875,14 @@ value1\r\n\
         // Process logging
         tx.process_logging();
         assert_eq!(tx.last_phase, Some(RulePhase::Logging));
+    }
+
+    #[test]
+    fn test_query_arguments_decode_utf8() {
+        let mut tx = Transaction::new("utf8");
+        tx.process_uri("/?name=%C3%A9t%C3%A9&q=a+b", "GET", "HTTP/1.1");
+
+        assert_eq!(tx.args_get().get("name"), vec!["été"]);
+        assert_eq!(tx.args().get("q"), vec!["a b"]);
     }
 }

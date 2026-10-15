@@ -25,23 +25,10 @@ impl BodyProcessor for UrlencodedBodyProcessor {
         let body_str = String::from_utf8_lossy(body).to_string();
         let body_len = body.len();
 
-        // Parse URL-encoded parameters
-        let params = parse_query(&body_str, b'&');
-
-        // Populate ARGS_POST collection
-        let args_post = tx.args_post_mut();
-        for (key, values) in params {
-            for value in values {
-                args_post.add(&key, &value);
-            }
-        }
-
-        // Also merge into ARGS collection
-        let args = tx.args_mut();
-        for (key, values) in parse_query(&body_str, b'&') {
-            for value in values {
-                args.add(&key, &value);
-            }
+        // Populate ARGS_POST, and ARGS with GET and POST arguments
+        for (key, value) in parse_query(&body_str) {
+            tx.args_post_mut().add(&key, &value);
+            tx.args_mut().add(&key, &value);
         }
 
         // Store REQUEST_BODY and REQUEST_BODY_LENGTH
@@ -62,55 +49,17 @@ impl BodyProcessor for UrlencodedBodyProcessor {
     }
 }
 
-/// Parse URL-encoded query string into key-value pairs
-///
-/// # Arguments
-///
-/// * `query` - The query string to parse (e.g., "key1=value1&key2=value2")
-/// * `separator` - The separator byte ('&' or ';')
-///
-/// # Returns
-///
-/// A map of keys to vectors of values (supports duplicate keys)
-fn parse_query(query: &str, separator: u8) -> std::collections::HashMap<String, Vec<String>> {
-    let mut result = std::collections::HashMap::new();
-    let mut remaining = query;
-
-    while !remaining.is_empty() {
-        // Find next separator
-        let (key_value, rest) = if let Some(pos) = remaining.bytes().position(|b| b == separator) {
-            (&remaining[..pos], &remaining[pos + 1..])
-        } else {
-            (remaining, "")
-        };
-
-        remaining = rest;
-
-        // Skip empty pairs
-        if key_value.is_empty() {
-            continue;
-        }
-
-        // Split on '=' to get key and value
-        let (key, value) = if let Some(pos) = key_value.find('=') {
-            (&key_value[..pos], &key_value[pos + 1..])
-        } else {
-            // No '=' means key with empty value
-            (key_value, "")
-        };
-
-        // URL-decode key and value
-        let (decoded_key, _, _) = url_decode(key);
-        let (decoded_value, _, _) = url_decode(value);
-
-        // Add to result (supports duplicate keys)
-        result
-            .entry(decoded_key)
-            .or_insert_with(Vec::new)
-            .push(decoded_value);
-    }
-
-    result
+/// Decoded `key=value` pairs of an `application/x-www-form-urlencoded` string (a query
+/// string or a form body), in order. Empty pairs are skipped; a key without `=` has an
+/// empty value.
+pub(crate) fn parse_query(query: &str) -> impl Iterator<Item = (String, String)> + '_ {
+    query
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (url_decode(key).0, url_decode(value).0)
+        })
 }
 
 #[cfg(test)]
@@ -256,16 +205,30 @@ mod tests {
 
     #[test]
     fn test_parse_query() {
-        let result = parse_query("a=1&b=2&c=3", b'&');
-        assert_eq!(result.get("a"), Some(&vec!["1".to_string()]));
-        assert_eq!(result.get("b"), Some(&vec!["2".to_string()]));
-        assert_eq!(result.get("c"), Some(&vec!["3".to_string()]));
+        let result: Vec<_> = parse_query("a=1&&b=2&c&a=3").collect();
+        let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+        assert_eq!(
+            result,
+            vec![
+                pair("a", "1"),
+                pair("b", "2"),
+                pair("c", ""),
+                pair("a", "3")
+            ]
+        );
     }
 
     #[test]
     fn test_parse_query_with_encoding() {
-        let result = parse_query("name=John+Doe&city=New%20York", b'&');
-        assert_eq!(result.get("name"), Some(&vec!["John Doe".to_string()]));
-        assert_eq!(result.get("city"), Some(&vec!["New York".to_string()]));
+        let result: Vec<_> = parse_query("name=John+Doe&city=New%20York&e=%C3%A9").collect();
+        let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+        assert_eq!(
+            result,
+            vec![
+                pair("name", "John Doe"),
+                pair("city", "New York"),
+                pair("e", "é")
+            ]
+        );
     }
 }

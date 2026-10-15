@@ -124,7 +124,7 @@ probed bugs.
   - Done: directives return a message and the parser checks for a missing argument and adds the location once.
     The sub-parser errors fold into `CompileError`; two types remain, unlocated (`CompileError`) and located
     (`ParseError`), so no error carries a placeholder line or file.
-- [ ] **One URL decoder and one query parser.** `Transaction::url_decode` (`src/transaction/mod.rs:866`) decodes
+- [x] **One URL decoder and one query parser.** `Transaction::url_decode` (`src/transaction/mod.rs:866`) decodes
   `%C3%A9` to `"Ã©"`; `transformations::url_decode` gives `"é"` **(probe)**. `body_processors::urlencoded::parse_query`
   collects into a `HashMap`, losing argument order.
 - [ ] **`maybe_remove_quotes` twice:** `src/seclang/action_parser.rs:253` and `src/utils/strings.rs:106`.
