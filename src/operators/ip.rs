@@ -7,6 +7,7 @@ use crate::operators::Operator;
 use crate::transaction::Transaction;
 use ipnet::IpNet;
 use std::net::IpAddr;
+use std::path::Path;
 use std::str::FromStr;
 
 /// IP address matching operator.
@@ -185,7 +186,8 @@ impl IpMatchFromFile {
     ///
     /// # Arguments
     ///
-    /// * `file_path` - Path to file containing IP addresses (one per line)
+    /// * `file_path` - Path to file containing IP addresses (one per line); a relative
+    ///   path is relative to the working directory
     ///
     /// # Returns
     ///
@@ -198,9 +200,10 @@ impl IpMatchFromFile {
     /// - Empty lines are ignored
     /// - Lines starting with `#` are treated as comments and ignored
     /// - Invalid IP addresses are silently skipped
-    pub fn new(file_path: &str) -> Result<Self, String> {
+    pub fn new(file_path: impl AsRef<Path>) -> Result<Self, String> {
+        let file_path = file_path.as_ref();
         let content = std::fs::read_to_string(file_path)
-            .map_err(|e| format!("Failed to read file {}: {}", file_path, e))?;
+            .map_err(|e| format!("Failed to read file {}: {}", file_path.display(), e))?;
 
         let mut subnets = Vec::new();
 
@@ -234,7 +237,10 @@ impl IpMatchFromFile {
         }
 
         if subnets.is_empty() {
-            return Err(format!("No valid IP addresses found in {}", file_path));
+            return Err(format!(
+                "No valid IP addresses found in {}",
+                file_path.display()
+            ));
         }
 
         Ok(Self { subnets })
@@ -258,7 +264,8 @@ impl Operator for IpMatchFromFile {
 ///
 /// # Arguments
 ///
-/// * `file_path` - Path to file containing IP addresses (one per line)
+/// * `file_path` - Path to file containing IP addresses (one per line); a relative path
+///   is relative to the working directory
 ///
 /// # Examples
 ///
@@ -266,7 +273,7 @@ impl Operator for IpMatchFromFile {
 /// # use coraza::operators::ip_match_from_file;
 /// let op = ip_match_from_file("/etc/coraza/blocked-ips.txt").unwrap();
 /// ```
-pub fn ip_match_from_file(file_path: &str) -> Result<IpMatchFromFile, String> {
+pub fn ip_match_from_file(file_path: impl AsRef<Path>) -> Result<IpMatchFromFile, String> {
     IpMatchFromFile::new(file_path)
 }
 

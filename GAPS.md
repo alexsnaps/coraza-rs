@@ -13,12 +13,16 @@ Suggested order: 1 → 2 → 5, then 3 and 4. The first three items of 1 account
 
 ## 1. CRS rules dropped at load (measured)
 
-- [ ] **Find data files next to the config that names them.** 20 rules are dropped because `@pmFromFile` can't find
+- [x] **Find data files next to the config that names them.** 20 rules are dropped because `@pmFromFile` can't find
   CRS's `.data` files.
   - `PmFromFile::read_file_with_fallback` (`src/operators/pattern.rs:255`) tries the working directory, then
     hard-coded guesses (`../coraza-coreruleset/rules/@owasp_crs`, `/etc/coraza/rules`, …). `@ipMatchFromFile` tries
     only the working directory (`src/operators/ip.rs:202`).
   - Go hands each operator the directory of the file being parsed (`internal/seclang/rule_parser.go:193`).
+  - Done: `OperatorEnum::with_context` takes an `OperatorContext` whose `base_dir` the parser sets to the
+    directory of the rule's file; `@pmFromFile` and `@ipMatchFromFile` resolve a relative path against it, as Go
+    does, and the hard-coded guesses are gone. Outside the parser (`OperatorEnum::new`, `compile_sec_rule`), a
+    relative path stays relative to the working directory. The CRS load check now skips 73 directives.
 - [ ] **`SecRuleUpdateTargetById` and `SecRuleUpdateTargetByTag`.** 55 skipped: all of CRS's false-positive
   exclusions in `REQUEST-999-COMMON-EXCEPTIONS-AFTER.conf`, such as `!REQUEST_COOKIES:/^_ga(?:_\w+)?$/` on 941100.
   - These add targets or exclusions to a rule. `WafBuilder::update_rule_variables_by_id` (`src/waf.rs:436`) replaces

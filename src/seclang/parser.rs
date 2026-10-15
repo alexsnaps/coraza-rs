@@ -16,9 +16,10 @@ use std::path::Path;
 use std::str::FromStr;
 
 use crate::config::WafConfig;
+use crate::operators::OperatorContext;
 use crate::rules::{Rule, RuleGroup};
 use crate::seclang::CompileError;
-use crate::seclang::rule_compiler::{compile_sec_action, compile_sec_marker, compile_sec_rule};
+use crate::seclang::rule_compiler::{compile_sec_action, compile_sec_marker, compile_sec_rule_in};
 use crate::types::{AuditEngineStatus, BodyLimitAction, RuleEngineStatus};
 use crate::waf::{ConfigError, Waf, WafBuilder};
 
@@ -61,6 +62,10 @@ type DirectiveFn = fn(&mut DirectiveOptions<'_>) -> Result<(), String>;
 struct DirectiveOptions<'a> {
     /// Directive options/arguments (everything after directive name)
     opts: String,
+
+    /// Directory of the file holding the directive (empty for a string), which relative
+    /// paths in it are relative to
+    config_dir: &'a Path,
 
     /// Mutable reference to WAF configuration
     waf_config: &'a mut WafConfig,
@@ -393,6 +398,7 @@ impl Parser {
         } else {
             handler(&mut DirectiveOptions {
                 opts,
+                config_dir: Path::new(&self.state.current_dir),
                 waf_config: &mut self.waf_config,
                 rules: &mut self.rules,
             })
@@ -481,7 +487,10 @@ fn add_rule(
 
 /// SecRule VARIABLES "OPERATOR" "ACTIONS"
 fn directive_sec_rule(options: &mut DirectiveOptions) -> Result<(), String> {
-    let rule = compile_sec_rule(&options.opts);
+    let context = OperatorContext {
+        base_dir: options.config_dir,
+    };
+    let rule = compile_sec_rule_in(&options.opts, &context);
     add_rule(options, rule)
 }
 

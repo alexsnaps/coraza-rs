@@ -289,3 +289,30 @@ fn detect_xss_blocks_recent_event_handlers() {
 
     assert_eq!(interruption.map(|i| i.rule_id), Some(941100));
 }
+
+#[test]
+fn data_files_are_found_next_to_the_config_naming_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let sub = dir.path().join("rules");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join("words.data"), "# comment\nevil\n").unwrap();
+    std::fs::write(sub.join("ips.data"), "10.0.0.0/8\n").unwrap();
+    std::fs::write(
+        sub.join("rules.conf"),
+        r#"
+        SecRule ARGS:q "@pmFromFile words.data" "id:1,phase:1,deny,status:403"
+        SecRule ARGS:ip "@ipMatchFromFile ips.data" "id:2,phase:1,deny,status:403"
+        "#,
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("main.conf"), "Include rules/rules.conf\n").unwrap();
+
+    let mut parser = Parser::new();
+    parser.from_file(dir.path().join("main.conf")).unwrap();
+    let waf = parser.into_waf().unwrap();
+
+    let mut tx = request_with_arg(&waf, "q", "some evil input");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+    let mut tx = request_with_arg(&waf, "ip", "10.1.2.3");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(2));
+}

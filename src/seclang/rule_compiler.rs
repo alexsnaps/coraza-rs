@@ -6,10 +6,12 @@
 //! Compiles SecRule, SecAction, and SecMarker directives into executable Rule structures.
 
 use crate::actions::Action;
+use crate::operators::OperatorContext;
 use crate::rules::Rule;
 use crate::seclang::CompileError;
 use crate::seclang::action_parser::ParsedAction;
-use crate::seclang::{parse_actions, parse_operator, parse_variables};
+use crate::seclang::operator_parser::parse_operator_in;
+use crate::seclang::{parse_actions, parse_variables};
 use crate::utils::strings::maybe_remove_quotes;
 
 type CompileResult<T> = Result<T, CompileError>;
@@ -22,6 +24,9 @@ type CompileResult<T> = Result<T, CompileError>;
 ///
 /// * `input` - Full SecRule directive string (without "SecRule" prefix)
 ///
+/// The operator is created in the default [`OperatorContext`]: a relative data file
+/// is relative to the working directory.
+///
 /// # Example
 ///
 /// ```
@@ -32,6 +37,14 @@ type CompileResult<T> = Result<T, CompileError>;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn compile_sec_rule(input: &str) -> CompileResult<Rule> {
+    compile_sec_rule_in(input, &OperatorContext::default())
+}
+
+/// Like [`compile_sec_rule`], creating the operator in `context`.
+pub(crate) fn compile_sec_rule_in(
+    input: &str,
+    context: &OperatorContext<'_>,
+) -> CompileResult<Rule> {
     // Parse the three components: VARIABLES OPERATOR ACTIONS
     let (vars, operator, actions) = parse_rule_with_operator(input)?;
 
@@ -40,7 +53,7 @@ pub fn compile_sec_rule(input: &str) -> CompileResult<Rule> {
         .map_err(|e| CompileError::new(format!("failed to parse variables '{}': {}", vars, e)))?;
 
     // Parse operator
-    let rule_operator = parse_operator(&operator).map_err(|e| {
+    let rule_operator = parse_operator_in(&operator, context).map_err(|e| {
         CompileError::new(format!("failed to parse operator '{}': {}", operator, e))
     })?;
 
