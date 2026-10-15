@@ -16,7 +16,7 @@ use coraza::config::WafConfig;
 use coraza::operators::contains;
 use coraza::rules::{Rule, RuleAction, RuleOperator, VariableSpec};
 use coraza::types::{RuleEngineStatus, RulePhase, RuleVariable};
-use coraza::waf::Waf;
+use coraza::waf::{Waf, WafBuilder};
 
 fn main() {
     println!("🛡️  Coraza WAF - Simple Example\n");
@@ -32,7 +32,7 @@ fn main() {
         ..WafConfig::default()
     };
 
-    let mut waf = Waf::new(config).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(config);
     println!("✅ WAF created with configuration\n");
 
     // Step 2: Add security rules
@@ -66,11 +66,12 @@ fn main() {
     rule2.metadata_mut().phase = RulePhase::RequestBody;
     rule2.metadata_mut().status = 403;
 
-    waf.add_rule(rule1).expect("Failed to add rule 100");
-    waf.add_rule(rule2).expect("Failed to add rule 101");
+    builder.add_rule(rule1).expect("Failed to add rule 100");
+    builder.add_rule(rule2).expect("Failed to add rule 101");
 
     println!("✅ Rule 100: Block 'malicious' in query params (Phase 1)");
     println!("✅ Rule 101: Block 'attack' in POST body (Phase 2)");
+    let waf = builder.build().expect("Failed to build WAF");
     println!("📊 Total rules loaded: {}\n", waf.rule_count());
 
     // Step 3: Demonstrate request processing

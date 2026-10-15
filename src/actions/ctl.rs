@@ -987,24 +987,25 @@ mod tests {
     fn test_ctl_execute_rule_remove_by_tag() {
         use crate::config::WafConfig;
         use crate::rules::Rule as WafRule;
-        use crate::waf::Waf;
+        use crate::waf::WafBuilder;
 
         // Create WAF with tagged rules
-        let mut waf = Waf::new(WafConfig::new()).unwrap();
+        let mut builder = WafBuilder::new(WafConfig::new());
 
         let mut rule1 = WafRule::new().with_id(100);
         rule1.metadata_mut().tags.push("attack".to_string());
-        waf.add_rule(rule1).unwrap();
+        builder.add_rule(rule1).unwrap();
 
         let mut rule2 = WafRule::new().with_id(200);
         rule2.metadata_mut().tags.push("attack".to_string());
-        waf.add_rule(rule2).unwrap();
+        builder.add_rule(rule2).unwrap();
 
         let mut rule3 = WafRule::new().with_id(300);
         rule3.metadata_mut().tags.push("sqli".to_string());
-        waf.add_rule(rule3).unwrap();
+        builder.add_rule(rule3).unwrap();
 
         // Create transaction from WAF
+        let waf = builder.build().expect("Failed to build WAF");
         let mut tx = waf.new_transaction_with_id("test-tag".to_string());
 
         // Execute ctl:ruleRemoveByTag=attack
@@ -1025,24 +1026,25 @@ mod tests {
         use crate::config::WafConfig;
         use crate::operators::Macro;
         use crate::rules::Rule as WafRule;
-        use crate::waf::Waf;
+        use crate::waf::WafBuilder;
 
         // Create WAF with rules having messages
-        let mut waf = Waf::new(WafConfig::new()).unwrap();
+        let mut builder = WafBuilder::new(WafConfig::new());
 
         let mut rule1 = WafRule::new().with_id(100);
         rule1.metadata_mut().msg = Some(Macro::new("SQL Injection").unwrap());
-        waf.add_rule(rule1).unwrap();
+        builder.add_rule(rule1).unwrap();
 
         let mut rule2 = WafRule::new().with_id(200);
         rule2.metadata_mut().msg = Some(Macro::new("XSS Attack").unwrap());
-        waf.add_rule(rule2).unwrap();
+        builder.add_rule(rule2).unwrap();
 
         let mut rule3 = WafRule::new().with_id(300);
         rule3.metadata_mut().msg = Some(Macro::new("SQL Injection").unwrap());
-        waf.add_rule(rule3).unwrap();
+        builder.add_rule(rule3).unwrap();
 
         // Create transaction from WAF
+        let waf = builder.build().expect("Failed to build WAF");
         let mut tx = waf.new_transaction_with_id("test-msg".to_string());
 
         // Execute ctl:ruleRemoveByMsg=SQL Injection
@@ -1064,24 +1066,25 @@ mod tests {
     fn test_ctl_execute_rule_remove_target_by_tag() {
         use crate::config::WafConfig;
         use crate::rules::Rule as WafRule;
-        use crate::waf::Waf;
+        use crate::waf::WafBuilder;
 
         // Create WAF with tagged rules
-        let mut waf = Waf::new(WafConfig::new()).unwrap();
+        let mut builder = WafBuilder::new(WafConfig::new());
 
         let mut rule1 = WafRule::new().with_id(100);
         rule1.metadata_mut().tags.push("crs".to_string());
-        waf.add_rule(rule1).unwrap();
+        builder.add_rule(rule1).unwrap();
 
         let mut rule2 = WafRule::new().with_id(200);
         rule2.metadata_mut().tags.push("crs".to_string());
-        waf.add_rule(rule2).unwrap();
+        builder.add_rule(rule2).unwrap();
 
         let mut rule3 = WafRule::new().with_id(300);
         rule3.metadata_mut().tags.push("custom".to_string());
-        waf.add_rule(rule3).unwrap();
+        builder.add_rule(rule3).unwrap();
 
         // Create transaction from WAF
+        let waf = builder.build().expect("Failed to build WAF");
         let mut tx = waf.new_transaction_with_id("test-target-tag".to_string());
 
         // Execute ctl:ruleRemoveTargetByTag=crs;ARGS:id
@@ -1106,24 +1109,25 @@ mod tests {
         use crate::config::WafConfig;
         use crate::operators::Macro;
         use crate::rules::Rule as WafRule;
-        use crate::waf::Waf;
+        use crate::waf::WafBuilder;
 
         // Create WAF with rules having messages
-        let mut waf = Waf::new(WafConfig::new()).unwrap();
+        let mut builder = WafBuilder::new(WafConfig::new());
 
         let mut rule1 = WafRule::new().with_id(100);
         rule1.metadata_mut().msg = Some(Macro::new("Parameter Attack").unwrap());
-        waf.add_rule(rule1).unwrap();
+        builder.add_rule(rule1).unwrap();
 
         let mut rule2 = WafRule::new().with_id(200);
         rule2.metadata_mut().msg = Some(Macro::new("Header Attack").unwrap());
-        waf.add_rule(rule2).unwrap();
+        builder.add_rule(rule2).unwrap();
 
         let mut rule3 = WafRule::new().with_id(300);
         rule3.metadata_mut().msg = Some(Macro::new("Parameter Attack").unwrap());
-        waf.add_rule(rule3).unwrap();
+        builder.add_rule(rule3).unwrap();
 
         // Create transaction from WAF
+        let waf = builder.build().expect("Failed to build WAF");
         let mut tx = waf.new_transaction_with_id("test-target-msg".to_string());
 
         // Execute ctl:ruleRemoveTargetByMsg=Parameter Attack;REQUEST_HEADERS:user-agent

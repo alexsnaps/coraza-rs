@@ -22,7 +22,7 @@ use crate::seclang::rule_compiler::{
     CompileError, compile_sec_action, compile_sec_marker, compile_sec_rule,
 };
 use crate::types::{AuditEngineStatus, BodyLimitAction, RuleEngineStatus};
-use crate::waf::{ConfigError, Waf};
+use crate::waf::{ConfigError, Waf, WafBuilder};
 
 /// Maximum include recursion depth to prevent DoS attacks
 const MAX_INCLUDE_RECURSION: usize = 100;
@@ -187,7 +187,7 @@ impl Parser {
     ///
     /// Returns [`ConfigError`] if the parsed configuration is invalid (see [`Waf::new`]).
     pub fn into_waf(self) -> Result<Waf, ConfigError> {
-        Waf::with_rules(self.waf_config, self.rules)
+        WafBuilder::with_rules(self.waf_config, self.rules).build()
     }
 
     /// Register all built-in directives

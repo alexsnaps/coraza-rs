@@ -35,7 +35,7 @@ use coraza::operators::rx;
 use coraza::rules::{Rule, RuleAction, RuleOperator, VariableSpec};
 use coraza::seclang::Parser;
 use coraza::types::{RulePhase, RuleVariable};
-use coraza::waf::Waf;
+use coraza::waf::WafBuilder;
 
 // ============================================================================
 // CRS Infrastructure Tests
@@ -76,7 +76,7 @@ fn test_crs_infrastructure_parser_ready() {
 #[test]
 fn test_crs_infrastructure_rule_loading() {
     // Simulate loading multiple CRS-style rules
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     // Rule 920170: GET or HEAD with body content
     let mut rule = Rule::new()
@@ -92,7 +92,8 @@ fn test_crs_infrastructure_rule_loading() {
         ));
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
@@ -104,7 +105,7 @@ fn test_crs_infrastructure_rule_loading() {
 fn test_crs_path_traversal_rule_loading() {
     // CRS Rule 930100: Path Traversal Attack (/../)
     // Test that we can load CRS-style rules with proper structure
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(930100)
@@ -120,9 +121,10 @@ fn test_crs_path_traversal_rule_loading() {
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 403;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
 
     // Verify rule was loaded
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
     let loaded_rule = waf.find_rule_by_id(930100);
     assert!(loaded_rule.is_some());
@@ -138,7 +140,7 @@ fn test_crs_path_traversal_rule_loading() {
 fn test_crs_command_injection_rule_loading() {
     // CRS Rule 932160: Remote Command Execution
     // Test that we can load command injection detection rules
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(932160)
@@ -155,9 +157,10 @@ fn test_crs_command_injection_rule_loading() {
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
 
     // Verify rule loaded correctly
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
     assert!(waf.find_rule_by_id(932160).is_some());
 }
@@ -166,7 +169,7 @@ fn test_crs_command_injection_rule_loading() {
 fn test_crs_scanner_detection_rule_loading() {
     // CRS Rule 913100: Security Scanner Detected
     // Test that we can load scanner detection rules
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(913100)
@@ -186,9 +189,10 @@ fn test_crs_scanner_detection_rule_loading() {
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 403;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
 
     // Verify rule loaded correctly
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
     let loaded_rule = waf.find_rule_by_id(913100);
     assert!(loaded_rule.is_some());
@@ -200,11 +204,10 @@ fn test_crs_scanner_detection_rule_loading() {
 #[test]
 fn test_crs_multi_rule_loading() {
     // Test loading multiple CRS-style rules
-    let mut waf = Waf::new(WafConfig {
+    let mut builder = WafBuilder::new(WafConfig {
         rule_engine: coraza::types::RuleEngineStatus::On,
         ..WafConfig::default()
-    })
-    .expect("Failed to create WAF");
+    });
 
     // Scanner detection rule
     let mut scanner_rule = Rule::new()
@@ -235,12 +238,15 @@ fn test_crs_multi_rule_loading() {
     traversal_rule.metadata_mut().phase = RulePhase::RequestHeaders;
     traversal_rule.metadata_mut().status = 403;
 
-    waf.add_rule(scanner_rule)
+    builder
+        .add_rule(scanner_rule)
         .expect("Failed to add scanner rule");
-    waf.add_rule(traversal_rule)
+    builder
+        .add_rule(traversal_rule)
         .expect("Failed to add traversal rule");
 
     // Verify both rules loaded
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 2);
     assert!(waf.find_rule_by_id(913100).is_some());
     assert!(waf.find_rule_by_id(930100).is_some());
@@ -263,7 +269,7 @@ fn test_crs_multi_rule_loading() {
 #[test]
 fn test_crs_http_request_smuggling_detection() {
     // CRS Rule 920170: GET or HEAD Request with Body Content
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(920170)
@@ -281,14 +287,15 @@ fn test_crs_http_request_smuggling_detection() {
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 400;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
 #[test]
 fn test_crs_invalid_http_method() {
     // CRS Rule 920160: Content-Length HTTP header is not numeric
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(920160)
@@ -306,14 +313,15 @@ fn test_crs_invalid_http_method() {
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 400;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
 #[test]
 fn test_crs_missing_host_header() {
     // CRS Rule 920280: Request Missing a Host Header
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(920280)
@@ -331,7 +339,8 @@ fn test_crs_missing_host_header() {
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 400;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
@@ -343,7 +352,7 @@ fn test_crs_missing_host_header() {
 fn test_crs_path_traversal_unix_variants() {
     // CRS Rule 930100: Path Traversal Attack (/../)
     // Multiple encoding variants
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(930100)
@@ -361,14 +370,15 @@ fn test_crs_path_traversal_unix_variants() {
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 403;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
 #[test]
 fn test_crs_path_traversal_windows_variants() {
     // CRS Rule 930110: Path Traversal Attack (..\ Windows)
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(930110)
@@ -385,14 +395,15 @@ fn test_crs_path_traversal_windows_variants() {
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
 #[test]
 fn test_crs_restricted_file_access() {
     // CRS Rule 930120: OS File Access Attempt
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(930120)
@@ -410,7 +421,8 @@ fn test_crs_restricted_file_access() {
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 403;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
@@ -421,7 +433,7 @@ fn test_crs_restricted_file_access() {
 #[test]
 fn test_crs_local_file_inclusion() {
     // CRS Rule 931100: Possible Local File Inclusion (LFI) Attack
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(931100)
@@ -438,14 +450,15 @@ fn test_crs_local_file_inclusion() {
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
 #[test]
 fn test_crs_remote_file_inclusion() {
     // CRS Rule 931110: Possible Remote File Inclusion (RFI) Attack
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(931110)
@@ -462,7 +475,8 @@ fn test_crs_remote_file_inclusion() {
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
@@ -473,7 +487,7 @@ fn test_crs_remote_file_inclusion() {
 #[test]
 fn test_crs_unix_command_injection() {
     // CRS Rule 932100: Remote Command Execution: Unix Command Injection
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(932100)
@@ -490,14 +504,15 @@ fn test_crs_unix_command_injection() {
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
 #[test]
 fn test_crs_windows_command_injection() {
     // CRS Rule 932110: Remote Command Execution: Windows Command Injection
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(932110)
@@ -514,14 +529,15 @@ fn test_crs_windows_command_injection() {
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
 #[test]
 fn test_crs_shellshock_attack() {
     // CRS Rule 932170: Remote Command Execution: Shellshock (CVE-2014-6271)
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(932170)
@@ -536,7 +552,8 @@ fn test_crs_shellshock_attack() {
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 403;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
@@ -547,7 +564,7 @@ fn test_crs_shellshock_attack() {
 #[test]
 fn test_crs_php_injection_attack() {
     // CRS Rule 933100: PHP Injection Attack
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(933100)
@@ -564,14 +581,15 @@ fn test_crs_php_injection_attack() {
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
 #[test]
 fn test_crs_php_variable_injection() {
     // CRS Rule 933150: PHP Injection Attack: Variable Function Call Found
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(933150)
@@ -588,7 +606,8 @@ fn test_crs_php_variable_injection() {
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
@@ -599,7 +618,7 @@ fn test_crs_php_variable_injection() {
 #[test]
 fn test_crs_session_fixation_attack() {
     // CRS Rule 943100: Possible Session Fixation Attack
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(943100)
@@ -616,7 +635,8 @@ fn test_crs_session_fixation_attack() {
     rule.metadata_mut().phase = RulePhase::RequestHeaders;
     rule.metadata_mut().status = 403;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
@@ -627,7 +647,7 @@ fn test_crs_session_fixation_attack() {
 #[test]
 fn test_crs_java_deserialization_attack() {
     // CRS Rule 944100: Remote Command Execution: Java Deserialization
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let mut rule = Rule::new()
         .with_id(944100)
@@ -642,7 +662,8 @@ fn test_crs_java_deserialization_attack() {
     rule.metadata_mut().phase = RulePhase::RequestBody;
     rule.metadata_mut().status = 403;
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
@@ -653,11 +674,10 @@ fn test_crs_java_deserialization_attack() {
 #[test]
 fn test_crs_comprehensive_rule_loading() {
     // Load rules from multiple CRS categories
-    let mut waf = Waf::new(WafConfig {
+    let mut builder = WafBuilder::new(WafConfig {
         rule_engine: coraza::types::RuleEngineStatus::On,
         ..WafConfig::default()
-    })
-    .expect("Failed to create WAF");
+    });
 
     // Protocol violation (920xxx)
     let mut rule_920170 = Rule::new()
@@ -731,13 +751,14 @@ fn test_crs_comprehensive_rule_loading() {
     rule_913100.metadata_mut().status = 403;
 
     // Add all rules
-    waf.add_rule(rule_920170).expect("Failed to add rule");
-    waf.add_rule(rule_930100).expect("Failed to add rule");
-    waf.add_rule(rule_932160).expect("Failed to add rule");
-    waf.add_rule(rule_933100).expect("Failed to add rule");
-    waf.add_rule(rule_913100).expect("Failed to add rule");
+    builder.add_rule(rule_920170).expect("Failed to add rule");
+    builder.add_rule(rule_930100).expect("Failed to add rule");
+    builder.add_rule(rule_932160).expect("Failed to add rule");
+    builder.add_rule(rule_933100).expect("Failed to add rule");
+    builder.add_rule(rule_913100).expect("Failed to add rule");
 
     // Verify all rules loaded
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 5);
 
     // Verify each rule is accessible
@@ -780,7 +801,7 @@ fn test_crs_comprehensive_rule_loading() {
 #[test]
 fn test_crs_rule_phases_distribution() {
     // Verify rules are distributed across different phases
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     // Phase 1: Request Headers
     let mut rule_phase1 = Rule::new()
@@ -826,11 +847,12 @@ fn test_crs_rule_phases_distribution() {
         ));
     rule_phase4.metadata_mut().phase = RulePhase::ResponseBody;
 
-    waf.add_rule(rule_phase1).expect("Failed to add rule");
-    waf.add_rule(rule_phase2).expect("Failed to add rule");
-    waf.add_rule(rule_phase3).expect("Failed to add rule");
-    waf.add_rule(rule_phase4).expect("Failed to add rule");
+    builder.add_rule(rule_phase1).expect("Failed to add rule");
+    builder.add_rule(rule_phase2).expect("Failed to add rule");
+    builder.add_rule(rule_phase3).expect("Failed to add rule");
+    builder.add_rule(rule_phase4).expect("Failed to add rule");
 
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 4);
 
     // Verify phase distribution

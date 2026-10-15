@@ -28,10 +28,12 @@ probed bugs.
   - Done: `SecRule`/`SecAction`/`SecMarker` are directives; `Parser::into_waf()` builds the `Waf` and links chains.
     The examples use the parser. Their skip-and-warn behaviour is kept as an opt-in
     `Parser::skip_failed_directives()`, so a partly supported CRS still loads.
-- [ ] **Split `Waf` into `WafBuilder` → `Waf`.** `Waf` is builder and runtime at once: 9
+- [x] **Split `Waf` into `WafBuilder` → `Waf`.** `Waf` is builder and runtime at once: 9
   `Arc::get_mut(..).expect("Cannot modify rules after sharing with transactions")` in `src/waf.rs`, and
   `link_chains()` is documented as "MUST be called". `WafBuilder` takes `&mut` with no panics; `build()` links chains
   and returns an immutable `Waf`.
+  - Done: rule management moved to `WafBuilder`; `Waf` is immutable. `Waf::new(config)` stays as the shortcut for a
+    WAF without rules.
 
 ## 2. Rule state stored twice
 

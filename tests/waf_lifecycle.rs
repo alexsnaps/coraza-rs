@@ -13,7 +13,7 @@ use coraza::config::WafConfig;
 use coraza::operators::streq;
 use coraza::rules::{Rule, RuleAction, RuleOperator, VariableSpec};
 use coraza::types::{RuleEngineStatus, RulePhase, RuleVariable};
-use coraza::waf::Waf;
+use coraza::waf::{Waf, WafBuilder};
 
 // ============================================================================
 // WAF Configuration Tests
@@ -78,7 +78,7 @@ fn test_waf_invalid_config_rejected() {
 
 #[test]
 fn test_waf_add_single_rule() {
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let operator = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
     let rule = Rule::new()
@@ -86,13 +86,14 @@ fn test_waf_add_single_rule() {
         .add_variable(VariableSpec::new(RuleVariable::Args))
         .with_operator(operator);
 
-    assert!(waf.add_rule(rule).is_ok());
+    assert!(builder.add_rule(rule).is_ok());
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1);
 }
 
 #[test]
 fn test_waf_add_multiple_rules() {
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     for id in 1..=10 {
         let operator = RuleOperator::new(
@@ -105,15 +106,16 @@ fn test_waf_add_multiple_rules() {
             .add_variable(VariableSpec::new(RuleVariable::Args))
             .with_operator(operator);
 
-        waf.add_rule(rule).expect("Failed to add rule");
+        builder.add_rule(rule).expect("Failed to add rule");
     }
 
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 10);
 }
 
 #[test]
 fn test_waf_duplicate_rule_id_rejected() {
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let operator = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
     let rule1 = Rule::new()
@@ -121,20 +123,20 @@ fn test_waf_duplicate_rule_id_rejected() {
         .add_variable(VariableSpec::new(RuleVariable::Args))
         .with_operator(operator.clone());
 
-    waf.add_rule(rule1).expect("First rule should succeed");
+    builder.add_rule(rule1).expect("First rule should succeed");
 
     let rule2 = Rule::new()
         .with_id(100)
         .add_variable(VariableSpec::new(RuleVariable::Args))
         .with_operator(operator);
 
-    let result = waf.add_rule(rule2);
+    let result = builder.add_rule(rule2);
     assert!(result.is_err(), "Duplicate rule ID should be rejected");
 }
 
 #[test]
 fn test_waf_find_rule_by_id() {
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let operator = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
     let rule = Rule::new()
@@ -142,8 +144,9 @@ fn test_waf_find_rule_by_id() {
         .add_variable(VariableSpec::new(RuleVariable::Args))
         .with_operator(operator);
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
 
+    let waf = builder.build().expect("Failed to build WAF");
     let found = waf.find_rule_by_id(42);
     assert!(found.is_some());
     assert_eq!(found.unwrap().metadata().id, 42);
@@ -154,7 +157,7 @@ fn test_waf_find_rule_by_id() {
 
 #[test]
 fn test_waf_remove_rule_by_id() {
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let operator = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
     let rule = Rule::new()
@@ -162,17 +165,18 @@ fn test_waf_remove_rule_by_id() {
         .add_variable(VariableSpec::new(RuleVariable::Args))
         .with_operator(operator);
 
-    waf.add_rule(rule).expect("Failed to add rule");
-    assert_eq!(waf.rule_count(), 1);
+    builder.add_rule(rule).expect("Failed to add rule");
+    assert_eq!(builder.rule_count(), 1);
 
-    waf.remove_rule_by_id(50);
+    builder.remove_rule_by_id(50);
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 0);
     assert!(waf.find_rule_by_id(50).is_none());
 }
 
 #[test]
 fn test_waf_remove_multiple_rules_by_id() {
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     // Add rules 10, 20, 30, 40, 50
     for id in (10..=50).step_by(10) {
@@ -181,15 +185,16 @@ fn test_waf_remove_multiple_rules_by_id() {
             .with_id(id)
             .add_variable(VariableSpec::new(RuleVariable::Args))
             .with_operator(operator);
-        waf.add_rule(rule).expect("Failed to add rule");
+        builder.add_rule(rule).expect("Failed to add rule");
     }
 
-    assert_eq!(waf.rule_count(), 5);
+    assert_eq!(builder.rule_count(), 5);
 
     // Remove rule 20 and 40
-    waf.remove_rule_by_id(20);
-    waf.remove_rule_by_id(40);
+    builder.remove_rule_by_id(20);
+    builder.remove_rule_by_id(40);
 
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 3);
     assert!(waf.find_rule_by_id(10).is_some());
     assert!(waf.find_rule_by_id(20).is_none());
@@ -246,7 +251,7 @@ fn test_transaction_independence() {
 
 #[test]
 fn test_transaction_shares_waf_rules() {
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     // Add a rule to WAF
     let operator = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
@@ -255,9 +260,10 @@ fn test_transaction_shares_waf_rules() {
         .add_variable(VariableSpec::new(RuleVariable::Args))
         .with_operator(operator);
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
 
     // Transactions should have access to WAF rules via Arc
+    let waf = builder.build().expect("Failed to build WAF");
     let _tx = waf.new_transaction();
     // Transaction has access to rules through internal Arc reference
 }
@@ -379,7 +385,7 @@ fn test_multiple_wafs_independent() {
 
 #[test]
 fn test_waf_rule_evaluation_basic() {
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     // Add a simple rule
     let operator = RuleOperator::new(streq("attack").unwrap().into(), "@streq", "attack");
@@ -391,9 +397,10 @@ fn test_waf_rule_evaluation_basic() {
         ))
         .with_operator(operator);
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
 
     // Create transaction
+    let waf = builder.build().expect("Failed to build WAF");
     let mut tx = waf.new_transaction();
     tx.args_mut().add("input", "attack");
 
@@ -403,7 +410,7 @@ fn test_waf_rule_evaluation_basic() {
 
 #[test]
 fn test_waf_rules_shared_across_transactions() {
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let operator = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
     let rule = Rule::new()
@@ -411,9 +418,10 @@ fn test_waf_rules_shared_across_transactions() {
         .add_variable(VariableSpec::new(RuleVariable::Args))
         .with_operator(operator);
 
-    waf.add_rule(rule).expect("Failed to add rule");
+    builder.add_rule(rule).expect("Failed to add rule");
 
     // Both transactions should see the same rule
+    let waf = builder.build().expect("Failed to build WAF");
     let _tx1 = waf.new_transaction();
     let _tx2 = waf.new_transaction();
 
@@ -473,7 +481,7 @@ fn test_waf_transaction_cleanup() {
 
 #[test]
 fn test_waf_large_rule_set() {
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     // Add 1000 rules
     for id in 1..=1000 {
@@ -487,9 +495,10 @@ fn test_waf_large_rule_set() {
             .add_variable(VariableSpec::new(RuleVariable::Args))
             .with_operator(operator);
 
-        waf.add_rule(rule).expect("Failed to add rule");
+        builder.add_rule(rule).expect("Failed to add rule");
     }
 
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.rule_count(), 1000);
 
     // Should still be able to find specific rules
@@ -503,11 +512,12 @@ fn test_waf_large_rule_set() {
 
 #[test]
 fn test_waf_set_default_actions() {
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let default_action = RuleAction::new("deny", Box::new(DenyAction));
-    waf.set_default_actions(RulePhase::RequestHeaders, vec![default_action]);
+    builder.set_default_actions(RulePhase::RequestHeaders, vec![default_action]);
 
+    let waf = builder.build().expect("Failed to build WAF");
     let defaults = waf.get_default_actions(RulePhase::RequestHeaders);
     assert_eq!(defaults.len(), 1);
     assert_eq!(defaults[0].name(), "deny");
@@ -515,29 +525,28 @@ fn test_waf_set_default_actions() {
 
 #[test]
 fn test_waf_overwrite_default_actions() {
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     let action1 = RuleAction::new("deny", Box::new(DenyAction));
-    waf.set_default_actions(RulePhase::RequestHeaders, vec![action1]);
-
-    assert_eq!(waf.get_default_actions(RulePhase::RequestHeaders).len(), 1);
+    builder.set_default_actions(RulePhase::RequestHeaders, vec![action1]);
 
     // Overwrite with empty vector
-    waf.set_default_actions(RulePhase::RequestHeaders, vec![]);
+    builder.set_default_actions(RulePhase::RequestHeaders, vec![]);
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.get_default_actions(RulePhase::RequestHeaders).len(), 0);
 }
 
 #[test]
 fn test_waf_default_actions_per_phase() {
-    let mut waf = Waf::new(WafConfig::new()).expect("Failed to create WAF");
+    let mut builder = WafBuilder::new(WafConfig::new());
 
     // Set different defaults for different phases
-    waf.set_default_actions(
+    builder.set_default_actions(
         RulePhase::RequestHeaders,
         vec![RuleAction::new("deny", Box::new(DenyAction))],
     );
 
-    waf.set_default_actions(
+    builder.set_default_actions(
         RulePhase::RequestBody,
         vec![
             RuleAction::new("deny", Box::new(DenyAction)),
@@ -545,6 +554,7 @@ fn test_waf_default_actions_per_phase() {
         ],
     );
 
+    let waf = builder.build().expect("Failed to build WAF");
     assert_eq!(waf.get_default_actions(RulePhase::RequestHeaders).len(), 1);
     assert_eq!(waf.get_default_actions(RulePhase::RequestBody).len(), 2);
     assert_eq!(waf.get_default_actions(RulePhase::ResponseHeaders).len(), 0);
