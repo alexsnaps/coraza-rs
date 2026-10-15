@@ -151,6 +151,10 @@ impl AllowAction {
 /// action without specifying how the blocking is to be done. The idea is that
 /// such decisions are best left to rule users.
 ///
+/// The SecLang compiler replaces it with the disruptive action of the defaults of the
+/// rule's phase. Left in a rule, which happens when its phase has no defaults, it does
+/// nothing, as in Go Coraza.
+///
 /// # Arguments
 ///
 /// No arguments accepted
@@ -174,17 +178,6 @@ impl BlockAction {
     /// Parses the action; it takes no argument.
     pub fn parse(data: &str) -> Result<Self, ActionError> {
         no_argument(data).map(|()| Self)
-    }
-
-    pub fn evaluate(&self, rule: &RuleMetadata, tx: &mut Transaction) {
-        // TODO: Implement proper SecDefaultAction replacement during rule compilation (Phase 10)
-        // For now, default to deny action behavior
-        let status = if rule.status == 0 {
-            403 // block action defaults to status 403 (same as deny)
-        } else {
-            rule.status
-        };
-        tx.interrupt(rule.id, "block", status, "");
     }
 }
 

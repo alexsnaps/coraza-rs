@@ -37,12 +37,19 @@ Suggested order: 1 → 2 → 5, then 3 and 4. The first three items of 1 account
     existing rule. Unlike Go, which returns after the first single id, every listed id and range is updated.
     ModSecurity's third argument (a target to replace) is not supported, as in Go. The CRS load check now skips 18
     directives.
-- [ ] **`SecDefaultAction`, and a `block` that follows it.** 5 skipped: the `phase:N,log,auditlog,pass` defaults of
+- [x] **`SecDefaultAction`, and a `block` that follows it.** 5 skipped: the `phase:N,log,auditlog,pass` defaults of
   `crs-setup.conf.example`.
   - `block` always denies with 403 (`src/actions/disruptive.rs:179`). `WafBuilder::set_default_actions` stores
     actions that rule evaluation never reads: only tests call `Waf::get_default_actions` (`src/waf.rs:209`).
   - So the first CRS rule that matches denies the request, rather than adding to the anomaly score that 949110
     compares with the threshold. This is from reading the code; not probed.
+  - Done: `SecDefaultAction` is parsed and validated as in Go (a phase and a disruptive action; no metadata
+    actions or `t:`; one per phase). Each rule compiled after it merges its actions with its phase's defaults: the
+    defaults' other actions first, then the rule's own but `block`, then the defaults' disruptive action if the rule
+    has no other. Phase 2 has Go's built-in `log,auditlog,pass` until set. A `block` left in a rule (a phase without
+    defaults) does nothing at runtime, as in Go. `WafBuilder::set_default_actions` and `Waf::get_default_actions`
+    are removed. With CRS loaded, a scratch probe now sees a benign request pass and two attacks denied by 949110;
+    the load check skips 13 directives.
 - [ ] **Variables `ARGUMENTS_LIMIT_REACHED`, `URI_PARSE_ERROR` and `MULTIPART_DUPLICATE_PART_HEADER`.** 4 skipped:
   Coraza's own rules 200003 (`MULTIPART_STRICT_ERROR`, which names the last one in its `logdata`), 200004, 200005
   and 200009 in `coraza.conf-recommended`.

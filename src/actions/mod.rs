@@ -310,8 +310,8 @@ impl Action {
         match self {
             Self::Deny(action) => action.evaluate(rule, tx),
             Self::Drop(action) => action.evaluate(rule, tx),
-            Self::Block(action) => action.evaluate(rule, tx),
-            Self::Pass(_) => {}
+            // `block` left in a rule (its phase has no defaults) does nothing
+            Self::Block(_) | Self::Pass(_) => {}
             Self::Allow(action) => action.evaluate(tx),
             Self::Redirect(action) => action.evaluate(rule, tx),
             Self::Skip(action) => action.evaluate(tx),

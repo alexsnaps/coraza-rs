@@ -5,7 +5,11 @@
 //!
 //! Compiles SecRule, SecAction, and SecMarker directives into executable Rule structures.
 
-use crate::actions::Action;
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+
+use crate::RulePhase;
+use crate::actions::{Action, ActionType, RuleMetadata};
 use crate::operators::OperatorContext;
 use crate::rules::Rule;
 use crate::seclang::CompileError;
@@ -25,7 +29,8 @@ type CompileResult<T> = Result<T, CompileError>;
 /// * `input` - Full SecRule directive string (without "SecRule" prefix)
 ///
 /// The operator is created in the default [`OperatorContext`]: a relative data file
-/// is relative to the working directory.
+/// is relative to the working directory. The actions are merged with the built-in
+/// defaults, as in a configuration without `SecDefaultAction`.
 ///
 /// # Example
 ///
@@ -37,13 +42,19 @@ type CompileResult<T> = Result<T, CompileError>;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn compile_sec_rule(input: &str) -> CompileResult<Rule> {
-    compile_sec_rule_in(input, &OperatorContext::default())
+    compile_sec_rule_in(
+        input,
+        &OperatorContext::default(),
+        &DefaultActions::default(),
+    )
 }
 
-/// Like [`compile_sec_rule`], creating the operator in `context`.
+/// Like [`compile_sec_rule`], creating the operator in `context` and merging the
+/// actions with `defaults`.
 pub(crate) fn compile_sec_rule_in(
     input: &str,
     context: &OperatorContext<'_>,
+    defaults: &DefaultActions,
 ) -> CompileResult<Rule> {
     // Parse the three components: VARIABLES OPERATOR ACTIONS
     let (vars, operator, actions) = parse_rule_with_operator(input)?;
@@ -76,7 +87,7 @@ pub(crate) fn compile_sec_rule_in(
 
     rule = rule.with_operator(rule_operator);
 
-    add_actions(rule, parsed_actions)
+    add_actions(rule, parsed_actions, defaults)
 }
 
 /// Compile a SecAction directive into a Rule.
@@ -89,6 +100,9 @@ pub(crate) fn compile_sec_rule_in(
 ///
 /// * `input` - Full SecAction directive string (without "SecAction" prefix)
 ///
+/// The actions are merged with the built-in defaults, as in a configuration without
+/// `SecDefaultAction`.
+///
 /// # Example
 ///
 /// ```
@@ -100,6 +114,11 @@ pub(crate) fn compile_sec_rule_in(
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn compile_sec_action(input: &str) -> CompileResult<Rule> {
+    compile_sec_action_in(input, &DefaultActions::default())
+}
+
+/// Like [`compile_sec_action`], merging the actions with `defaults`.
+pub(crate) fn compile_sec_action_in(input: &str, defaults: &DefaultActions) -> CompileResult<Rule> {
     // Remove quotes from actions
     let actions = maybe_remove_quotes(input);
 
@@ -108,18 +127,153 @@ pub fn compile_sec_action(input: &str) -> CompileResult<Rule> {
         .map_err(|e| CompileError::new(format!("failed to parse actions '{}': {}", actions, e)))?;
 
     // Build rule (no operator, no variables)
-    add_actions(Rule::new(), parsed_actions)
+    add_actions(Rule::new(), parsed_actions, defaults)
+}
+
+/// Applies a rule's parsed actions to `rule`, merged with the defaults of its phase.
+///
+/// As in Go Coraza, the defaults' actions other than the disruptive one apply first,
+/// then the rule's own, but for `block`. The defaults' disruptive action applies last,
+/// if the rule has no other. Without defaults for its phase, a rule keeps its actions
+/// as written, `block` included (which then does nothing).
+fn add_actions(
+    rule: Rule,
+    parsed_actions: Vec<ParsedAction>,
+    defaults: &DefaultActions,
+) -> CompileResult<Rule> {
+    let Some(defaults) = defaults.for_phase(phase_of(&parsed_actions)?) else {
+        return apply_actions(rule, &parsed_actions);
+    };
+
+    let rule = apply_actions(rule, &defaults.others)?;
+    let rule = apply_actions(rule, parsed_actions.iter().filter(|a| a.key != "block"))?;
+    if rule
+        .actions()
+        .iter()
+        .any(|action| action.action_type() == ActionType::Disruptive)
+    {
+        Ok(rule)
+    } else {
+        apply_actions(rule, [&defaults.disruptive])
+    }
 }
 
 /// Applies parsed actions to `rule` in order: metadata actions update its metadata,
 /// the others are added to it (a later disruptive action replaces an earlier one).
-fn add_actions(mut rule: Rule, parsed_actions: Vec<ParsedAction>) -> CompileResult<Rule> {
+fn apply_actions<'a>(
+    mut rule: Rule,
+    parsed_actions: impl IntoIterator<Item = &'a ParsedAction>,
+) -> CompileResult<Rule> {
     for parsed in parsed_actions {
         if let Some(action) = Action::parse(&parsed.key, &parsed.value, rule.metadata_mut())? {
             rule = rule.add_action(action);
         }
     }
     Ok(rule)
+}
+
+/// The phase that the `phase` action among `actions` gives a rule (2 without one).
+fn phase_of(actions: &[ParsedAction]) -> CompileResult<RulePhase> {
+    let mut metadata = RuleMetadata::new();
+    for action in actions.iter().filter(|a| a.key == "phase") {
+        Action::parse(&action.key, &action.value, &mut metadata)?;
+    }
+    Ok(metadata.phase)
+}
+
+/// The actions `SecDefaultAction` gives the rules of each phase, which rules compiled
+/// after it inherit; see `add_actions`.
+///
+/// Phase 2 has built-in defaults, `phase:2,log,auditlog,pass`, until a
+/// `SecDefaultAction` sets its own; the other phases have none.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct DefaultActions {
+    phases: BTreeMap<RulePhase, PhaseDefaults>,
+}
+
+/// The defaults of one phase.
+#[derive(Debug, Clone)]
+struct PhaseDefaults {
+    /// Actions applied before the rule's own, in order
+    others: Vec<ParsedAction>,
+    /// Applies when the rule has no disruptive action, or `block`
+    disruptive: ParsedAction,
+}
+
+impl DefaultActions {
+    /// Adds the defaults of one `SecDefaultAction`.
+    ///
+    /// # Errors
+    ///
+    /// If `actions` is not valid, names no phase or no disruptive action, holds metadata
+    /// actions (`id`, `msg`, `tag`, ...) or transformations, or its phase already has
+    /// defaults.
+    pub(crate) fn add(&mut self, actions: &str) -> CompileResult<()> {
+        const METADATA: [&str; 8] = [
+            "accuracy", "id", "maturity", "msg", "rev", "severity", "tag", "ver",
+        ];
+
+        let mut metadata = RuleMetadata::new();
+        let mut has_phase = false;
+        let mut others = Vec::new();
+        let mut disruptive = None;
+        for parsed in parse_actions(actions)? {
+            if METADATA.contains(&parsed.key.as_str()) {
+                return Err(CompileError::new(format!(
+                    "SecDefaultAction must not contain metadata actions: {}",
+                    parsed.key
+                )));
+            }
+            if parsed.key == "t" {
+                return Err(CompileError::new(
+                    "SecDefaultAction must not contain transformations (t)".to_string(),
+                ));
+            }
+            let action = Action::parse(&parsed.key, &parsed.value, &mut metadata)?;
+            if parsed.key == "phase" {
+                has_phase = true;
+            } else if action.is_some_and(|a| a.action_type() == ActionType::Disruptive) {
+                disruptive = Some(parsed);
+            } else {
+                others.push(parsed);
+            }
+        }
+
+        if !has_phase {
+            return Err(CompileError::new(
+                "SecDefaultAction must contain a phase".to_string(),
+            ));
+        }
+        let disruptive = disruptive.ok_or_else(|| {
+            CompileError::new("SecDefaultAction must contain a disruptive action".to_string())
+        })?;
+        if self.phases.contains_key(&metadata.phase) {
+            return Err(CompileError::new(format!(
+                "SecDefaultAction already defined for phase {}",
+                metadata.phase
+            )));
+        }
+        self.phases
+            .insert(metadata.phase, PhaseDefaults { others, disruptive });
+        Ok(())
+    }
+
+    fn for_phase(&self, phase: RulePhase) -> Option<Cow<'_, PhaseDefaults>> {
+        match self.phases.get(&phase) {
+            Some(defaults) => Some(Cow::Borrowed(defaults)),
+            None if phase == RulePhase::RequestBody => {
+                let action = |key: &str| ParsedAction {
+                    key: key.to_string(),
+                    value: String::new(),
+                };
+                Some(Cow::Owned(PhaseDefaults {
+                    others: vec![action("log"), action("auditlog")],
+                    disruptive: action("pass"),
+                }))
+            }
+            None => None,
+        }
+    }
 }
 
 /// Compile a SecMarker directive into a Rule.

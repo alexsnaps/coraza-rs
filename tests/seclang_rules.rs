@@ -369,3 +369,84 @@ fn update_target_of_an_unknown_rule_is_an_error() {
 
     assert!(err.message.contains("404"), "{}", err.message);
 }
+
+#[test]
+fn block_takes_the_disruptive_action_of_the_phase_defaults() {
+    let waf = waf(r#"
+        SecDefaultAction "phase:1,log,auditlog,deny,status:418"
+        SecRule ARGS "@streq x" "id:1,phase:1,block"
+    "#);
+
+    let mut tx = request_with_arg(&waf, "q", "x");
+    let interruption = tx.process_request_headers().unwrap();
+
+    assert_eq!((interruption.rule_id, interruption.status), (1, 418));
+}
+
+#[test]
+fn block_adds_to_the_anomaly_score_with_crs_defaults() {
+    // As crs-setup.conf: rules `block`, and only the score threshold denies
+    let waf = waf(r#"
+        SecDefaultAction "phase:1,log,auditlog,pass"
+        SecRule ARGS "@streq x" "id:1,phase:1,block,setvar:tx.score=+3"
+        SecRule TX:score "@ge 5" "id:2,phase:1,deny,status:403"
+    "#);
+
+    let mut tx = request_with_arg(&waf, "q", "x");
+    assert!(tx.process_request_headers().is_none());
+    assert_eq!(tx_var(&tx, "score").as_deref(), Some("3"));
+
+    let mut tx = waf.new_transaction();
+    tx.args_mut().add("a", "x");
+    tx.args_mut().add("b", "x");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(2));
+}
+
+#[test]
+fn block_passes_without_defaults() {
+    // Phase 2 has built-in defaults of `log,auditlog,pass`; other phases have none
+    let waf = waf(r#"
+        SecRule ARGS "@streq x" "id:1,phase:1,block"
+        SecRule ARGS "@streq x" "id:2,phase:2,block"
+    "#);
+
+    let mut tx = request_with_arg(&waf, "q", "x");
+    assert!(tx.process_request_headers().is_none());
+    assert_eq!(tx.process_request_body(b"").unwrap(), None);
+}
+
+#[test]
+fn rules_without_a_disruptive_action_take_the_default_one() {
+    let waf = waf(r#"
+        SecDefaultAction "phase:1,deny,status:403"
+        SecRule ARGS:a "@streq x" "id:1,phase:1"
+        SecRule ARGS:b "@streq x" "id:2,phase:1,pass"
+    "#);
+
+    let mut tx = request_with_arg(&waf, "b", "x");
+    assert!(tx.process_request_headers().is_none());
+    let mut tx = request_with_arg(&waf, "a", "x");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+}
+
+#[test]
+fn invalid_default_actions_are_parse_errors() {
+    for (defaults, reason) in [
+        ("log,pass", "phase"),
+        ("phase:1,log", "disruptive"),
+        ("phase:1,pass,id:1", "id"),
+        ("phase:1,pass,t:lowercase", "t"),
+    ] {
+        let mut parser = Parser::new();
+        let err = parser
+            .from_string(&format!("SecDefaultAction \"{defaults}\""))
+            .unwrap_err();
+        assert!(err.message.contains(reason), "{defaults}: {}", err.message);
+    }
+
+    let mut parser = Parser::new();
+    let err = parser
+        .from_string("SecDefaultAction \"phase:1,pass\"\nSecDefaultAction \"phase:1,deny\"")
+        .unwrap_err();
+    assert!(err.message.contains("already"), "{}", err.message);
+}

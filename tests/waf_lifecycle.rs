@@ -7,7 +7,6 @@
 //! to transaction processing, including rule management, phase processing,
 //! and configuration inheritance.
 
-use coraza::actions::{Action, DenyAction, PassAction};
 use coraza::config::WafConfig;
 use coraza::operators::streq;
 use coraza::rules::{Rule, RuleOperator, VariableSpec};
@@ -503,52 +502,4 @@ fn test_waf_large_rule_set() {
     // Should still be able to find specific rules
     assert!(waf.find_rule_by_id(500).is_some());
     assert!(waf.find_rule_by_id(1000).is_some());
-}
-
-// ============================================================================
-// Default Actions Tests
-// ============================================================================
-
-#[test]
-fn test_waf_set_default_actions() {
-    let mut builder = WafBuilder::new(WafConfig::new());
-
-    let default_action = Action::Deny(DenyAction);
-    builder.set_default_actions(RulePhase::RequestHeaders, vec![default_action]);
-
-    let waf = builder.build().expect("Failed to build WAF");
-    let defaults = waf.get_default_actions(RulePhase::RequestHeaders);
-    assert_eq!(defaults.len(), 1);
-    assert_eq!(defaults[0].name(), "deny");
-}
-
-#[test]
-fn test_waf_overwrite_default_actions() {
-    let mut builder = WafBuilder::new(WafConfig::new());
-
-    let action1 = Action::Deny(DenyAction);
-    builder.set_default_actions(RulePhase::RequestHeaders, vec![action1]);
-
-    // Overwrite with empty vector
-    builder.set_default_actions(RulePhase::RequestHeaders, vec![]);
-    let waf = builder.build().expect("Failed to build WAF");
-    assert_eq!(waf.get_default_actions(RulePhase::RequestHeaders).len(), 0);
-}
-
-#[test]
-fn test_waf_default_actions_per_phase() {
-    let mut builder = WafBuilder::new(WafConfig::new());
-
-    // Set different defaults for different phases
-    builder.set_default_actions(RulePhase::RequestHeaders, vec![Action::Deny(DenyAction)]);
-
-    builder.set_default_actions(
-        RulePhase::RequestBody,
-        vec![Action::Deny(DenyAction), Action::Pass(PassAction)],
-    );
-
-    let waf = builder.build().expect("Failed to build WAF");
-    assert_eq!(waf.get_default_actions(RulePhase::RequestHeaders).len(), 1);
-    assert_eq!(waf.get_default_actions(RulePhase::RequestBody).len(), 2);
-    assert_eq!(waf.get_default_actions(RulePhase::ResponseHeaders).len(), 0);
 }

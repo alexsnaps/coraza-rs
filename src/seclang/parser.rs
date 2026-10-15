@@ -20,7 +20,9 @@ use crate::config::WafConfig;
 use crate::operators::OperatorContext;
 use crate::rules::{Rule, RuleGroup};
 use crate::seclang::CompileError;
-use crate::seclang::rule_compiler::{compile_sec_action, compile_sec_marker, compile_sec_rule_in};
+use crate::seclang::rule_compiler::{
+    DefaultActions, compile_sec_action_in, compile_sec_marker, compile_sec_rule_in,
+};
 use crate::seclang::variable_parser::VariableList;
 use crate::types::{AuditEngineStatus, BodyLimitAction, RuleEngineStatus};
 use crate::waf::{ConfigError, Waf, WafBuilder};
@@ -74,6 +76,9 @@ struct DirectiveOptions<'a> {
 
     /// Rules compiled so far, in file order
     rules: &'a mut RuleGroup,
+
+    /// Defaults that rules compiled from now on merge their actions with
+    default_actions: &'a mut DefaultActions,
 }
 
 /// Parser configuration and state
@@ -122,6 +127,9 @@ pub struct Parser {
     /// Rules compiled from SecRule, SecAction and SecMarker, in file order
     rules: RuleGroup,
 
+    /// Defaults set by SecDefaultAction so far
+    default_actions: DefaultActions,
+
     /// Whether a failing directive is recorded in `skipped` instead of returned
     skip_failed: bool,
 
@@ -137,6 +145,7 @@ impl Parser {
             include_count: 0,
             waf_config: WafConfig::new(),
             rules: RuleGroup::new(),
+            default_actions: DefaultActions::default(),
             skip_failed: false,
             skipped: Vec::new(),
         }
@@ -403,6 +412,7 @@ impl Parser {
                 config_dir: Path::new(&self.state.current_dir),
                 waf_config: &mut self.waf_config,
                 rules: &mut self.rules,
+                default_actions: &mut self.default_actions,
             })
         };
         result.map_err(|message| {
@@ -437,6 +447,7 @@ fn directive_handler(name: &str) -> Option<DirectiveFn> {
         "secrule" => directive_sec_rule,
         "secaction" => directive_sec_action,
         "secmarker" => directive_sec_marker,
+        "secdefaultaction" => directive_sec_default_action,
         "secruleupdatetargetbyid" => directive_sec_rule_update_target_by_id,
         "secruleupdatetargetbytag" => directive_sec_rule_update_target_by_tag,
         "secruleengine" => directive_sec_rule_engine,
@@ -494,14 +505,25 @@ fn directive_sec_rule(options: &mut DirectiveOptions) -> Result<(), String> {
     let context = OperatorContext {
         base_dir: options.config_dir,
     };
-    let rule = compile_sec_rule_in(&options.opts, &context);
+    let rule = compile_sec_rule_in(&options.opts, &context, options.default_actions);
     add_rule(options, rule)
 }
 
 /// SecAction "ACTIONS"
 fn directive_sec_action(options: &mut DirectiveOptions) -> Result<(), String> {
-    let rule = compile_sec_action(&options.opts);
+    let rule = compile_sec_action_in(&options.opts, options.default_actions);
     add_rule(options, rule)
+}
+
+/// SecDefaultAction "ACTIONS"
+///
+/// Sets the actions that rules of the phase named in ACTIONS, from here on, merge their
+/// own with; `block` takes the disruptive one.
+fn directive_sec_default_action(options: &mut DirectiveOptions) -> Result<(), String> {
+    options
+        .default_actions
+        .add(&options.opts)
+        .map_err(|e| e.message)
 }
 
 /// SecMarker LABEL
@@ -1669,7 +1691,7 @@ SecWebAppId production
         parser
             .from_string(
                 r#"
-                SecDefaultAction "phase:1,log,pass"
+                SecNoSuchDirective On
                 SecRule ARGS "@nosuchop x" "id:1"
                 SecRule ARGS "@contains attack" "id:2,phase:1,deny"
                 "#,
