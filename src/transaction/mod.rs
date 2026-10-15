@@ -8,7 +8,7 @@ pub mod variables;
 use std::sync::Arc;
 
 use crate::RuleVariable;
-use crate::actions::AllowType;
+use crate::actions::{AllowType, RuleMetadata};
 use crate::body_processors::{BodyProcessorKind, BodyProcessorOptions};
 use crate::collection::{Map, MatchData, Single};
 use crate::config::WafConfig;
@@ -18,26 +18,157 @@ use crate::types::{
     RuleSeverity,
 };
 
-/// Information about a rule that matched during transaction processing.
-///
-/// This is used for audit logging - all rules that match (not just blocking ones)
-/// need to be logged for proper CRS test compatibility.
-#[derive(Debug, Clone, PartialEq)]
+/// A rule, with its chain, that matched in a transaction, as recorded for logging.
+#[derive(Debug, Clone)]
 pub struct MatchedRule {
-    /// Rule ID
-    pub rule_id: i32,
+    /// The rule as compiled (for a chain, its first rule), with `raw` holding the
+    /// directives of the whole chain
+    pub rule: RuleMetadata,
 
-    /// Rule message (expanded with captured variables)
-    pub msg: String,
+    /// Each value the rule and its chain matched, with `message` and `data` as the
+    /// rule's `msg` and `logdata` expanded for it
+    pub matches: Vec<MatchData>,
 
-    /// Rule severity
-    pub severity: String,
+    /// Name of the rule's disruptive action (`deny`, `pass`, ...), whether or not it
+    /// took effect; `None` if it has none
+    pub disruptive_action: Option<&'static str>,
 
-    /// Matched data (captured values)
-    pub data: String,
+    /// Whether that disruptive action took effect: the rule engine was On
+    pub disruptive: bool,
 
-    /// Rule tags
-    pub tags: Vec<String>,
+    /// REMOTE_ADDR when the rule matched
+    pub client_ip: String,
+
+    /// SERVER_ADDR when the rule matched
+    pub server_ip: String,
+
+    /// REQUEST_URI when the rule matched
+    pub uri: String,
+
+    /// The transaction's id
+    pub transaction_id: String,
+}
+
+/// Longest message or data the log lines show, in bytes, as in Go Coraza.
+const MAX_LOG_MESSAGE: usize = 280;
+
+impl MatchedRule {
+    /// The first message among the matches, as for a chain the first rule with a `msg`
+    /// gives it; empty if none.
+    pub fn message(&self) -> &str {
+        self.first_with_message().map_or("", |m| m.message.as_str())
+    }
+
+    /// The data that goes with [`MatchedRule::message`].
+    pub fn data(&self) -> &str {
+        self.first_with_message().map_or("", |m| m.data.as_str())
+    }
+
+    fn first_with_message(&self) -> Option<&MatchData> {
+        self.matches.iter().find(|m| !m.message.is_empty())
+    }
+
+    /// The line Go Coraza writes to its error log for this match, e.g.
+    /// `[client "10.0.0.1"] Coraza: Access denied (phase 2). XSS [file "rules.conf"]
+    /// [line "12"] [id "941100"] ... [unique_id "tx-1"]`.
+    pub fn error_log(&self) -> String {
+        let first = self.matches.first();
+        let mut log = format!("[client {}] ", go_quote(&self.client_ip));
+        log.push_str(&self.outcome());
+        log.push_str(truncated(self.message(), MAX_LOG_MESSAGE));
+        log.push(' ');
+        let (msg, data) = first.map_or(("", ""), |m| (m.message.as_str(), m.data.as_str()));
+        self.write_details(&mut log, msg, data);
+        for (n, extra) in self.matches.iter().enumerate().skip(1) {
+            if !extra.message.is_empty() || !extra.data.is_empty() {
+                log.push_str(&format!(
+                    "[msg_match_{n} {}] [data_match_{n} {}]",
+                    go_quote(truncated(&extra.message, MAX_LOG_MESSAGE)),
+                    go_quote(truncated(&extra.data, MAX_LOG_MESSAGE)),
+                ));
+            }
+        }
+        log
+    }
+
+    /// What the rule did, as Go Coraza words it: `Coraza: Warning. ` when no disruptive
+    /// action took effect.
+    fn outcome(&self) -> String {
+        let phase = self.rule.phase.as_int();
+        match self.disruptive_action.filter(|_| self.disruptive) {
+            None | Some("pass") => "Coraza: Warning. ".to_string(),
+            Some("allow") => format!("Coraza: Access allowed (phase {phase}). "),
+            Some("deny") => format!("Coraza: Access denied (phase {phase}). "),
+            Some("drop") => format!("Coraza: Access dropped (phase {phase}). "),
+            Some("redirect") => format!("Coraza: Access redirected (phase {phase}). "),
+            Some(_) => format!("Coraza: Custom disruptive action triggered (phase {phase}). "),
+        }
+    }
+
+    fn write_details(&self, log: &mut String, msg: &str, data: &str) {
+        let rule = &self.rule;
+        let severity = rule.severity.map_or("unknown", |s| s.as_str());
+        log.push_str(&format!(
+            "[file {}] [line {}] [id {}] [rev {}] [msg {}] [data {}] [severity {}] [ver {}] [maturity {}] [accuracy {}]",
+            go_quote(&rule.file),
+            go_quote(&rule.line.to_string()),
+            go_quote(&rule.id.to_string()),
+            go_quote(&rule.rev),
+            go_quote(truncated(msg, MAX_LOG_MESSAGE)),
+            go_quote(truncated(data, MAX_LOG_MESSAGE)),
+            go_quote(severity),
+            go_quote(&rule.ver),
+            go_quote(&rule.maturity.to_string()),
+            go_quote(&rule.accuracy.to_string()),
+        ));
+        for tag in &rule.tags {
+            log.push_str(&format!(" [tag {}]", go_quote(tag)));
+        }
+        log.push_str(&format!(
+            " [hostname {}] [uri {}] [unique_id {}]",
+            go_quote(&self.server_ip),
+            go_quote(&self.uri),
+            go_quote(&self.transaction_id),
+        ));
+    }
+}
+
+/// The longest prefix of `text` of at most `max` bytes that ends on a character boundary.
+fn truncated(text: &str, max: usize) -> &str {
+    if text.len() <= max {
+        return text;
+    }
+    let end = (0..=max)
+        .rev()
+        .find(|&i| text.is_char_boundary(i))
+        .unwrap_or(0);
+    &text[..end]
+}
+
+/// `text` as a double-quoted string literal the way Go's `%q` writes it.
+fn go_quote(text: &str) -> String {
+    let mut quoted = String::with_capacity(text.len() + 2);
+    quoted.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\u{07}' => quoted.push_str("\\a"),
+            '\u{08}' => quoted.push_str("\\b"),
+            '\u{0c}' => quoted.push_str("\\f"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            '\u{0b}' => quoted.push_str("\\v"),
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                quoted.push_str(&format!("\\x{:02x}", c as u32));
+            }
+            c if c.is_control() => quoted.push_str(&format!("\\u{:04x}", c as u32)),
+            c => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    quoted
 }
 
 /// Interruption returned when a disruptive action is triggered.
@@ -825,7 +956,22 @@ impl Transaction {
     ///
     /// This is called by the rule engine when a rule matches, regardless of
     /// whether it triggers a disruptive action.
-    pub(crate) fn record_match(&mut self, matched: MatchedRule) {
+    pub(crate) fn record_match(
+        &mut self,
+        rule: RuleMetadata,
+        matches: Vec<MatchData>,
+        disruptive_action: Option<&'static str>,
+    ) {
+        let matched = MatchedRule {
+            rule,
+            matches,
+            disruptive_action,
+            disruptive: disruptive_action.is_some() && self.rule_engine == RuleEngineStatus::On,
+            client_ip: self.remote_addr.get().to_string(),
+            server_ip: self.server_addr.get().to_string(),
+            uri: self.request_uri.get().to_string(),
+            transaction_id: self.unique_id.get().to_string(),
+        };
         self.matched_rules.push(matched);
     }
 

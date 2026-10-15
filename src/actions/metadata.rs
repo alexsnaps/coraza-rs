@@ -215,6 +215,36 @@ pub(super) fn maturity(rule: &mut RuleMetadata, data: &str) -> Result<(), Action
     Ok(())
 }
 
+/// `accuracy` action - Specifies the relative accuracy level of the rule.
+///
+/// How likely the rule is to match only what it means to: from 1, often a false
+/// positive, to 9, rarely one.
+///
+/// # Arguments
+///
+/// Accuracy level (1-9)
+///
+/// # Examples
+///
+/// ```text
+/// SecRule REQUEST_FILENAME|ARGS_NAMES|ARGS "@rx \bgetparentfolder\b" "id:958036,accuracy:'7'"
+/// ```
+pub(super) fn accuracy(rule: &mut RuleMetadata, data: &str) -> Result<(), ActionError> {
+    let accuracy = data
+        .parse::<u8>()
+        .map_err(|e| ActionError::InvalidArguments(format!("invalid accuracy: {}", e)))?;
+
+    if !(1..=9).contains(&accuracy) {
+        return Err(ActionError::InvalidArguments(format!(
+            "invalid argument, {} should be between 1 and 9",
+            accuracy
+        )));
+    }
+
+    rule.accuracy = accuracy;
+    Ok(())
+}
+
 /// `phase` action - Specifies the processing phase for the rule.
 ///
 /// Places the rule into one of five available processing phases.

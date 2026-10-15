@@ -208,6 +208,7 @@ impl Rule {
         if matched_values.is_empty() {
             return matched_values;
         }
+        let own_matches = matched_values.len();
 
         for link in &self.chain {
             let link_matches = link.match_values(tx, id);
@@ -217,38 +218,29 @@ impl Rule {
             matched_values.extend(link_matches);
         }
 
-        // Record the match for audit logging; SecMarker and SecAction rules have ID 0
+        // As in Go Coraza, the first rule of a chain describes its matches once the whole
+        // chain matched, so that its msg and logdata see the chain's MATCHED_* variables
+        if !self.chain.is_empty() {
+            let (message, data) = self.describe_match(tx);
+            for matched in &mut matched_values[..own_matches] {
+                matched.message.clone_from(&message);
+                matched.data.clone_from(&data);
+            }
+        }
+
+        // Record the match for logging; SecMarker rules have ID 0
         if self.metadata.id != 0 {
-            use crate::transaction::MatchedRule;
-
-            let msg = self
-                .metadata
-                .msg
-                .as_ref()
-                .map(|m| m.expand(Some(tx)))
-                .unwrap_or_default();
-
-            let severity = self
-                .metadata
-                .severity
-                .as_ref()
-                .map(|s| format!("{:?}", s).to_uppercase())
-                .unwrap_or_else(|| "NOTICE".to_string());
-
-            let data = self
-                .metadata
-                .log_data
-                .as_ref()
-                .map(|ld| ld.expand(Some(tx)))
-                .unwrap_or_default();
-
-            tx.record_match(MatchedRule {
-                rule_id: self.metadata.id,
-                msg,
-                severity,
-                data,
-                tags: self.metadata.tags.clone(),
-            });
+            let mut rule = self.metadata.clone();
+            for link in &self.chain {
+                rule.raw.push_str(" \n");
+                rule.raw.push_str(&link.metadata.raw);
+            }
+            let disruptive_action = self
+                .actions
+                .iter()
+                .find(|action| action.action_type() == ActionType::Disruptive)
+                .map(Action::name);
+            tx.record_match(rule, matched_values.clone(), disruptive_action);
         }
 
         if let Some(severity) = self.metadata.severity {
@@ -258,6 +250,16 @@ impl Rule {
         execute_flow_and_disruptive_actions(&self.actions, &self.metadata, tx, rule_engine_on);
 
         matched_values
+    }
+
+    /// This rule's `msg` and `logdata`, expanded now; empty when unset.
+    fn describe_match(&self, tx: &Transaction) -> (String, String) {
+        let expand = |text: &Option<crate::operators::Macro>| {
+            text.as_ref()
+                .map(|text| text.expand(Some(tx)))
+                .unwrap_or_default()
+        };
+        (expand(&self.metadata.msg), expand(&self.metadata.log_data))
     }
 
     /// Matches this rule's own variables and operator, ignoring its chain, and runs its
@@ -276,9 +278,12 @@ impl Rule {
 
         let Some(operator) = &self.operator else {
             // As in Go Coraza, an operator-less rule matches an empty, unknown variable
-            let matched = MatchData::new_empty();
+            let mut matched = MatchData::new_empty();
             tx.record_matched_variable(&matched);
             execute_nondisruptive_actions(&self.actions, &self.metadata, tx);
+            if self.chain.is_empty() {
+                (matched.message, matched.data) = self.describe_match(tx);
+            }
             return vec![matched];
         };
 
@@ -302,10 +307,14 @@ impl Rule {
 
                 for value in values {
                     if operator.evaluate(Some(tx), &value) {
-                        let matched =
+                        let mut matched =
                             MatchData::new(var_match.variable, var_match.key.clone(), value);
                         tx.record_matched_variable(&matched);
                         execute_nondisruptive_actions(&self.actions, &self.metadata, tx);
+                        // The first rule of a chain describes its matches once the chain matched
+                        if self.chain.is_empty() {
+                            (matched.message, matched.data) = self.describe_match(tx);
+                        }
                         matched_values.push(matched);
                     }
                 }

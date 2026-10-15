@@ -1279,3 +1279,37 @@ fn directives_go_ignores_are_accepted() {
         .unwrap_err();
     assert!(err.message.contains("not supported"), "{}", err.message);
 }
+
+#[test]
+fn matched_rules_give_go_error_log_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let rules = dir.path().join("rules.conf");
+    std::fs::write(&rules, "# rules\n\nSecRule ARGS:q \"@rx ^ev(il)\" \"id:1,phase:1,pass,log,capture,msg:'Evil found',logdata:'Matched %{MATCHED_VAR}',tag:'attack',tag:'evil',rev:'2',ver:'v1',severity:'CRITICAL',maturity:9,accuracy:8\"\nSecRule ARGS:q \"@rx ^evil\" \"id:2,phase:1,deny,status:403\"\n").unwrap();
+    std::fs::write(
+        dir.path().join("main.conf"),
+        "SecRuleEngine On\nInclude rules.conf\n",
+    )
+    .unwrap();
+    let mut parser = Parser::new();
+    parser.from_file(dir.path().join("main.conf")).unwrap();
+    let waf = parser.into_waf().unwrap();
+
+    let mut tx = waf.new_transaction_with_id("tx-1".to_string());
+    tx.process_connection("10.0.0.1", 4242, "10.0.0.2", 80);
+    tx.process_uri("/x?q=evil", "GET", "HTTP/1.1");
+    tx.process_request_headers();
+
+    let file = rules.display();
+    let lines: Vec<String> = tx.matched_rules().iter().map(|m| m.error_log()).collect();
+    assert_eq!(
+        lines,
+        [
+            format!(
+                r#"[client "10.0.0.1"] Coraza: Warning. Evil found [file "{file}"] [line "3"] [id "1"] [rev "2"] [msg "Evil found"] [data "Matched evil"] [severity "critical"] [ver "v1"] [maturity "9"] [accuracy "8"] [tag "attack"] [tag "evil"] [hostname "10.0.0.2"] [uri "/x?q=evil"] [unique_id "tx-1"]"#
+            ),
+            format!(
+                r#"[client "10.0.0.1"] Coraza: Access denied (phase 1).  [file "{file}"] [line "4"] [id "2"] [rev ""] [msg ""] [data ""] [severity "unknown"] [ver ""] [maturity "0"] [accuracy "0"] [hostname "10.0.0.2"] [uri "/x?q=evil"] [unique_id "tx-1"]"#
+            ),
+        ]
+    );
+}

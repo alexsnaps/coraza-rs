@@ -87,6 +87,15 @@ struct DirectiveOptions<'a> {
     /// paths in it are relative to
     config_dir: &'a Path,
 
+    /// File holding the directive (`_inline_` for a string)
+    file: &'a str,
+
+    /// Line of `file` the directive ends on
+    line: usize,
+
+    /// The directive as written, continuation lines joined
+    raw: &'a str,
+
     /// Mutable reference to WAF configuration
     waf_config: &'a mut WafConfig,
 
@@ -232,10 +241,11 @@ impl Parser {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn from_string(&mut self, data: &str) -> ParseResult<()> {
-        let old_file = self.state.current_file.clone();
-        self.state.current_file = "_inline_".to_string();
+        let old_file = std::mem::replace(&mut self.state.current_file, "_inline_".to_string());
+        let old_line = std::mem::take(&mut self.state.current_line);
         let result = self.parse_string(data);
         self.state.current_file = old_file;
+        self.state.current_line = old_line;
         result
     }
 
@@ -308,8 +318,10 @@ impl Parser {
                 self.error(format!("failed to read file '{}': {}", resolved_path, e))
             })?;
 
-            // Parse file content
+            // Parse file content, counting its lines from 1
+            let last_line = std::mem::take(&mut self.state.current_line);
             let result = self.parse_string(&content);
+            self.state.current_line = last_line;
 
             // Restore directory for sibling includes
             self.state.current_dir = last_dir;
@@ -443,6 +455,9 @@ impl Parser {
                 handler(&mut DirectiveOptions {
                     opts,
                     config_dir: Path::new(&self.state.current_dir),
+                    file: &self.state.current_file,
+                    line: self.state.current_line,
+                    raw: line,
                     waf_config: &mut self.waf_config,
                     rules: &mut self.rules,
                     default_actions: &mut self.default_actions,
@@ -574,13 +589,18 @@ fn parse_boolean(value: &str) -> Result<bool, String> {
     }
 }
 
-/// Adds a compiled rule; fails on compile errors and duplicate ids.
+/// Adds a compiled rule, noting where it was written; fails on compile errors and
+/// duplicate ids.
 fn add_rule(
     options: &mut DirectiveOptions,
     rule: Result<Rule, CompileError>,
 ) -> Result<(), String> {
-    rule.map_err(|e| e.message)
-        .and_then(|rule| options.rules.add(rule))
+    let mut rule = rule.map_err(|e| e.message)?;
+    let metadata = rule.metadata_mut();
+    metadata.file = options.file.to_string();
+    metadata.line = options.line;
+    metadata.raw = options.raw.to_string();
+    options.rules.add(rule)
 }
 
 /// SecRule VARIABLES "OPERATOR" "ACTIONS"

@@ -199,6 +199,10 @@ Go Coraza has 69 `Sec*` directives; we have 26. Section 1 covers 11 of the 43 mi
 - [ ] **Audit logging.** Found while working on 1.6: Go writes audit logs itself, in its `Native`, `JSON`,
   `JSONLegacy` and `OCSF` formats, to `Serial`, `Concurrent`, `HTTPS` and `Syslog` writers. The library writes none;
   `examples/ftw_server*.rs` write their own.
+  - Done for Go's error log line: `MatchedRule` now records the rule (with its file, line, raw text and
+    `accuracy`), every value it and its chain matched with `msg` and `logdata` expanded for it, and its disruptive
+    action; `MatchedRule::error_log` writes the line Go writes, which the async FTW example now logs for each rule
+    with `log`. Parsing counts lines from 1 in each file, where included files used to continue the count.
 
 ## 5. Operators, actions and names
 
@@ -207,7 +211,8 @@ None of these is used by CRS v4.30.0.
 - [ ] **Operators:** `@geoLookup`, `@inspectFile`, `@ipMatchFromDataset`, `@pmFromDataset`, `@rbl`, `@restpath`,
   `@validateNid` and `@validateSchema`.
   - `@ipMatchFromDataset` and `@pmFromDataset` are done, with `SecDataset` in section 4.
-- [ ] **Action:** `accuracy`.
+- [x] **Action:** `accuracy`.
+  - Done with the error log line of section 4, which prints it.
 - [ ] **Variables:** `MULTIPART_FILENAME_CHARSET` and `MULTIPART_FILENAME_LANGUAGE`.
 - [ ] **Go's spellings.**
   - `RES_BODY_ERROR`, `RES_BODY_ERROR_MSG`, `RES_BODY_PROCESSOR`, `RES_BODY_PROCESSOR_ERROR` and
