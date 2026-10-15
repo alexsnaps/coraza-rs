@@ -73,6 +73,9 @@ enum Directive {
     WithArgument(DirectiveFn),
     /// Takes no argument
     WithoutArgument(DirectiveFn),
+    /// Accepted with any argument and ignored, as Go Coraza does, so that configurations
+    /// written for it load
+    Ignored,
 }
 
 /// What a directive handler works on: its (non-empty) argument and the parser's output.
@@ -435,6 +438,7 @@ impl Parser {
             Directive::WithoutArgument(_) if !opts.is_empty() => {
                 Err("takes no argument".to_string())
             }
+            Directive::Ignored => Ok(()),
             Directive::WithArgument(handler) | Directive::WithoutArgument(handler) => {
                 handler(&mut DirectiveOptions {
                     opts,
@@ -475,7 +479,7 @@ impl Default for Parser {
 ///
 /// `Include` is handled by the parser itself.
 fn directive_handler(name: &str) -> Option<Directive> {
-    use Directive::{WithArgument, WithoutArgument};
+    use Directive::{Ignored, WithArgument, WithoutArgument};
     let directive = match name {
         "secrule" => WithArgument(directive_sec_rule),
         "secaction" => WithArgument(directive_sec_action),
@@ -532,6 +536,26 @@ fn directive_handler(name: &str) -> Option<Directive> {
         "secresponsebodymimetypesclear" => {
             WithoutArgument(directive_sec_response_body_mime_types_clear)
         }
+        "secremoterules" => WithArgument(directive_sec_remote_rules),
+        "secargumentseparator"
+        | "secconnengine"
+        | "secconnreadstatelimit"
+        | "secconnwritestatelimit"
+        | "seccookieformat"
+        | "secgsblookupdb"
+        | "sechashengine"
+        | "sechashkey"
+        | "sechashmethodpm"
+        | "sechashmethodrx"
+        | "sechashparam"
+        | "sechttpblkey"
+        | "secpcrematchlimit"
+        | "secpcrematchlimitrecursion"
+        | "secruleperftime"
+        | "secrulescript"
+        | "secruleupdatetargetbymsg"
+        | "sectmpdir"
+        | "secunicodemap" => Ignored,
         _ => return None,
     };
     Some(directive)
@@ -1123,6 +1147,14 @@ fn directive_sec_remote_rules_fail_action(options: &mut DirectiveOptions) -> Res
         "abort" | "warn" => Ok(()),
         _ => Err(format!("expected Abort or Warn, got: {}", options.opts)),
     }
+}
+
+/// SecRemoteRules KEY URL
+///
+/// Not supported, as in Go Coraza: loading rules over the network is left to the
+/// embedder.
+fn directive_sec_remote_rules(_options: &mut DirectiveOptions) -> Result<(), String> {
+    Err("not supported".to_string())
 }
 
 /// SecResponseBodyMimeTypesClear

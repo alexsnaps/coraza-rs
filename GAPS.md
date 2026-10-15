@@ -189,11 +189,13 @@ Go Coraza has 69 `Sec*` directives; we have 26. Section 1 covers 11 of the 43 mi
     now knows which directives take no argument. `SecRemoteRulesFailAction` is checked and has no effect, as
     `SecRemoteRules` isn't supported here or in Go. `SecIgnoreRuleCompilationErrors On` skips later failing
     directives, as `Parser::skip_failed_directives` does, where Go records it and doesn't act on it.
-- [ ] **Accept the directives Go accepts and ignores,** so configs written for Go Coraza load: `SecArgumentSeparator`,
+- [x] **Accept the directives Go accepts and ignores,** so configs written for Go Coraza load: `SecArgumentSeparator`,
   `SecConnEngine`, `SecConnReadStateLimit`, `SecConnWriteStateLimit`, `SecCookieFormat`, `SecGsbLookupDb`,
   `SecHashEngine`, `SecHashKey`, `SecHashMethodPm`, `SecHashMethodRx`, `SecHashParam`, `SecHttpBlKey`,
   `SecPcreMatchLimit`, `SecPcreMatchLimitRecursion`, `SecRulePerfTime`, `SecRuleScript`, `SecRuleUpdateTargetByMsg`,
   `SecTmpDir` and `SecUnicodeMap`. In Go, `SecRemoteRules` is an error ("not implemented").
+  - Done: they are accepted with any argument and ignored, and `SecRemoteRules` fails with "not supported". The
+    parser now knows all 69 of Go's directives.
 - [ ] **Audit logging.** Found while working on 1.6: Go writes audit logs itself, in its `Native`, `JSON`,
   `JSONLegacy` and `OCSF` formats, to `Serial`, `Concurrent`, `HTTPS` and `Syslog` writers. The library writes none;
   `examples/ftw_server*.rs` write their own.

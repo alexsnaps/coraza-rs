@@ -1244,3 +1244,38 @@ fn ignoring_rule_compilation_errors_skips_failing_directives() {
     assert_eq!(parser.skipped().len(), 1);
     assert_eq!(parser.into_waf().unwrap().rule_count(), 1);
 }
+
+#[test]
+fn directives_go_ignores_are_accepted() {
+    let mut parser = Parser::new();
+    parser
+        .from_string(
+            r#"
+            SecArgumentSeparator &
+            SecConnEngine Off
+            SecConnReadStateLimit 50
+            SecConnWriteStateLimit 50
+            SecCookieFormat 0
+            SecGsbLookupDb /etc/gsb.dat
+            SecHashEngine Off
+            SecHashKey rand KeyOnly
+            SecHashMethodPm HashHref "foo bar"
+            SecHashMethodRx HashHref "^/"
+            SecHashParam hmac
+            SecHttpBlKey abcdefghijkl
+            SecPcreMatchLimit 1000
+            SecPcreMatchLimitRecursion 1000
+            SecRulePerfTime 1000
+            SecRuleScript /etc/script.lua
+            SecRuleUpdateTargetByMsg "a message" ARGS
+            SecTmpDir /tmp
+            SecUnicodeMap unicode.mapping 20127
+            "#,
+        )
+        .unwrap();
+
+    let err = Parser::new()
+        .from_string("SecRemoteRules key https://example.com/rules.conf")
+        .unwrap_err();
+    assert!(err.message.contains("not supported"), "{}", err.message);
+}
