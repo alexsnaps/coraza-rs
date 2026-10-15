@@ -285,17 +285,16 @@ fn test_setenv_action_execution() {
         .expect("setenv runs when the rule matches");
     assert_eq!(action.action_type(), ActionType::Nondisruptive);
 
-    // Execute (sets environment variable)
+    // Sets ENV, not the process environment
     let mut tx = Transaction::new("action-test");
     action.evaluate(&rule, &mut tx);
 
-    // Verify environment variable was set
-    assert_eq!(std::env::var("TEST_VAR").unwrap(), "test_value");
-
-    // Cleanup
-    unsafe {
-        std::env::remove_var("TEST_VAR");
-    }
+    assert_eq!(
+        tx.get_variable(coraza::RuleVariable::Env, Some("TEST_VAR"))
+            .as_deref(),
+        Some("test_value")
+    );
+    assert!(std::env::var_os("TEST_VAR").is_none());
 }
 
 #[test]

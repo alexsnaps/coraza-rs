@@ -142,6 +142,9 @@ naming them expands to nothing. CRS v4.30.0 uses the ones below.
   - The other `MULTIPART_*` flags and `MULTIPART_FILENAME`/`MULTIPART_NAME`.
   - `REQBODY_PROCESSOR_ERROR(_MSG)` and `RESBODY_*` are done, with the `ctl` body processors in section 2.
   - `TIME` and the `TIME_*` parts.
+  - Done for `ENV`: `setenv` sets it. Unlike Go, it no longer sets the process environment too: that is undefined
+    behaviour while other threads may read the environment, and its `unsafe` block claimed it was sound because
+    Go does it.
 
 ## 4. Other missing directives
 

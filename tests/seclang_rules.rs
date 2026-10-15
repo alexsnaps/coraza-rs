@@ -944,3 +944,14 @@ fn quoted_extended_multipart_filenames_are_invalid_quoting() {
         assert_eq!(interruption.is_some(), flagged, "{disposition}");
     }
 }
+
+#[test]
+fn setenv_sets_env_for_later_rules() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,nolog,setenv:greeting=hello"
+        SecRule ENV:greeting "@streq hello" "id:2,phase:1,deny,status:403"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(2));
+}

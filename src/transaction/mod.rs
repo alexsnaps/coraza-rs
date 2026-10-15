@@ -131,6 +131,7 @@ macro_rules! variable_storage {
             RuleVariable::MultipartInvalidQuoting => {
                 Some(Single($($borrow)+ $tx.multipart_invalid_quoting))
             }
+            RuleVariable::Env => Some(Map($($borrow)+ $tx.env)),
             RuleVariable::MatchedVars => Some(Map($($borrow)+ $tx.matched_vars)),
             RuleVariable::MatchedVarsNames => {
                 Some(Names(RuleVariable::MatchedVarsNames, $($borrow)+ $tx.matched_vars))
@@ -202,7 +203,6 @@ macro_rules! variable_storage {
             | RuleVariable::Geo
             | RuleVariable::Rule
             | RuleVariable::JSON
-            | RuleVariable::Env
             | RuleVariable::UrlencodedError
             | RuleVariable::AuthType
             | RuleVariable::FullRequest
@@ -417,6 +417,9 @@ pub struct Transaction {
     /// TX - Transaction variables (created with setvar, etc.)
     tx: Map,
 
+    /// ENV - Variables set by `setenv`
+    env: Map,
+
     /// MATCHED_VAR - The value of the latest match
     matched_var: Single,
 
@@ -615,6 +618,7 @@ impl Transaction {
             response_args: Map::new_case_sensitive(RuleVariable::ResponseArgs),
             response_xml: Map::new_case_sensitive(RuleVariable::ResponseXML),
             tx: Map::new(RuleVariable::TX),
+            env: Map::new_case_sensitive(RuleVariable::Env),
             matched_var: Single::new(RuleVariable::MatchedVar),
             matched_var_name: Single::new(RuleVariable::MatchedVarName),
             matched_vars: Map::new(RuleVariable::MatchedVars),
@@ -723,6 +727,11 @@ impl Transaction {
         self.matched_vars.add(&name, &matched.value);
         self.matched_var.set(matched.value.as_str());
         self.matched_var_name.set(name);
+    }
+
+    /// Sets `key` of ENV to `value`, as the `setenv` action does.
+    pub fn set_env(&mut self, key: &str, value: String) {
+        self.env.set(key, vec![value]);
     }
 
     /// Empties MATCHED_VARS, before a rule is evaluated.
