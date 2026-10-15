@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use crate::operators::{Datasets, Macro, MacroError, Operator};
+use crate::operators::{Datasets, Macro, MacroError, Operator, Outputs};
 use crate::transaction::Transaction;
 use crate::utils::strings::x2c;
 use aho_corasick::AhoCorasick;
@@ -35,12 +35,14 @@ use regex::Regex;
 /// use coraza::{transaction::Transaction, Operator, rx};
 ///
 /// let op = rx("som(.*)ta").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "somedata"));
-/// assert!(!op.evaluate(None::<&mut Transaction>, "notdata"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "somedata", &mut out));
+/// assert!(!op.evaluate(&tx, "notdata", &mut out));
 ///
 /// // Unicode support
 /// let op = rx("ハロー").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "ハローワールド"));
+/// assert!(op.evaluate(&tx, "ハローワールド", &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Rx {
@@ -168,16 +170,13 @@ fn byte_escape(pattern: &[u8]) -> Option<(u8, usize)> {
 }
 
 impl Operator for Rx {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        // Determine if we're capturing based on transaction state
-        let capturing = tx.as_ref().is_some_and(|t| t.capturing());
-
+    fn evaluate(&self, tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
         // A pattern with macros is compiled for each value, once expanded
         let expanded;
         let regex = match &self.cached_regex {
             Some(regex) => regex,
             None => {
-                let pattern = self.macro_param.expand(tx.as_deref());
+                let pattern = self.macro_param.expand(tx);
                 match CompiledRx::new(&pattern) {
                     Ok(regex) => {
                         expanded = regex;
@@ -188,17 +187,15 @@ impl Operator for Rx {
             }
         };
 
-        if !capturing {
+        if !out.wants_captures() {
             return regex.is_match(input);
         }
         let Some(groups) = regex.captures(input) else {
             return false;
         };
-        if let Some(tx) = tx {
-            // The full match and up to 9 capturing groups (ModSecurity limit)
-            for (i, group) in groups.iter().take(10).enumerate() {
-                tx.capture_field(i, group.as_deref().unwrap_or(""));
-            }
+        // The full match and up to 9 capturing groups (ModSecurity limit)
+        for (i, group) in groups.iter().take(10).enumerate() {
+            out.capture(i, group.as_deref().unwrap_or(""));
         }
         true
     }
@@ -243,9 +240,11 @@ pub fn rx(pattern: &str) -> Result<Rx, Box<dyn std::error::Error>> {
 /// use coraza::{transaction::Transaction, Operator, pm};
 ///
 /// let op = pm("WebZIP WebCopier Webster").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "User-Agent: WebZIP/1.0"));
-/// assert!(op.evaluate(None::<&mut Transaction>, "WEBZIP is here")); // Case-insensitive
-/// assert!(!op.evaluate(None::<&mut Transaction>, "Mozilla/5.0"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0", &mut out));
+/// assert!(op.evaluate(&tx, "WEBZIP is here", &mut out)); // Case-insensitive
+/// assert!(!op.evaluate(&tx, "Mozilla/5.0", &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Pm {
@@ -255,16 +254,13 @@ pub struct Pm {
 }
 
 impl Operator for Pm {
-    fn evaluate(&self, mut tx: Option<&mut Transaction>, input: &str) -> bool {
-        // Determine if we're capturing based on transaction state
-        let capturing = tx.as_ref().is_some_and(|t| t.capturing());
-
+    fn evaluate(&self, tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
         // Phrases with macros are matched with a matcher built for each value, once expanded
         let expanded;
         let matcher = match &self.cached_matcher {
             Some(matcher) => matcher,
             None => {
-                let patterns = self.macro_param.expand(tx.as_deref()).to_lowercase();
+                let patterns = self.macro_param.expand(tx).to_lowercase();
                 let dict: Vec<&str> = patterns.split(' ').collect();
                 match AhoCorasick::builder()
                     .ascii_case_insensitive(true)
@@ -279,13 +275,11 @@ impl Operator for Pm {
             }
         };
 
-        if capturing {
+        if out.wants_captures() {
             // Capturing mode: collect all matches up to limit of 10
             let mut num_matches = 0;
             for mat in matcher.find_iter(input) {
-                if let Some(ref mut tx_mut) = tx {
-                    tx_mut.capture_field(num_matches, &input[mat.start()..mat.end()]);
-                }
+                out.capture(num_matches, &input[mat.start()..mat.end()]);
                 num_matches += 1;
                 if num_matches == 10 {
                     return true;
@@ -352,7 +346,9 @@ pub fn pm(patterns: &str) -> Result<Pm, MacroError> {
 /// # use coraza::operators::Operator;
 /// # use coraza::transaction::Transaction;
 /// let op = pm_from_file("/etc/coraza/bad-user-agents.txt").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "User-Agent: WebZIP/1.0"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0", &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct PmFromFile {
@@ -375,20 +371,18 @@ impl Phrases {
         Ok(Self { matcher })
     }
 
-    /// Whether a phrase occurs in `input`; when the transaction captures, the first 10
-    /// occurrences go to TX.0 to TX.9, as found in `input`.
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        match tx {
-            Some(tx) if tx.capturing() => {
-                let mut matched = false;
-                for (index, found) in self.matcher.find_iter(input).take(10).enumerate() {
-                    tx.capture_field(index, &input[found.start()..found.end()]);
-                    matched = true;
-                }
-                matched
-            }
-            _ => self.matcher.is_match(input),
+    /// Whether a phrase occurs in `input`; when the rule captures, the first 10 occurrences
+    /// are its captures, as found in `input`.
+    fn evaluate(&self, _tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
+        if !out.wants_captures() {
+            return self.matcher.is_match(input);
         }
+        let mut matched = false;
+        for (index, found) in self.matcher.find_iter(input).take(10).enumerate() {
+            out.capture(index, &input[found.start()..found.end()]);
+            matched = true;
+        }
+        matched
     }
 }
 
@@ -443,8 +437,8 @@ impl PmFromFile {
 }
 
 impl Operator for PmFromFile {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        self.phrases.evaluate(tx, input)
+    fn evaluate(&self, tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
+        self.phrases.evaluate(tx, input, out)
     }
 }
 
@@ -457,8 +451,8 @@ pub struct PmFromDataset {
 }
 
 impl Operator for PmFromDataset {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        self.phrases.evaluate(tx, input)
+    fn evaluate(&self, tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
+        self.phrases.evaluate(tx, input, out)
     }
 }
 
@@ -508,14 +502,16 @@ pub fn pm_from_file(file_path: impl AsRef<Path>) -> Result<PmFromFile, String> {
 ///
 /// // Check if input is within allowed values
 /// let op = within("GET,POST,HEAD").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "GET"));
-/// assert!(op.evaluate(None::<&mut Transaction>, "POST"));
-/// assert!(!op.evaluate(None::<&mut Transaction>, "DELETE"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "GET", &mut out));
+/// assert!(op.evaluate(&tx, "POST", &mut out));
+/// assert!(!op.evaluate(&tx, "DELETE", &mut out));
 ///
 /// // Works with any haystack
 /// let op = within("abcdefghij").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "def"));
-/// assert!(!op.evaluate(None::<&mut Transaction>, "xyz"));
+/// assert!(op.evaluate(&tx, "def", &mut out));
+/// assert!(!op.evaluate(&tx, "xyz", &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Within {
@@ -523,8 +519,8 @@ pub struct Within {
 }
 
 impl Operator for Within {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        let haystack = self.macro_param.expand(tx.as_deref());
+    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+        let haystack = self.macro_param.expand(tx);
         haystack.contains(input)
     }
 }
@@ -553,8 +549,10 @@ pub fn within(haystack: &str) -> Result<Within, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, strmatch};
 ///
 /// let op = strmatch("WebZIP").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "User-Agent: WebZIP/1.0"));
-/// assert!(!op.evaluate(None::<&mut Transaction>, "User-Agent: webzip")); // Case-sensitive
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0", &mut out));
+/// assert!(!op.evaluate(&tx, "User-Agent: webzip", &mut out)); // Case-sensitive
 /// ```
 #[derive(Debug, Clone)]
 pub struct StrMatch {
@@ -562,8 +560,8 @@ pub struct StrMatch {
 }
 
 impl Operator for StrMatch {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        let needle = self.macro_param.expand(tx.as_deref());
+    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+        let needle = self.macro_param.expand(tx);
         input.contains(&needle)
     }
 }
@@ -591,15 +589,13 @@ pub struct RestPath {
 }
 
 impl Operator for RestPath {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
+    fn evaluate(&self, _tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
         let Some(captures) = self.regex.captures(input) else {
             return false;
         };
-        if let Some(tx) = tx {
-            for name in self.regex.capture_names().flatten() {
-                if let Some(segment) = captures.name(name) {
-                    tx.set_path_argument(name, segment.as_str());
-                }
+        for name in self.regex.capture_names().flatten() {
+            if let Some(segment) = captures.name(name) {
+                out.add_path_argument(name, segment.as_str());
             }
         }
         true
@@ -623,6 +619,7 @@ pub fn rest_path(template: &str) -> Result<RestPath, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::operators::{Matches, evaluate_in};
     use crate::transaction::Transaction;
     use crate::types::RuleVariable;
 
@@ -640,10 +637,9 @@ mod tests {
         tx
     }
 
+    /// A transaction for tests of operators whose rule captures.
     fn capturing_tx() -> Transaction {
-        let mut tx = Transaction::new("capture-test");
-        tx.set_capturing(true);
-        tx
+        Transaction::new("capture-test")
     }
 
     /// Capture `index`, as stored in `TX.<index>`.
@@ -654,46 +650,46 @@ mod tests {
     #[test]
     fn test_rx_basic() {
         let op = rx("som(.*)ta").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "somedata"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "notdata"));
+        assert!(op.matches("somedata"));
+        assert!(!op.matches("notdata"));
     }
 
     #[test]
     fn test_rx_unicode() {
         let op = rx("ハロー").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "ハローワールド"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "グッバイワールド"));
+        assert!(op.matches("ハローワールド"));
+        assert!(!op.matches("グッバイワールド"));
     }
 
     #[test]
     fn test_rx_dotall_mode() {
         // Dotall mode enabled by default - . matches newlines
         let op = rx("hello.*world").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "hello\nworld"));
-        assert!(op.evaluate(None::<&mut Transaction>, "hello world"));
+        assert!(op.matches("hello\nworld"));
+        assert!(op.matches("hello world"));
     }
 
     #[test]
     fn test_rx_case_sensitive() {
         let op = rx("test").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "test"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "TEST"));
+        assert!(op.matches("test"));
+        assert!(!op.matches("TEST"));
 
         // Case-insensitive with flag
         let op = rx("(?i)test").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "test"));
-        assert!(op.evaluate(None::<&mut Transaction>, "TEST"));
+        assert!(op.matches("test"));
+        assert!(op.matches("TEST"));
     }
 
     #[test]
     fn test_rx_anchors() {
         let op = rx("^GET").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "GET /index.html"));
-        assert!(!op.evaluate(None::<&mut Transaction>, " GET /index.html"));
+        assert!(op.matches("GET /index.html"));
+        assert!(!op.matches(" GET /index.html"));
 
         let op = rx("\\.php$").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "/index.php"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "/index.php?id=1"));
+        assert!(op.matches("/index.php"));
+        assert!(!op.matches("/index.php?id=1"));
     }
 
     #[test]
@@ -707,49 +703,49 @@ mod tests {
         let op = rx("%{TX.pattern}").unwrap();
         let mut tx = mock_tx();
 
-        assert!(op.evaluate(Some(&mut tx), "testXYZdata"));
-        assert!(op.evaluate(Some(&mut tx), "test123data"));
-        assert!(!op.evaluate(Some(&mut tx), "notmatching"));
+        assert!(evaluate_in(&op, &mut tx, "testXYZdata", false));
+        assert!(evaluate_in(&op, &mut tx, "test123data", false));
+        assert!(!evaluate_in(&op, &mut tx, "notmatching", false));
     }
 
     #[test]
     fn test_pm_basic() {
         let op = pm("WebZIP WebCopier Webster").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "User-Agent: WebZIP/1.0"));
-        assert!(op.evaluate(None::<&mut Transaction>, "WebCopier tool"));
-        assert!(op.evaluate(None::<&mut Transaction>, "Webster here"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "Mozilla/5.0"));
+        assert!(op.matches("User-Agent: WebZIP/1.0"));
+        assert!(op.matches("WebCopier tool"));
+        assert!(op.matches("Webster here"));
+        assert!(!op.matches("Mozilla/5.0"));
     }
 
     #[test]
     fn test_pm_case_insensitive() {
         let op = pm("WebZIP").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "WEBZIP"));
-        assert!(op.evaluate(None::<&mut Transaction>, "webzip"));
-        assert!(op.evaluate(None::<&mut Transaction>, "WebZIP"));
-        assert!(op.evaluate(None::<&mut Transaction>, "WeBzIp"));
+        assert!(op.matches("WEBZIP"));
+        assert!(op.matches("webzip"));
+        assert!(op.matches("WebZIP"));
+        assert!(op.matches("WeBzIp"));
     }
 
     #[test]
     fn test_pm_multiple_matches() {
         let op = pm("<script> javascript: onerror=").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "<script>alert(1)</script>"));
-        assert!(op.evaluate(None::<&mut Transaction>, "javascript:void(0)"));
-        assert!(op.evaluate(None::<&mut Transaction>, "<img onerror=alert(1)>"));
+        assert!(op.matches("<script>alert(1)</script>"));
+        assert!(op.matches("javascript:void(0)"));
+        assert!(op.matches("<img onerror=alert(1)>"));
     }
 
     #[test]
     fn test_pm_single_pattern() {
         let op = pm("malware").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "this is malware"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "this is safe"));
+        assert!(op.matches("this is malware"));
+        assert!(!op.matches("this is safe"));
     }
 
     #[test]
     fn test_pm_empty_pattern() {
         let op = pm("").unwrap();
         // Empty pattern matches empty string in input
-        assert!(op.evaluate(None::<&mut Transaction>, "anything"));
+        assert!(op.matches("anything"));
     }
 
     #[test]
@@ -757,49 +753,49 @@ mod tests {
         let op = pm("%{TX.keywords}").unwrap();
         let mut tx = mock_tx();
 
-        assert!(op.evaluate(Some(&mut tx), "detected malware here"));
-        assert!(op.evaluate(Some(&mut tx), "virus found"));
-        assert!(op.evaluate(Some(&mut tx), "trojan detected"));
-        assert!(!op.evaluate(Some(&mut tx), "clean file"));
+        assert!(evaluate_in(&op, &mut tx, "detected malware here", false));
+        assert!(evaluate_in(&op, &mut tx, "virus found", false));
+        assert!(evaluate_in(&op, &mut tx, "trojan detected", false));
+        assert!(!evaluate_in(&op, &mut tx, "clean file", false));
     }
 
     #[test]
     fn test_within_basic() {
         let op = within("GET,POST,HEAD").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "GET"));
-        assert!(op.evaluate(None::<&mut Transaction>, "POST"));
-        assert!(op.evaluate(None::<&mut Transaction>, "HEAD"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "DELETE"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "PUT"));
+        assert!(op.matches("GET"));
+        assert!(op.matches("POST"));
+        assert!(op.matches("HEAD"));
+        assert!(!op.matches("DELETE"));
+        assert!(!op.matches("PUT"));
     }
 
     #[test]
     fn test_within_substring() {
         let op = within("abcdefghij").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "abc"));
-        assert!(op.evaluate(None::<&mut Transaction>, "def"));
-        assert!(op.evaluate(None::<&mut Transaction>, "j"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "xyz"));
+        assert!(op.matches("abc"));
+        assert!(op.matches("def"));
+        assert!(op.matches("j"));
+        assert!(!op.matches("xyz"));
     }
 
     #[test]
     fn test_within_exact_match() {
         let op = within("exact").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "exact"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "not exact"));
+        assert!(op.matches("exact"));
+        assert!(!op.matches("not exact"));
     }
 
     #[test]
     fn test_within_empty_input() {
         let op = within("GET,POST").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "")); // Empty string is in any string
+        assert!(op.matches("")); // Empty string is in any string
     }
 
     #[test]
     fn test_within_case_sensitive() {
         let op = within("GET,POST").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "GET"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "get")); // Case-sensitive
+        assert!(op.matches("GET"));
+        assert!(!op.matches("get")); // Case-sensitive
     }
 
     #[test]
@@ -807,30 +803,30 @@ mod tests {
         let op = within("%{TX.methods}").unwrap();
         let mut tx = mock_tx();
 
-        assert!(op.evaluate(Some(&mut tx), "GET"));
-        assert!(op.evaluate(Some(&mut tx), "POST"));
-        assert!(!op.evaluate(Some(&mut tx), "DELETE"));
+        assert!(evaluate_in(&op, &mut tx, "GET", false));
+        assert!(evaluate_in(&op, &mut tx, "POST", false));
+        assert!(!evaluate_in(&op, &mut tx, "DELETE", false));
     }
 
     #[test]
     fn test_strmatch_basic() {
         let op = strmatch("WebZIP").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "User-Agent: WebZIP/1.0"));
-        assert!(op.evaluate(None::<&mut Transaction>, "WebZIP"));
+        assert!(op.matches("User-Agent: WebZIP/1.0"));
+        assert!(op.matches("WebZIP"));
     }
 
     #[test]
     fn test_strmatch_case_sensitive() {
         let op = strmatch("WebZIP").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "WebZIP"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "webzip")); // Case-sensitive
+        assert!(op.matches("WebZIP"));
+        assert!(!op.matches("webzip")); // Case-sensitive
     }
 
     #[test]
     fn test_strmatch_path_traversal() {
         let op = strmatch("../../../").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "GET /../../../etc/passwd"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "GET /index.html"));
+        assert!(op.matches("GET /../../../etc/passwd"));
+        assert!(!op.matches("GET /index.html"));
     }
 
     #[test]
@@ -838,9 +834,9 @@ mod tests {
         let op = strmatch("%{TX.search}").unwrap();
         let mut tx = mock_tx();
 
-        assert!(op.evaluate(Some(&mut tx), "/admin/login"));
-        assert!(op.evaluate(Some(&mut tx), "administrator"));
-        assert!(!op.evaluate(Some(&mut tx), "/user/profile"));
+        assert!(evaluate_in(&op, &mut tx, "/admin/login", false));
+        assert!(evaluate_in(&op, &mut tx, "administrator", false));
+        assert!(!evaluate_in(&op, &mut tx, "/user/profile", false));
     }
 
     #[test]
@@ -861,7 +857,7 @@ mod tests {
         let op = rx("(\\w+)@(\\w+)\\.com").unwrap();
         let mut tx = capturing_tx();
 
-        assert!(op.evaluate(Some(&mut tx), "user@example.com"));
+        assert!(evaluate_in(&op, &mut tx, "user@example.com", true));
 
         // Check captured groups
         assert_eq!(capture(&tx, 0), Some("user@example.com".to_string())); // Full match
@@ -874,7 +870,7 @@ mod tests {
         let op = rx("(\\d{3})-(\\d{3})-(\\d{4})").unwrap();
         let mut tx = capturing_tx();
 
-        assert!(op.evaluate(Some(&mut tx), "123-456-7890"));
+        assert!(evaluate_in(&op, &mut tx, "123-456-7890", true));
 
         // Check all groups
         assert_eq!(capture(&tx, 0), Some("123-456-7890".to_string()));
@@ -887,7 +883,7 @@ mod tests {
     fn test_rx_is_multiline() {
         // As in Go Coraza's default build: ^ and $ match at line boundaries too
         let op = rx("^b$").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "a\nb\nc"));
+        assert!(op.matches("a\nb\nc"));
     }
 
     #[test]
@@ -895,16 +891,12 @@ mod tests {
         // CRS 942432 spells U+2019 and U+00B4 by their UTF-8 bytes, as Go Coraza matches
         // such a pattern on bytes
         let op = rx(r"\x{c2}\x{b4}|\x{e2}\x80[\x98\x99]").unwrap();
-        assert!(op.evaluate(None::<&mut Transaction>, "id=’"));
-        assert!(op.evaluate(None::<&mut Transaction>, "´"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "\u{e2}\u{80}\u{99}"));
+        assert!(op.matches("id=’"));
+        assert!(op.matches("´"));
+        assert!(!op.matches("\u{e2}\u{80}\u{99}"));
         // An escaped backslash isn't an escape
         assert!(!spells_non_utf8_bytes(r"\\xbc"));
-        assert!(
-            rx(r"\\xbc")
-                .unwrap()
-                .evaluate(None::<&mut Transaction>, r"\xbc")
-        );
+        assert!(rx(r"\\xbc").unwrap().matches(r"\xbc"));
         // Escapes that spell UTF-8 stay characters, as in Go
         assert!(!spells_non_utf8_bytes(r"\xe2\x80\x99"));
     }
@@ -915,14 +907,14 @@ mod tests {
         // ones after it are still captured
         let op = rx("(a)?(b)").unwrap();
         let mut tx = capturing_tx();
-        assert!(op.evaluate(Some(&mut tx), "b"));
+        assert!(evaluate_in(&op, &mut tx, "b", true));
         assert_eq!(capture(&tx, 1), Some(String::new()));
         assert_eq!(capture(&tx, 2), Some("b".to_string()));
 
         // The same in a pattern matched on bytes
         let op = rx(r"(x)?(\xe2\x80[\x98\x99])").unwrap();
         let mut tx = capturing_tx();
-        assert!(op.evaluate(Some(&mut tx), "’"));
+        assert!(evaluate_in(&op, &mut tx, "’", true));
         assert_eq!(capture(&tx, 1), Some(String::new()));
         assert_eq!(capture(&tx, 2), Some("’".to_string()));
     }
@@ -933,7 +925,7 @@ mod tests {
         let op = rx("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)").unwrap();
         let mut tx = capturing_tx();
 
-        assert!(op.evaluate(Some(&mut tx), "abcdefghij"));
+        assert!(evaluate_in(&op, &mut tx, "abcdefghij", true));
 
         // Check full match and first 9 groups
         assert_eq!(capture(&tx, 0), Some("abcdefghij".to_string()));
@@ -956,7 +948,7 @@ mod tests {
         let op = rx("test(\\d+)").unwrap();
         let mut tx = capturing_tx();
 
-        assert!(!op.evaluate(Some(&mut tx), "nodigits"));
+        assert!(!evaluate_in(&op, &mut tx, "nodigits", true));
 
         // No captures should be stored
         assert_eq!(capture(&tx, 0), None);
@@ -968,7 +960,7 @@ mod tests {
         let mut tx = Transaction::new("no-capture");
 
         // Should still match, but won't capture
-        assert!(op.evaluate(Some(&mut tx), "test"));
+        assert!(evaluate_in(&op, &mut tx, "test", false));
     }
 
     #[test]
@@ -976,7 +968,12 @@ mod tests {
         let op = pm("admin sql script").unwrap();
         let mut tx = capturing_tx();
 
-        assert!(op.evaluate(Some(&mut tx), "This script contains admin panel"));
+        assert!(evaluate_in(
+            &op,
+            &mut tx,
+            "This script contains admin panel",
+            true
+        ));
 
         // PM captures each matched pattern (not groups within a pattern)
         // Note: order depends on which patterns are found first in the input
@@ -989,7 +986,7 @@ mod tests {
         let op = pm("malware virus trojan").unwrap();
         let mut tx = capturing_tx();
 
-        assert!(op.evaluate(Some(&mut tx), "detected malware in file"));
+        assert!(evaluate_in(&op, &mut tx, "detected malware in file", true));
 
         // Only one pattern matched
         assert_eq!(capture(&tx, 0), Some("malware".to_string()));
@@ -1002,7 +999,7 @@ mod tests {
         let op = pm("a b c d e f g h i j k").unwrap();
         let mut tx = capturing_tx();
 
-        assert!(op.evaluate(Some(&mut tx), "a b c d e f g h i j k"));
+        assert!(evaluate_in(&op, &mut tx, "a b c d e f g h i j k", true));
 
         // Should capture first 10 matches
         for i in 0..10 {
@@ -1017,7 +1014,7 @@ mod tests {
         let op = pm("admin").unwrap();
         let mut tx = capturing_tx();
 
-        assert!(op.evaluate(Some(&mut tx), "ADMIN panel"));
+        assert!(evaluate_in(&op, &mut tx, "ADMIN panel", true));
 
         // Should capture the actual matched text (preserving case from input)
         assert_eq!(capture(&tx, 0), Some("ADMIN".to_string()));
@@ -1028,7 +1025,7 @@ mod tests {
         let op = pm("malware virus").unwrap();
         let mut tx = capturing_tx();
 
-        assert!(!op.evaluate(Some(&mut tx), "clean file"));
+        assert!(!evaluate_in(&op, &mut tx, "clean file", true));
 
         // No captures should be stored
         assert_eq!(capture(&tx, 0), None);
@@ -1040,7 +1037,7 @@ mod tests {
         let mut tx = Transaction::new("no-capture");
 
         // Should still match, but won't capture
-        assert!(op.evaluate(Some(&mut tx), "admin panel"));
+        assert!(evaluate_in(&op, &mut tx, "admin panel", false));
     }
 
     #[test]
@@ -1060,14 +1057,14 @@ mod tests {
         let op = pm_from_file(temp_file.path().to_str().unwrap()).unwrap();
 
         // Should match patterns from file (case-insensitive)
-        assert!(op.evaluate(None::<&mut Transaction>, "User-Agent: WebZIP/1.0"));
-        assert!(op.evaluate(None::<&mut Transaction>, "using WEBZIP client"));
-        assert!(op.evaluate(None::<&mut Transaction>, "webcopier tool"));
-        assert!(op.evaluate(None::<&mut Transaction>, "Webster"));
+        assert!(op.matches("User-Agent: WebZIP/1.0"));
+        assert!(op.matches("using WEBZIP client"));
+        assert!(op.matches("webcopier tool"));
+        assert!(op.matches("Webster"));
 
         // Should not match other patterns
-        assert!(!op.evaluate(None::<&mut Transaction>, "Mozilla/5.0"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "Chrome"));
+        assert!(!op.matches("Mozilla/5.0"));
+        assert!(!op.matches("Chrome"));
     }
 
     #[test]
@@ -1083,7 +1080,7 @@ mod tests {
         let mut tx = capturing_tx();
 
         // Should capture matches
-        assert!(op.evaluate(Some(&mut tx), "admin and user panel"));
+        assert!(evaluate_in(&op, &mut tx, "admin and user panel", true));
         assert_eq!(capture(&tx, 0).as_deref(), Some("admin"));
         assert_eq!(capture(&tx, 1).as_deref(), Some("user"));
         assert_eq!(capture(&tx, 2), None);

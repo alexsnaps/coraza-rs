@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::operators::Operator;
+use crate::operators::{Operator, Outputs};
 use crate::transaction::Transaction;
 
 /// How long `@inspectFile` waits for its program.
@@ -34,7 +34,7 @@ pub struct InspectFile {
 }
 
 impl Operator for InspectFile {
-    fn evaluate(&self, _tx: Option<&mut Transaction>, input: &str) -> bool {
+    fn evaluate(&self, _tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
         let Ok(mut child) = Command::new(&self.program)
             .arg(input)
             .stdin(Stdio::null())
@@ -105,7 +105,7 @@ pub struct Rbl {
 }
 
 impl Operator for Rbl {
-    fn evaluate(&self, _tx: Option<&mut Transaction>, input: &str) -> bool {
+    fn evaluate(&self, _tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
         let name = format!("{input}.{}", self.zone);
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {

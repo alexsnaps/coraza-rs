@@ -6,7 +6,7 @@
 //! This module implements basic comparison and string matching operators
 //! with macro expansion support.
 
-use crate::operators::{Macro, MacroError, Operator};
+use crate::operators::{Macro, MacroError, Operator, Outputs};
 use crate::transaction::Transaction;
 
 /// Numeric equality operator.
@@ -23,9 +23,11 @@ use crate::transaction::Transaction;
 /// use coraza::{transaction::Transaction, Operator, eq};
 ///
 /// let op = eq("15").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "15"));
-/// assert!(op.evaluate(None::<&mut Transaction>, "015")); // Leading zeros ignored
-/// assert!(!op.evaluate(None::<&mut Transaction>, "16"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "15", &mut out));
+/// assert!(op.evaluate(&tx, "015", &mut out)); // Leading zeros ignored
+/// assert!(!op.evaluate(&tx, "16", &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Eq {
@@ -33,8 +35,8 @@ pub struct Eq {
 }
 
 impl Operator for Eq {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx.as_deref());
+    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+        let param_value = self.macro_param.expand(tx);
         let param_int = param_value.parse::<i32>().unwrap_or(0);
         let input_int = input.parse::<i32>().unwrap_or(0);
         param_int == input_int
@@ -65,9 +67,11 @@ pub fn eq(parameter: &str) -> Result<Eq, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, gt};
 ///
 /// let op = gt("10").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "15"));
-/// assert!(!op.evaluate(None::<&mut Transaction>, "10"));
-/// assert!(!op.evaluate(None::<&mut Transaction>, "5"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "15", &mut out));
+/// assert!(!op.evaluate(&tx, "10", &mut out));
+/// assert!(!op.evaluate(&tx, "5", &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Gt {
@@ -75,8 +79,8 @@ pub struct Gt {
 }
 
 impl Operator for Gt {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx.as_deref());
+    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+        let param_value = self.macro_param.expand(tx);
         let param_int = param_value.parse::<i32>().unwrap_or(0);
         let input_int = input.parse::<i32>().unwrap_or(0);
         input_int > param_int
@@ -106,9 +110,11 @@ pub fn gt(parameter: &str) -> Result<Gt, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, ge};
 ///
 /// let op = ge("10").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "15"));
-/// assert!(op.evaluate(None::<&mut Transaction>, "10"));
-/// assert!(!op.evaluate(None::<&mut Transaction>, "5"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "15", &mut out));
+/// assert!(op.evaluate(&tx, "10", &mut out));
+/// assert!(!op.evaluate(&tx, "5", &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Ge {
@@ -116,8 +122,8 @@ pub struct Ge {
 }
 
 impl Operator for Ge {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx.as_deref());
+    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+        let param_value = self.macro_param.expand(tx);
         let param_int = param_value.parse::<i32>().unwrap_or(0);
         let input_int = input.parse::<i32>().unwrap_or(0);
         input_int >= param_int
@@ -147,9 +153,11 @@ pub fn ge(parameter: &str) -> Result<Ge, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, lt};
 ///
 /// let op = lt("10").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "5"));
-/// assert!(!op.evaluate(None::<&mut Transaction>, "10"));
-/// assert!(!op.evaluate(None::<&mut Transaction>, "15"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "5", &mut out));
+/// assert!(!op.evaluate(&tx, "10", &mut out));
+/// assert!(!op.evaluate(&tx, "15", &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Lt {
@@ -157,8 +165,8 @@ pub struct Lt {
 }
 
 impl Operator for Lt {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx.as_deref());
+    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+        let param_value = self.macro_param.expand(tx);
         let param_int = param_value.parse::<i32>().unwrap_or(0);
         let input_int = input.parse::<i32>().unwrap_or(0);
         input_int < param_int
@@ -188,9 +196,11 @@ pub fn lt(parameter: &str) -> Result<Lt, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, le};
 ///
 /// let op = le("10").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "5"));
-/// assert!(op.evaluate(None::<&mut Transaction>, "10"));
-/// assert!(!op.evaluate(None::<&mut Transaction>, "15"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "5", &mut out));
+/// assert!(op.evaluate(&tx, "10", &mut out));
+/// assert!(!op.evaluate(&tx, "15", &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Le {
@@ -198,8 +208,8 @@ pub struct Le {
 }
 
 impl Operator for Le {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx.as_deref());
+    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+        let param_value = self.macro_param.expand(tx);
         let param_int = param_value.parse::<i32>().unwrap_or(0);
         let input_int = input.parse::<i32>().unwrap_or(0);
         input_int <= param_int
@@ -230,9 +240,11 @@ pub fn le(parameter: &str) -> Result<Le, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, streq};
 ///
 /// let op = streq("POST").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "POST"));
-/// assert!(!op.evaluate(None::<&mut Transaction>, "post"));
-/// assert!(!op.evaluate(None::<&mut Transaction>, "GET"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "POST", &mut out));
+/// assert!(!op.evaluate(&tx, "post", &mut out));
+/// assert!(!op.evaluate(&tx, "GET", &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct StrEq {
@@ -240,8 +252,8 @@ pub struct StrEq {
 }
 
 impl Operator for StrEq {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx.as_deref());
+    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+        let param_value = self.macro_param.expand(tx);
         input == param_value
     }
 }
@@ -269,9 +281,11 @@ pub fn streq(parameter: &str) -> Result<StrEq, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, contains};
 ///
 /// let op = contains(".php").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "/index.php"));
-/// assert!(op.evaluate(None::<&mut Transaction>, "test.php?id=1"));
-/// assert!(!op.evaluate(None::<&mut Transaction>, "/index.html"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "/index.php", &mut out));
+/// assert!(op.evaluate(&tx, "test.php?id=1", &mut out));
+/// assert!(!op.evaluate(&tx, "/index.html", &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Contains {
@@ -279,8 +293,8 @@ pub struct Contains {
 }
 
 impl Operator for Contains {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx.as_deref());
+    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+        let param_value = self.macro_param.expand(tx);
         input.contains(&param_value)
     }
 }
@@ -308,8 +322,10 @@ pub fn contains(parameter: &str) -> Result<Contains, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, begins_with};
 ///
 /// let op = begins_with("GET").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "GET /index.html HTTP/1.1"));
-/// assert!(!op.evaluate(None::<&mut Transaction>, "POST /index.html HTTP/1.1"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "GET /index.html HTTP/1.1", &mut out));
+/// assert!(!op.evaluate(&tx, "POST /index.html HTTP/1.1", &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct BeginsWith {
@@ -317,8 +333,8 @@ pub struct BeginsWith {
 }
 
 impl Operator for BeginsWith {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx.as_deref());
+    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+        let param_value = self.macro_param.expand(tx);
         input.starts_with(&param_value)
     }
 }
@@ -346,9 +362,11 @@ pub fn begins_with(parameter: &str) -> Result<BeginsWith, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, ends_with};
 ///
 /// let op = ends_with(".exe").unwrap();
-/// assert!(op.evaluate(None::<&mut Transaction>, "malware.exe"));
-/// assert!(op.evaluate(None::<&mut Transaction>, "C:\\Windows\\system32\\cmd.exe"));
-/// assert!(!op.evaluate(None::<&mut Transaction>, "document.pdf"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "malware.exe", &mut out));
+/// assert!(op.evaluate(&tx, "C:\\Windows\\system32\\cmd.exe", &mut out));
+/// assert!(!op.evaluate(&tx, "document.pdf", &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct EndsWith {
@@ -356,8 +374,8 @@ pub struct EndsWith {
 }
 
 impl Operator for EndsWith {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        let param_value = self.macro_param.expand(tx.as_deref());
+    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+        let param_value = self.macro_param.expand(tx);
         input.ends_with(&param_value)
     }
 }
@@ -376,6 +394,7 @@ pub fn ends_with(parameter: &str) -> Result<EndsWith, MacroError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::operators::{Matches, evaluate_in};
     use crate::transaction::Transaction;
     use crate::types::RuleVariable;
 
@@ -397,33 +416,29 @@ mod tests {
     fn test_eq_valid_values() {
         let op = eq("1").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, "1"));
-        assert!(op.evaluate(None::<&mut Transaction>, "01")); // Leading zeros
-        assert!(!op.evaluate(None::<&mut Transaction>, "1.0")); // Float parsing fails, becomes 0
-        assert!(!op.evaluate(None::<&mut Transaction>, "2"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "0"));
+        assert!(op.matches("1"));
+        assert!(op.matches("01")); // Leading zeros
+        assert!(!op.matches("1.0")); // Float parsing fails, becomes 0
+        assert!(!op.matches("2"));
+        assert!(!op.matches("0"));
     }
 
     #[test]
     fn test_eq_invalid_values_return_zero() {
         let op = eq("a").unwrap(); // Invalid, becomes 0
 
-        assert!(op.evaluate(None::<&mut Transaction>, "a")); // Also becomes 0
-        assert!(op.evaluate(None::<&mut Transaction>, "b")); // Also becomes 0
-        assert!(op.evaluate(None::<&mut Transaction>, "0")); // Explicitly 0
-        assert!(!op.evaluate(None::<&mut Transaction>, "1"));
+        assert!(op.matches("a")); // Also becomes 0
+        assert!(op.matches("b")); // Also becomes 0
+        assert!(op.matches("0")); // Explicitly 0
+        assert!(!op.matches("1"));
     }
 
     #[test]
     fn test_eq_edge_cases() {
-        assert!(eq("0").unwrap().evaluate(None::<&mut Transaction>, ""));
-        assert!(
-            eq("0")
-                .unwrap()
-                .evaluate(None::<&mut Transaction>, "invalid")
-        );
-        assert!(eq("123").unwrap().evaluate(None::<&mut Transaction>, "123"));
-        assert!(eq("-5").unwrap().evaluate(None::<&mut Transaction>, "-5"));
+        assert!(eq("0").unwrap().matches(""));
+        assert!(eq("0").unwrap().matches("invalid"));
+        assert!(eq("123").unwrap().matches("123"));
+        assert!(eq("-5").unwrap().matches("-5"));
     }
 
     #[test]
@@ -431,20 +446,20 @@ mod tests {
         let op = eq("%{TX.threshold}").unwrap();
         let mut tx = mock_tx();
 
-        assert!(op.evaluate(Some(&mut tx), "10"));
-        assert!(!op.evaluate(Some(&mut tx), "5"));
-        assert!(!op.evaluate(Some(&mut tx), "15"));
+        assert!(evaluate_in(&op, &mut tx, "10", false));
+        assert!(!evaluate_in(&op, &mut tx, "5", false));
+        assert!(!evaluate_in(&op, &mut tx, "15", false));
     }
 
     #[test]
     fn test_gt() {
         let op = gt("10").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, "15"));
-        assert!(op.evaluate(None::<&mut Transaction>, "11"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "10"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "9"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "0"));
+        assert!(op.matches("15"));
+        assert!(op.matches("11"));
+        assert!(!op.matches("10"));
+        assert!(!op.matches("9"));
+        assert!(!op.matches("0"));
     }
 
     #[test]
@@ -452,61 +467,61 @@ mod tests {
         let op = gt("%{TX.threshold}").unwrap();
         let mut tx = mock_tx();
 
-        assert!(op.evaluate(Some(&mut tx), "15"));
-        assert!(op.evaluate(Some(&mut tx), "11"));
-        assert!(!op.evaluate(Some(&mut tx), "10"));
-        assert!(!op.evaluate(Some(&mut tx), "5"));
+        assert!(evaluate_in(&op, &mut tx, "15", false));
+        assert!(evaluate_in(&op, &mut tx, "11", false));
+        assert!(!evaluate_in(&op, &mut tx, "10", false));
+        assert!(!evaluate_in(&op, &mut tx, "5", false));
     }
 
     #[test]
     fn test_ge() {
         let op = ge("10").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, "15"));
-        assert!(op.evaluate(None::<&mut Transaction>, "11"));
-        assert!(op.evaluate(None::<&mut Transaction>, "10"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "9"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "0"));
+        assert!(op.matches("15"));
+        assert!(op.matches("11"));
+        assert!(op.matches("10"));
+        assert!(!op.matches("9"));
+        assert!(!op.matches("0"));
     }
 
     #[test]
     fn test_lt() {
         let op = lt("10").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, "9"));
-        assert!(op.evaluate(None::<&mut Transaction>, "0"));
-        assert!(op.evaluate(None::<&mut Transaction>, "-5"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "10"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "11"));
+        assert!(op.matches("9"));
+        assert!(op.matches("0"));
+        assert!(op.matches("-5"));
+        assert!(!op.matches("10"));
+        assert!(!op.matches("11"));
     }
 
     #[test]
     fn test_le() {
         let op = le("10").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, "9"));
-        assert!(op.evaluate(None::<&mut Transaction>, "10"));
-        assert!(op.evaluate(None::<&mut Transaction>, "0"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "11"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "15"));
+        assert!(op.matches("9"));
+        assert!(op.matches("10"));
+        assert!(op.matches("0"));
+        assert!(!op.matches("11"));
+        assert!(!op.matches("15"));
     }
 
     #[test]
     fn test_streq() {
         let op = streq("POST").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, "POST"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "post")); // Case sensitive
-        assert!(!op.evaluate(None::<&mut Transaction>, "GET"));
-        assert!(!op.evaluate(None::<&mut Transaction>, ""));
+        assert!(op.matches("POST"));
+        assert!(!op.matches("post")); // Case sensitive
+        assert!(!op.matches("GET"));
+        assert!(!op.matches(""));
     }
 
     #[test]
     fn test_streq_empty() {
         let op = streq("").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, ""));
-        assert!(!op.evaluate(None::<&mut Transaction>, "anything"));
+        assert!(op.matches(""));
+        assert!(!op.matches("anything"));
     }
 
     #[test]
@@ -514,20 +529,20 @@ mod tests {
         let op = streq("%{TX.method}").unwrap();
         let mut tx = mock_tx();
 
-        assert!(op.evaluate(Some(&mut tx), "POST"));
-        assert!(!op.evaluate(Some(&mut tx), "GET"));
-        assert!(!op.evaluate(Some(&mut tx), "post"));
+        assert!(evaluate_in(&op, &mut tx, "POST", false));
+        assert!(!evaluate_in(&op, &mut tx, "GET", false));
+        assert!(!evaluate_in(&op, &mut tx, "post", false));
     }
 
     #[test]
     fn test_contains() {
         let op = contains(".php").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, "/index.php"));
-        assert!(op.evaluate(None::<&mut Transaction>, "test.php?id=1"));
-        assert!(op.evaluate(None::<&mut Transaction>, ".php"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "/index.html"));
-        assert!(!op.evaluate(None::<&mut Transaction>, ""));
+        assert!(op.matches("/index.php"));
+        assert!(op.matches("test.php?id=1"));
+        assert!(op.matches(".php"));
+        assert!(!op.matches("/index.html"));
+        assert!(!op.matches(""));
     }
 
     #[test]
@@ -535,8 +550,8 @@ mod tests {
         let op = contains("").unwrap();
 
         // Empty string is contained in everything
-        assert!(op.evaluate(None::<&mut Transaction>, "anything"));
-        assert!(op.evaluate(None::<&mut Transaction>, ""));
+        assert!(op.matches("anything"));
+        assert!(op.matches(""));
     }
 
     #[test]
@@ -544,20 +559,20 @@ mod tests {
         let op = contains("%{TX.extension}").unwrap();
         let mut tx = mock_tx();
 
-        assert!(op.evaluate(Some(&mut tx), "/index.php"));
-        assert!(op.evaluate(Some(&mut tx), "test.php?id=1"));
-        assert!(!op.evaluate(Some(&mut tx), "/index.html"));
+        assert!(evaluate_in(&op, &mut tx, "/index.php", false));
+        assert!(evaluate_in(&op, &mut tx, "test.php?id=1", false));
+        assert!(!evaluate_in(&op, &mut tx, "/index.html", false));
     }
 
     #[test]
     fn test_begins_with() {
         let op = begins_with("GET").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, "GET /index.html HTTP/1.1"));
-        assert!(op.evaluate(None::<&mut Transaction>, "GET"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "POST /index.html HTTP/1.1"));
-        assert!(!op.evaluate(None::<&mut Transaction>, " GET"));
-        assert!(!op.evaluate(None::<&mut Transaction>, ""));
+        assert!(op.matches("GET /index.html HTTP/1.1"));
+        assert!(op.matches("GET"));
+        assert!(!op.matches("POST /index.html HTTP/1.1"));
+        assert!(!op.matches(" GET"));
+        assert!(!op.matches(""));
     }
 
     #[test]
@@ -565,19 +580,19 @@ mod tests {
         let op = begins_with("").unwrap();
 
         // Everything starts with empty string
-        assert!(op.evaluate(None::<&mut Transaction>, "anything"));
-        assert!(op.evaluate(None::<&mut Transaction>, ""));
+        assert!(op.matches("anything"));
+        assert!(op.matches(""));
     }
 
     #[test]
     fn test_ends_with() {
         let op = ends_with(".exe").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, "malware.exe"));
-        assert!(op.evaluate(None::<&mut Transaction>, ".exe"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "document.pdf"));
-        assert!(!op.evaluate(None::<&mut Transaction>, ".exe.txt"));
-        assert!(!op.evaluate(None::<&mut Transaction>, ""));
+        assert!(op.matches("malware.exe"));
+        assert!(op.matches(".exe"));
+        assert!(!op.matches("document.pdf"));
+        assert!(!op.matches(".exe.txt"));
+        assert!(!op.matches(""));
     }
 
     #[test]
@@ -585,31 +600,27 @@ mod tests {
         let op = ends_with("").unwrap();
 
         // Everything ends with empty string
-        assert!(op.evaluate(None::<&mut Transaction>, "anything"));
-        assert!(op.evaluate(None::<&mut Transaction>, ""));
+        assert!(op.matches("anything"));
+        assert!(op.matches(""));
     }
 
     #[test]
     fn test_numeric_operators_with_negatives() {
-        assert!(gt("-5").unwrap().evaluate(None::<&mut Transaction>, "0"));
-        assert!(gt("-10").unwrap().evaluate(None::<&mut Transaction>, "-5"));
-        assert!(!gt("5").unwrap().evaluate(None::<&mut Transaction>, "-10"));
+        assert!(gt("-5").unwrap().matches("0"));
+        assert!(gt("-10").unwrap().matches("-5"));
+        assert!(!gt("5").unwrap().matches("-10"));
 
-        assert!(ge("-5").unwrap().evaluate(None::<&mut Transaction>, "-5"));
-        assert!(lt("0").unwrap().evaluate(None::<&mut Transaction>, "-1"));
-        assert!(le("0").unwrap().evaluate(None::<&mut Transaction>, "0"));
+        assert!(ge("-5").unwrap().matches("-5"));
+        assert!(lt("0").unwrap().matches("-1"));
+        assert!(le("0").unwrap().matches("0"));
     }
 
     #[test]
     fn test_numeric_operators_with_invalid_input() {
         // Invalid input becomes 0
-        assert!(
-            eq("0")
-                .unwrap()
-                .evaluate(None::<&mut Transaction>, "invalid")
-        );
-        assert!(gt("-1").unwrap().evaluate(None::<&mut Transaction>, "abc")); // abc becomes 0, 0 > -1
-        assert!(!gt("1").unwrap().evaluate(None::<&mut Transaction>, "xyz")); // xyz becomes 0, 0 > 1 is false
+        assert!(eq("0").unwrap().matches("invalid"));
+        assert!(gt("-1").unwrap().matches("abc")); // abc becomes 0, 0 > -1
+        assert!(!gt("1").unwrap().matches("xyz")); // xyz becomes 0, 0 > 1 is false
     }
 
     #[test]

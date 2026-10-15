@@ -32,6 +32,16 @@ _Avoid_: flow control, runtime state
 read when an action needs it rather than once per phase.
 _Avoid_: engine status, enforcement mode, `rule_engine_on`
 
+**Operator**:
+The test a rule applies to each value it inspects (`@rx`, `@streq`, `@detectSQLi`, ...); it reads
+the transaction's variables but never changes the transaction.
+_Avoid_: matcher, check
+
+**Capture**:
+A part of a value an operator matched, handed back to its rule, which stores it in `TX.0`–`TX.9`
+when the rule has `capture`.
+_Avoid_: capture group (that is the regex's), match data
+
 **Disruptive action**:
 An action that decides the transaction's outcome (`deny`, `drop`, `redirect`, `allow`, `pass`,
 `block`); it runs once its rule's whole chain matched.
@@ -67,6 +77,8 @@ _Avoid_: integration, server
 - Once a **Transaction** has an **Interruption**, no later **Phase** is evaluated but logging, and
   every **Phase** returns that **Interruption**.
 - **Flow state** belongs to one **Transaction**, never to the **Rule set**.
+- An **Operator** hands its **Captures** (and `@restpath` its path arguments) back to its rule; the
+  rule, not the **Operator**, writes them to the **Transaction**.
 - A **Disruptive action** gives an **Interruption** in `On` mode, a **Would-be interruption** in
   `DetectionOnly` mode, and nothing in `Off` mode, as the **Rule engine mode** is when it runs.
 

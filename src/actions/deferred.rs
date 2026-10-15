@@ -155,7 +155,7 @@ impl SetenvAction {
     }
 
     pub(crate) fn evaluate(&self, tx: &mut Transaction) {
-        let value = self.value.expand(Some(tx));
+        let value = self.value.expand(tx);
         tx.set_env(&self.key, value);
     }
 }

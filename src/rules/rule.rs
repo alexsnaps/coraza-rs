@@ -13,6 +13,7 @@
 use crate::RulePhase;
 use crate::actions::{Action, ActionType, RuleMetadata};
 use crate::collection::MatchData;
+use crate::operators::Outputs;
 use crate::rules::{RuleOperator, VariableSpec};
 use crate::transaction::Transaction;
 
@@ -249,7 +250,7 @@ impl Rule {
     fn describe_match(&self, tx: &Transaction) -> (String, String) {
         let expand = |text: &Option<crate::operators::Macro>| {
             text.as_ref()
-                .map(|text| text.expand(Some(tx)))
+                .map(|text| text.expand(tx))
                 .unwrap_or_default()
         };
         (expand(&self.metadata.msg), expand(&self.metadata.log_data))
@@ -262,7 +263,7 @@ impl Rule {
     /// A rule without an operator (SecAction, SecMarker) always matches once.
     fn match_values(&self, tx: &mut Transaction, id: i32) -> Vec<MatchData> {
         let expand = |text: &Option<crate::operators::Macro>, tx: &Transaction| {
-            text.as_ref().map(|text| text.expand(Some(tx)))
+            text.as_ref().map(|text| text.expand(tx))
         };
         let msg = expand(&self.metadata.msg, tx);
         let log_data = expand(&self.metadata.log_data, tx);
@@ -280,8 +281,8 @@ impl Rule {
             return vec![matched];
         };
 
-        // Operators store regex groups in TX.0-TX.9 only for rules with `capture`
-        tx.set_capturing(self.metadata.capture);
+        // Operators capture, for TX.0-TX.9, only for rules with `capture`
+        let mut outputs = Outputs::new(self.metadata.capture);
 
         let mut matched_values = Vec::new();
         for var_spec in &self.variables {
@@ -299,7 +300,11 @@ impl Rule {
                 };
 
                 for value in values {
-                    if operator.evaluate(Some(tx), &value) {
+                    let operator_matched = operator.evaluate(tx, &value, &mut outputs);
+                    // As in Go Coraza, what the operator handed back is stored whether or not
+                    // the rule matches (a negated operator may have captured)
+                    tx.store_operator_outputs(&mut outputs);
+                    if operator_matched {
                         let mut matched =
                             MatchData::new(var_match.variable, var_match.key.clone(), value);
                         tx.record_matched_variable(&matched);

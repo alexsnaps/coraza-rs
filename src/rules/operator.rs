@@ -6,7 +6,7 @@
 //! This module wraps operators with metadata (function name, parameters, negation)
 //! and provides evaluation logic.
 
-use crate::operators::OperatorEnum;
+use crate::operators::{OperatorEnum, Outputs};
 use crate::transaction::Transaction;
 
 /// Rule operator specification with metadata and negation support.
@@ -111,8 +111,10 @@ impl RuleOperator {
     ///
     /// # Arguments
     ///
-    /// * `tx` - Transaction state for macro expansion and capturing
+    /// * `tx` - Transaction whose variables macros expand to
     /// * `input` - The input value to evaluate
+    /// * `out` - Where the operator hands back captures and path arguments, whatever
+    ///   the result
     ///
     /// # Returns
     ///
@@ -122,7 +124,7 @@ impl RuleOperator {
     ///
     /// ```
     /// use coraza::rules::RuleOperator;
-    /// use coraza::operators::{StrEq, streq};
+    /// use coraza::operators::{Outputs, streq};
     /// use coraza::transaction::Transaction;
     ///
     /// let op = RuleOperator::new(
@@ -131,12 +133,13 @@ impl RuleOperator {
     ///     "test"
     /// );
     ///
-    /// let mut tx = Transaction::new("test");
-    /// assert!(op.evaluate(Some(&mut tx), "test"));
-    /// assert!(!op.evaluate(Some(&mut tx), "other"));
+    /// let tx = Transaction::new("test");
+    /// let mut out = Outputs::default();
+    /// assert!(op.evaluate(&tx, "test", &mut out));
+    /// assert!(!op.evaluate(&tx, "other", &mut out));
     /// ```
-    pub fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        let result = self.operator.evaluate(tx, input);
+    pub fn evaluate(&self, tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
+        let result = self.operator.evaluate(tx, input, out);
 
         if self.negation { !result } else { result }
     }
@@ -174,40 +177,40 @@ mod tests {
     fn test_operator_evaluate_normal() {
         let op = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
 
-        let mut tx = Transaction::new("test");
-        assert!(op.evaluate(Some(&mut tx), "test"));
-        assert!(!op.evaluate(Some(&mut tx), "other"));
+        let tx = Transaction::new("test");
+        assert!(op.evaluate(&tx, "test", &mut Outputs::default()));
+        assert!(!op.evaluate(&tx, "other", &mut Outputs::default()));
     }
 
     #[test]
     fn test_operator_evaluate_negated() {
         let op = RuleOperator::new(streq("test").unwrap().into(), "!@streq", "test");
 
-        let mut tx = Transaction::new("test");
+        let tx = Transaction::new("test");
         // Negated: returns opposite of operator result
-        assert!(!op.evaluate(Some(&mut tx), "test")); // streq matches, but negated
-        assert!(op.evaluate(Some(&mut tx), "other")); // streq doesn't match, negated = true
+        assert!(!op.evaluate(&tx, "test", &mut Outputs::default())); // streq matches, but negated
+        assert!(op.evaluate(&tx, "other", &mut Outputs::default())); // streq doesn't match, negated = true
     }
 
     #[test]
     fn test_operator_enum_dispatch() {
-        let mut tx = Transaction::new("test");
+        let tx = Transaction::new("test");
 
         // Test that OperatorEnum correctly dispatches to each operator type
         let rx_op = rx("test").unwrap();
         let enum_op = OperatorEnum::from(rx_op);
-        assert!(enum_op.evaluate(Some(&mut tx), "test123"));
-        assert!(!enum_op.evaluate(Some(&mut tx), "other"));
+        assert!(enum_op.evaluate(&tx, "test123", &mut Outputs::default()));
+        assert!(!enum_op.evaluate(&tx, "other", &mut Outputs::default()));
 
         let contains_op = contains("hello").unwrap();
         let enum_op = OperatorEnum::from(contains_op);
-        assert!(enum_op.evaluate(Some(&mut tx), "hello world"));
-        assert!(!enum_op.evaluate(Some(&mut tx), "goodbye"));
+        assert!(enum_op.evaluate(&tx, "hello world", &mut Outputs::default()));
+        assert!(!enum_op.evaluate(&tx, "goodbye", &mut Outputs::default()));
 
         let eq_op = eq("42").unwrap();
         let enum_op = OperatorEnum::from(eq_op);
-        assert!(enum_op.evaluate(Some(&mut tx), "42"));
-        assert!(!enum_op.evaluate(Some(&mut tx), "43"));
+        assert!(enum_op.evaluate(&tx, "42", &mut Outputs::default()));
+        assert!(!enum_op.evaluate(&tx, "43", &mut Outputs::default()));
     }
 
     #[test]
@@ -228,23 +231,23 @@ mod tests {
 
     #[test]
     fn test_negation_with_different_operators() {
-        let mut tx = Transaction::new("test");
+        let tx = Transaction::new("test");
 
         // Test negation with regex
         let rx_op = RuleOperator::new(rx("^test").unwrap().into(), "!@rx", "^test");
-        assert!(!rx_op.evaluate(Some(&mut tx), "test123")); // matches but negated
-        assert!(rx_op.evaluate(Some(&mut tx), "other")); // doesn't match, negated = true
+        assert!(!rx_op.evaluate(&tx, "test123", &mut Outputs::default())); // matches but negated
+        assert!(rx_op.evaluate(&tx, "other", &mut Outputs::default())); // doesn't match, negated = true
 
         // Test negation with contains
         let contains_op =
             RuleOperator::new(contains("admin").unwrap().into(), "!@contains", "admin");
-        assert!(!contains_op.evaluate(Some(&mut tx), "admin user")); // matches but negated
-        assert!(contains_op.evaluate(Some(&mut tx), "regular user")); // doesn't match, negated = true
+        assert!(!contains_op.evaluate(&tx, "admin user", &mut Outputs::default())); // matches but negated
+        assert!(contains_op.evaluate(&tx, "regular user", &mut Outputs::default())); // doesn't match, negated = true
 
         // Test negation with eq
         let eq_op = RuleOperator::new(eq("0").unwrap().into(), "!@eq", "0");
-        assert!(!eq_op.evaluate(Some(&mut tx), "0")); // matches but negated
-        assert!(eq_op.evaluate(Some(&mut tx), "1")); // doesn't match, negated = true
+        assert!(!eq_op.evaluate(&tx, "0", &mut Outputs::default())); // matches but negated
+        assert!(eq_op.evaluate(&tx, "1", &mut Outputs::default())); // doesn't match, negated = true
     }
 
     #[test]

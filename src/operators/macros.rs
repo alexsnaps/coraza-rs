@@ -99,30 +99,19 @@ impl Macro {
         })
     }
 
-    /// Expands the macro using transaction state.
-    ///
-    /// If no transaction state is provided, returns the original text
-    /// (variables are not expanded).
-    ///
-    /// This method uses static dispatch (generics) for zero-overhead abstraction.
-    /// The compiler can inline the entire expansion path.
-    pub fn expand(&self, tx: Option<&Transaction>) -> String {
+    /// Expands the macro with the variables of `tx`.
+    pub fn expand(&self, tx: &Transaction) -> String {
         // Handle empty macros
         if self.tokens.is_empty() {
             return String::new();
         }
 
-        match tx {
-            None => self.original.clone(),
-            Some(tx) => {
-                // Rules' msg and logdata are expanded for every rule evaluated
-                let mut result = String::with_capacity(self.original.len());
-                for token in &self.tokens {
-                    result.push_str(Self::expand_token(tx, token));
-                }
-                result
-            }
+        // Rules' msg and logdata are expanded for every rule evaluated
+        let mut result = String::with_capacity(self.original.len());
+        for token in &self.tokens {
+            result.push_str(Self::expand_token(tx, token));
         }
+        result
     }
 
     /// The token's text, or the value of its variable if that is set.
@@ -259,7 +248,7 @@ mod tests {
         // Empty strings are allowed
         let m = Macro::new("").unwrap();
         assert_eq!(m.as_str(), "");
-        assert_eq!(m.expand(None::<&Transaction>), "");
+        assert_eq!(m.expand(&Transaction::default()), "");
     }
 
     #[test]
@@ -271,7 +260,7 @@ mod tests {
     #[test]
     fn test_compile_single_percent() {
         let m = Macro::new("%").unwrap();
-        assert!(m.expand(None::<&Transaction>).contains('%'));
+        assert!(m.expand(&Transaction::default()).contains('%'));
     }
 
     #[test]
@@ -332,12 +321,9 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_no_tx() {
+    fn test_expand_plain_text() {
         let m = Macro::new("static text").unwrap();
-        assert_eq!(m.expand(None::<&Transaction>), "static text");
-
-        let m = Macro::new("%{TX.score}").unwrap();
-        assert_eq!(m.expand(None::<&Transaction>), "%{TX.score}");
+        assert_eq!(m.expand(&Transaction::default()), "static text");
     }
 
     fn mock_tx() -> Transaction {
@@ -357,14 +343,14 @@ mod tests {
     fn test_expand_with_tx() {
         let m = Macro::new("%{TX.score}").unwrap();
         let tx = mock_tx();
-        assert_eq!(m.expand(Some(&tx)), "42");
+        assert_eq!(m.expand(&tx), "42");
     }
 
     #[test]
     fn test_expand_multi_variable() {
         let m = Macro::new("ID: %{TX.id} Score: %{TX.score}").unwrap();
         let tx = mock_tx();
-        assert_eq!(m.expand(Some(&tx)), "ID: test-123 Score: 42");
+        assert_eq!(m.expand(&tx), "ID: test-123 Score: 42");
     }
 
     #[test]
@@ -372,7 +358,7 @@ mod tests {
         let m = Macro::new("%{TX.missing}").unwrap();
         let tx = mock_tx();
         // Returns original text if key not found
-        assert_eq!(m.expand(Some(&tx)), "TX.missing");
+        assert_eq!(m.expand(&tx), "TX.missing");
     }
 
     #[test]
@@ -381,14 +367,14 @@ mod tests {
         tx.process_connection("10.0.0.1", 1234, "10.0.0.2", 80);
 
         let m = Macro::new("from %{REMOTE_ADDR}").unwrap();
-        assert_eq!(m.expand(Some(&tx)), "from 10.0.0.1");
+        assert_eq!(m.expand(&tx), "from 10.0.0.1");
         // A collection's keys are looked up ignoring case
         let m = Macro::new("%{TX.SCORE}").unwrap();
-        assert_eq!(m.expand(Some(&tx)), "42");
+        assert_eq!(m.expand(&tx), "42");
         // A names collection expands to the key, if present
         let m = Macro::new("%{ARGS_NAMES.count}/%{ARGS_NAMES.missing}").unwrap();
-        assert_eq!(m.expand(Some(&tx)), "count/ARGS_NAMES.missing");
+        assert_eq!(m.expand(&tx), "count/ARGS_NAMES.missing");
         let m = Macro::new("a %{TX.missing} b %{TX.score}").unwrap();
-        assert_eq!(m.expand(Some(&tx)), "a TX.missing b 42");
+        assert_eq!(m.expand(&tx), "a TX.missing b 42");
     }
 }

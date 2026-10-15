@@ -19,6 +19,7 @@ use crate::audit_log::{
 use crate::body_processors::{BodyProcessorKind, BodyProcessorOptions};
 use crate::collection::{Map, MatchData, Single};
 use crate::config::WafConfig;
+use crate::operators::Outputs;
 use crate::rules::RuleGroup;
 use crate::transformations::text_from_bytes;
 use crate::types::{
@@ -671,9 +672,6 @@ pub struct Transaction {
     /// `skip`, `skipAfter`, `allow` and the rules `ctl` removed
     flow: FlowState,
 
-    /// Whether operators of the rule being evaluated store their captures in TX.0-TX.9
-    capturing: bool,
-
     /// All rules that matched during this transaction (for audit logging)
     matched_rules: Vec<MatchedRule>,
 
@@ -921,7 +919,6 @@ impl Transaction {
             force_response_body_variable: false,
             last_phase: None,
             flow: FlowState::new(),
-            capturing: false,
             matched_rules: Vec::new(),
             rules: None, // No WAF reference for standalone transactions
         }
@@ -1271,12 +1268,6 @@ impl Transaction {
     /// Get the REQUEST_XML collection.
     pub fn request_xml(&self) -> &Map {
         &self.request_xml
-    }
-
-    /// Sets whether operators store their captures in `TX.0`..`TX.9`; follows the `capture`
-    /// action of the rule being evaluated.
-    pub fn set_capturing(&mut self, enabled: bool) {
-        self.capturing = enabled;
     }
 
     // ===== CTL Action Setters =====
@@ -2146,15 +2137,14 @@ impl Transaction {
         }
     }
 
-    /// Whether operators currently store their captures (see [`Transaction::set_capturing`]).
-    pub fn capturing(&self) -> bool {
-        self.capturing
-    }
-
-    /// Stores capture `index` (0-9) in `TX.<index>` if capturing is on; otherwise does nothing.
-    pub fn capture_field(&mut self, index: usize, value: &str) {
-        if self.capturing {
-            self.tx.set(&index.to_string(), vec![value.to_string()]);
+    /// Stores what an operator handed back for a value: each capture `n` in `TX.n`, and
+    /// `@restpath`'s path arguments in ARGS_PATH (and ARGS). Leaves `outputs` empty.
+    pub(crate) fn store_operator_outputs(&mut self, outputs: &mut Outputs) {
+        for (index, value) in outputs.take_captures() {
+            self.tx.set(&index.to_string(), vec![value]);
+        }
+        for (key, value) in outputs.take_path_arguments() {
+            self.set_path_argument(&key, &value);
         }
     }
 
@@ -2231,23 +2221,24 @@ mod tests {
     }
 
     #[test]
-    fn test_transaction_capturing() {
+    fn test_operator_outputs_are_stored_in_tx_and_args_path() {
         let mut tx = Transaction::new("tx-006");
-        assert!(!tx.capturing());
+        let mut outputs = Outputs::new(true);
+        outputs.capture(0, "match1");
+        outputs.capture(5, "match6"); // Sparse indexing
+        outputs.add_path_argument("id", "42");
 
-        tx.set_capturing(true);
-        assert!(tx.capturing());
-
-        tx.capture_field(0, "match1");
-        tx.capture_field(5, "match6"); // Sparse indexing
+        tx.store_operator_outputs(&mut outputs);
 
         assert_eq!(tx.tx.get("0"), vec!["match1"]);
         assert!(tx.tx.get("1").is_empty());
         assert_eq!(tx.tx.get("5"), vec!["match6"]);
+        assert_eq!(tx.args_path.get("id"), vec!["42"]);
 
-        // Captures are dropped while capturing is off
-        tx.set_capturing(false);
-        tx.capture_field(1, "ignored");
+        // Outputs not asking for captures drop them
+        let mut outputs = Outputs::new(false);
+        outputs.capture(1, "ignored");
+        tx.store_operator_outputs(&mut outputs);
         assert!(tx.tx.get("1").is_empty());
     }
 
