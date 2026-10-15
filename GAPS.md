@@ -288,6 +288,12 @@ None of these is used by CRS v4.30.0.
   whitespace even inside a character (`①` is `e2 91 a0`), and sliced the text there. `t:compressWhitespace` and
   `t:cmdLine` also turned each byte after it into a character of its own (`é` became `Ã©`).
   - Done: `t:compressWhitespace` reads characters, as Go Coraza now does; `t:cmdLine` copies bytes.
+- [x] **Regex keys didn't match case-insensitive collections when written in uppercase.** Found by the FTW tests:
+  922110 never fired (17 tests), as `TX:/MULTIPART_HEADERS_CONTENT_TYPES_*/` never matched the lowercase TX keys.
+  Go lowercases a regex key's pattern unless the variable's keys are case-sensitive (`ARGS` and its kin).
+  - Done: such a regex ignores case instead, for selecting and for excluding (`!REQUEST_HEADERS:/^X-/`). Unlike
+    Go's lowercasing, this leaves escapes such as `\D` alone. Which variables have case-sensitive keys is now one
+    method (`RuleVariable::has_case_sensitive_keys`), which the transaction's collections follow too.
 - [ ] **Run CRS v4.30.0's FTW tests and record the pass rate.** Not run yet; `ftw-runner/` drives
   `examples/ftw_server_async.rs`.
   - Go Coraza's CI runs all 5,260 tests (`testing/coreruleset`). It ignores 7 (`.ftw.yml`) and changes the expected

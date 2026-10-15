@@ -462,6 +462,45 @@ impl RuleVariable {
                 | Self::MultipartPartHeaders
         )
     }
+
+    /// Whether the variable's keys are case-sensitive: those of arguments, uploaded
+    /// files, multipart parts, XML and `ENV` are. Others (headers, cookies, `TX`, ...)
+    /// are matched whatever their case, by name and by regular expression, as in Go
+    /// Coraza.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use coraza::types::RuleVariable;
+    ///
+    /// assert!(RuleVariable::Args.has_case_sensitive_keys());
+    /// assert!(!RuleVariable::RequestHeaders.has_case_sensitive_keys());
+    /// ```
+    pub const fn has_case_sensitive_keys(&self) -> bool {
+        matches!(
+            self,
+            Self::Args
+                | Self::ArgsGet
+                | Self::ArgsPost
+                | Self::ArgsPath
+                | Self::ArgsNames
+                | Self::ArgsGetNames
+                | Self::ArgsPostNames
+                | Self::Files
+                | Self::FilesTmpNames
+                | Self::FilesSizes
+                | Self::FilesNames
+                | Self::MultipartPartHeaders
+                | Self::MultipartName
+                | Self::MultipartFilename
+                | Self::MultipartFilenameCharset
+                | Self::MultipartFilenameLanguage
+                | Self::RequestXML
+                | Self::ResponseArgs
+                | Self::ResponseXML
+                | Self::Env
+        )
+    }
 }
 
 impl fmt::Display for RuleVariable {

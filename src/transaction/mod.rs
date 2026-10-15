@@ -802,6 +802,13 @@ impl Transaction {
     pub fn new(id: impl Into<String>) -> Self {
         let config = WafConfig::default();
         let started = std::time::SystemTime::now();
+        let map = |variable: RuleVariable| {
+            if variable.has_case_sensitive_keys() {
+                Map::new_case_sensitive(variable)
+            } else {
+                Map::new(variable)
+            }
+        };
         Self {
             unique_id: {
                 let mut unique_id = Single::new(RuleVariable::UniqueID);
@@ -809,13 +816,13 @@ impl Transaction {
                 unique_id
             },
             args_combined_size: Single::new(RuleVariable::ArgsCombinedSize),
-            args: Map::new_case_sensitive(RuleVariable::Args),
-            args_get: Map::new_case_sensitive(RuleVariable::ArgsGet),
-            args_post: Map::new_case_sensitive(RuleVariable::ArgsPost),
-            args_path: Map::new_case_sensitive(RuleVariable::ArgsPath),
-            request_headers: Map::new(RuleVariable::RequestHeaders),
-            request_cookies: Map::new(RuleVariable::RequestCookies),
-            response_headers: Map::new(RuleVariable::ResponseHeaders),
+            args: map(RuleVariable::Args),
+            args_get: map(RuleVariable::ArgsGet),
+            args_post: map(RuleVariable::ArgsPost),
+            args_path: map(RuleVariable::ArgsPath),
+            request_headers: map(RuleVariable::RequestHeaders),
+            request_cookies: map(RuleVariable::RequestCookies),
+            response_headers: map(RuleVariable::ResponseHeaders),
             request_uri: Single::new(RuleVariable::RequestURI),
             request_method: Single::new(RuleVariable::RequestMethod),
             remote_addr: Single::new(RuleVariable::RemoteAddr),
@@ -843,34 +850,30 @@ impl Transaction {
             res_body_processor_error_msg: Single::new(RuleVariable::ResBodyProcessorErrorMsg),
             uri_parse_error: flag(RuleVariable::UriParseError),
             arguments_limit_reached: flag(RuleVariable::ArgumentsLimitReached),
-            files: Map::new_case_sensitive(RuleVariable::Files),
-            files_tmp_names: Map::new_case_sensitive(RuleVariable::FilesTmpNames),
-            files_sizes: Map::new_case_sensitive(RuleVariable::FilesSizes),
-            files_names: Map::new_case_sensitive(RuleVariable::FilesNames),
+            files: map(RuleVariable::Files),
+            files_tmp_names: map(RuleVariable::FilesTmpNames),
+            files_sizes: map(RuleVariable::FilesSizes),
+            files_names: map(RuleVariable::FilesNames),
             files_combined_size: Single::new(RuleVariable::FilesCombinedSize),
-            multipart_part_headers: Map::new_case_sensitive(RuleVariable::MultipartPartHeaders),
-            multipart_name: Map::new_case_sensitive(RuleVariable::MultipartName),
-            multipart_filename: Map::new_case_sensitive(RuleVariable::MultipartFilename),
-            multipart_filename_charset: Map::new_case_sensitive(
-                RuleVariable::MultipartFilenameCharset,
-            ),
-            multipart_filename_language: Map::new_case_sensitive(
-                RuleVariable::MultipartFilenameLanguage,
-            ),
+            multipart_part_headers: map(RuleVariable::MultipartPartHeaders),
+            multipart_name: map(RuleVariable::MultipartName),
+            multipart_filename: map(RuleVariable::MultipartFilename),
+            multipart_filename_charset: map(RuleVariable::MultipartFilenameCharset),
+            multipart_filename_language: map(RuleVariable::MultipartFilenameLanguage),
             multipart_strict_error: Single::new(RuleVariable::MultipartStrictError),
             multipart_duplicate_part_header: flag(RuleVariable::MultipartDuplicatePartHeader),
             multipart_invalid_quoting: flag(RuleVariable::MultipartInvalidQuoting),
-            request_xml: Map::new_case_sensitive(RuleVariable::RequestXML),
+            request_xml: map(RuleVariable::RequestXML),
             response_status: Single::new(RuleVariable::ResponseStatus),
             response_protocol: Single::new(RuleVariable::ResponseProtocol),
             response_content_type: Single::new(RuleVariable::ResponseContentType),
             response_content_length: Single::new(RuleVariable::ResponseContentLength),
             response_body: Single::new(RuleVariable::ResponseBody),
-            response_args: Map::new_case_sensitive(RuleVariable::ResponseArgs),
-            response_xml: Map::new_case_sensitive(RuleVariable::ResponseXML),
-            tx: Map::new(RuleVariable::TX),
-            env: Map::new_case_sensitive(RuleVariable::Env),
-            rule: Map::new(RuleVariable::Rule),
+            response_args: map(RuleVariable::ResponseArgs),
+            response_xml: map(RuleVariable::ResponseXML),
+            tx: map(RuleVariable::TX),
+            env: map(RuleVariable::Env),
+            rule: map(RuleVariable::Rule),
             highest_severity: {
                 let mut highest_severity = Single::new(RuleVariable::HighestSeverity);
                 highest_severity.set("255");
@@ -891,7 +894,7 @@ impl Transaction {
             outbound_data_error: flag(RuleVariable::OutboundDataError),
             matched_var: Single::new(RuleVariable::MatchedVar),
             matched_var_name: Single::new(RuleVariable::MatchedVarName),
-            matched_vars: Map::new(RuleVariable::MatchedVars),
+            matched_vars: map(RuleVariable::MatchedVars),
             rule_engine: RuleEngineStatus::On,
             request_body_access: true,
             request_body_limit: 131072, // 128KB default

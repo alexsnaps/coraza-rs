@@ -15,7 +15,7 @@
 
 use crate::rules::{VariableKey, VariableSpec};
 use crate::types::RuleVariable;
-use regex::Regex;
+use regex::RegexBuilder;
 use std::str::FromStr;
 
 use crate::seclang::CompileError;
@@ -296,7 +296,11 @@ enum Element {
 }
 
 fn build_element(var: ParsedVariable) -> ParseResult<Element> {
-    let key = var.key.as_deref().map(parse_key).transpose()?;
+    let key = var
+        .key
+        .as_deref()
+        .map(|key| parse_key(var.variable, key))
+        .transpose()?;
 
     if var.is_negation {
         let key = key.ok_or_else(|| {
@@ -314,10 +318,15 @@ fn build_element(var: ParsedVariable) -> ParseResult<Element> {
     Ok(Element::Inspect(spec))
 }
 
-/// A regex key for `/pattern/`, otherwise a string key.
-fn parse_key(key: &str) -> ParseResult<VariableKey> {
+/// A regex key for `/pattern/`, otherwise a string key, for `variable`.
+///
+/// The regex ignores case unless `variable`'s keys are case-sensitive: the others' are
+/// matched lowercase, as Go Coraza lowercases the pattern for them.
+fn parse_key(variable: RuleVariable, key: &str) -> ParseResult<VariableKey> {
     match key.strip_prefix('/').and_then(|k| k.strip_suffix('/')) {
-        Some(pattern) if !pattern.is_empty() => Regex::new(pattern)
+        Some(pattern) if !pattern.is_empty() => RegexBuilder::new(pattern)
+            .case_insensitive(!variable.has_case_sensitive_keys())
+            .build()
             .map(VariableKey::Regex)
             .map_err(|e| CompileError::new(format!("invalid regex pattern '{}': {}", pattern, e))),
         _ => Ok(VariableKey::String(key.to_string())),
@@ -434,5 +443,38 @@ mod tests {
         // ARGS_GET:/(test\b)/|REQUEST_XML
         let vars = parse_variables("ARGS_GET:/(test\\b)/|REQUEST_XML").unwrap();
         assert_eq!(vars.len(), 2);
+    }
+
+    /// The keys `variables` selects in `tx`.
+    fn keys(variables: &str, tx: &crate::transaction::Transaction) -> Vec<String> {
+        let mut keys: Vec<String> = parse_variables(variables)
+            .unwrap()
+            .iter()
+            .flat_map(|spec| spec.get_matches(tx))
+            .map(|matched| matched.key)
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    #[test]
+    fn test_regex_key_case_follows_the_collection() {
+        let mut tx = crate::transaction::Transaction::new("test");
+        tx.request_headers_mut().add("X-Forwarded-For", "1.2.3.4");
+        tx.request_headers_mut().add("Host", "localhost");
+        tx.args_mut().add("Foo", "1");
+        tx.args_mut().add("foo", "2");
+
+        // Header names are case-insensitive, and so is a regex for them, as in Go
+        assert_eq!(
+            keys("REQUEST_HEADERS:/^X-FORWARDED/", &tx),
+            ["X-Forwarded-For"]
+        );
+        assert_eq!(
+            keys("REQUEST_HEADERS|!REQUEST_HEADERS:/^X-/", &tx),
+            ["Host"]
+        );
+        // Argument names are case-sensitive
+        assert_eq!(keys("ARGS:/^Foo$/", &tx), ["Foo"]);
     }
 }
