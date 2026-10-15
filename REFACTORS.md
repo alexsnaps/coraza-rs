@@ -131,7 +131,7 @@ probed bugs.
 - [x] **Hex helpers four times:** `src/transformations/escape.rs:446`, `src/transformations/encoding.rs:176`,
   `src/operators/validation.rs:267`, `src/utils/strings.rs:59/82`. std has `u8::is_ascii_hexdigit` and
   `char::to_digit(16)`.
-- [ ] **Transformation signature defined twice:** `Transformation` (`src/rules/transformation.rs:37`) and
+- [x] **Transformation signature defined twice:** `Transformation` (`src/rules/transformation.rs:37`) and
   `TransformationResult` (`src/transformations/mod.rs:37`); the escape transformations return `(String, bool)`
   instead.
 - [ ] **Six near-identical `Parse*Error { input }` structs** in `src/types/`.

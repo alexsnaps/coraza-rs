@@ -26,15 +26,7 @@
 //! assert_eq!(result, "hello world");
 //! ```
 
-use crate::transformations::TransformationError;
-
-/// Type alias for transformation functions.
-///
-/// Transformations take a string input and return:
-/// - The transformed string
-/// - Whether the input was changed
-/// - An optional error (for logging only, doesn't stop execution)
-pub type Transformation = fn(&str) -> (String, bool, Option<TransformationError>);
+use crate::transformations::{Transformation, TransformationError};
 
 /// A transformation in the chain with its name for identification.
 #[derive(Debug, Clone)]
