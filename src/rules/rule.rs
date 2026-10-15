@@ -97,12 +97,17 @@ impl Rule {
     /// Adds an action. A rule has at most one disruptive action: adding one replaces
     /// the previous (the last one wins, as in SecLang).
     pub fn add_action(mut self, action: Action) -> Self {
+        self.push_action(action);
+        self
+    }
+
+    /// Like [`Rule::add_action`], on a rule in place.
+    pub(crate) fn push_action(&mut self, action: Action) {
         if action.action_type() == ActionType::Disruptive {
             self.actions
                 .retain(|existing| existing.action_type() != ActionType::Disruptive);
         }
         self.actions.push(action);
-        self
     }
 
     /// Appends a rule to this rule's chain; it must also match for this rule to match.

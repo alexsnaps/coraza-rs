@@ -1118,3 +1118,47 @@ fn response_bodies_reaching_the_limit_are_rejected_or_cut() {
         );
     }
 }
+
+#[test]
+fn rules_can_be_removed_by_id_msg_and_tag() {
+    let waf = waf(r#"
+        SecRule ARGS "@streq x" "id:1,phase:1,deny,status:403"
+        SecRule ARGS "@streq x" "id:2,phase:1,deny,status:403"
+        SecRule ARGS "@streq x" "id:3,phase:1,deny,status:403"
+        SecRule ARGS "@streq x" "id:4,phase:1,deny,status:403,msg:'remove me'"
+        SecRule ARGS "@streq x" "id:5,phase:1,deny,status:403,tag:'legacy'"
+        SecRule ARGS "@streq x" "id:6,phase:1,deny,status:403"
+        SecRuleRemoveById 1 2-3
+        SecRuleRemoveByMsg "remove me"
+        SecRuleRemoveByTag legacy
+    "#);
+
+    let mut tx = request_with_arg(&waf, "q", "x");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(6));
+    assert_eq!(waf.rule_count(), 1);
+}
+
+#[test]
+fn update_action_by_id_changes_the_actions_of_rules() {
+    let waf = waf(r#"
+        SecRule ARGS:a "@streq x" "id:1,phase:1,deny,status:403"
+        SecRule ARGS:b "@streq x" "id:2,phase:1,pass"
+        SecRule ARGS:b "@streq x" "id:3,phase:1,pass"
+        SecRuleUpdateActionById 1 "pass,setvar:tx.one=1"
+        SecRuleUpdateActionById 2-3 "setvar:tx.two=+1"
+    "#);
+
+    let mut tx = request_with_arg(&waf, "a", "x");
+    assert!(tx.process_request_headers().is_none());
+    assert_eq!(tx_var(&tx, "one").as_deref(), Some("1"));
+
+    let mut tx = request_with_arg(&waf, "b", "x");
+    tx.process_request_headers();
+    assert_eq!(tx_var(&tx, "two").as_deref(), Some("2"));
+
+    let mut parser = Parser::new();
+    let err = parser
+        .from_string(r#"SecRuleUpdateActionById 404 "pass""#)
+        .unwrap_err();
+    assert!(err.message.contains("404"), "{}", err.message);
+}

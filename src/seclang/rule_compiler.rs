@@ -137,39 +137,42 @@ pub(crate) fn compile_sec_action_in(input: &str, defaults: &DefaultActions) -> C
 /// if the rule has no other. Without defaults for its phase, a rule keeps its actions
 /// as written, `block` included (which then does nothing).
 fn add_actions(
-    rule: Rule,
+    mut rule: Rule,
     parsed_actions: Vec<ParsedAction>,
     defaults: &DefaultActions,
 ) -> CompileResult<Rule> {
     let Some(defaults) = defaults.for_phase(phase_of(&parsed_actions)?) else {
-        return apply_actions(rule, &parsed_actions);
+        apply_actions(&mut rule, &parsed_actions)?;
+        return Ok(rule);
     };
 
-    let rule = apply_actions(rule, &defaults.others)?;
-    let rule = apply_actions(rule, parsed_actions.iter().filter(|a| a.key != "block"))?;
-    if rule
+    apply_actions(&mut rule, &defaults.others)?;
+    apply_actions(
+        &mut rule,
+        parsed_actions.iter().filter(|a| a.key != "block"),
+    )?;
+    if !rule
         .actions()
         .iter()
         .any(|action| action.action_type() == ActionType::Disruptive)
     {
-        Ok(rule)
-    } else {
-        apply_actions(rule, [&defaults.disruptive])
+        apply_actions(&mut rule, [&defaults.disruptive])?;
     }
+    Ok(rule)
 }
 
 /// Applies parsed actions to `rule` in order: metadata actions update its metadata,
 /// the others are added to it (a later disruptive action replaces an earlier one).
-fn apply_actions<'a>(
-    mut rule: Rule,
+pub(crate) fn apply_actions<'a>(
+    rule: &mut Rule,
     parsed_actions: impl IntoIterator<Item = &'a ParsedAction>,
-) -> CompileResult<Rule> {
+) -> CompileResult<()> {
     for parsed in parsed_actions {
         if let Some(action) = Action::parse(&parsed.key, &parsed.value, rule.metadata_mut())? {
-            rule = rule.add_action(action);
+            rule.push_action(action);
         }
     }
-    Ok(rule)
+    Ok(())
 }
 
 /// The phase that the `phase` action among `actions` gives a rule (2 without one).

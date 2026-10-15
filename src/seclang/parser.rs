@@ -20,8 +20,9 @@ use crate::config::WafConfig;
 use crate::operators::OperatorContext;
 use crate::rules::{Rule, RuleGroup};
 use crate::seclang::CompileError;
+use crate::seclang::parse_actions;
 use crate::seclang::rule_compiler::{
-    DefaultActions, compile_sec_action_in, compile_sec_marker, compile_sec_rule_in,
+    DefaultActions, apply_actions, compile_sec_action_in, compile_sec_marker, compile_sec_rule_in,
 };
 use crate::seclang::variable_parser::VariableList;
 use crate::types::{
@@ -451,6 +452,10 @@ fn directive_handler(name: &str) -> Option<DirectiveFn> {
         "secaction" => directive_sec_action,
         "secmarker" => directive_sec_marker,
         "secdefaultaction" => directive_sec_default_action,
+        "secruleremovebyid" => directive_sec_rule_remove_by_id,
+        "secruleremovebymsg" => directive_sec_rule_remove_by_msg,
+        "secruleremovebytag" => directive_sec_rule_remove_by_tag,
+        "secruleupdateactionbyid" => directive_sec_rule_update_action_by_id,
         "secruleupdatetargetbyid" => directive_sec_rule_update_target_by_id,
         "secruleupdatetargetbytag" => directive_sec_rule_update_target_by_tag,
         "secruleengine" => directive_sec_rule_engine,
@@ -570,6 +575,61 @@ fn parse_id_range(spec: &str) -> Result<RangeInclusive<i32>, String> {
         return Err(format!("invalid rule id range: {}", spec));
     }
     Ok(range)
+}
+
+/// SecRuleRemoveById ID|RANGE...
+///
+/// Removes the rules defined so far with the given ids or in the inclusive ranges.
+fn directive_sec_rule_remove_by_id(options: &mut DirectiveOptions) -> Result<(), String> {
+    for spec in options.opts.split_whitespace() {
+        let range = parse_id_range(spec)?;
+        options.rules.delete_by_range(*range.start(), *range.end());
+    }
+    Ok(())
+}
+
+/// SecRuleRemoveByMsg MSG
+///
+/// Removes the rules defined so far whose `msg` is MSG, as written.
+fn directive_sec_rule_remove_by_msg(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.rules.delete_by_msg(&options.opts);
+    Ok(())
+}
+
+/// SecRuleRemoveByTag TAG
+///
+/// Removes the rules defined so far tagged TAG.
+fn directive_sec_rule_remove_by_tag(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.rules.delete_by_tag(&options.opts);
+    Ok(())
+}
+
+/// SecRuleUpdateActionById ID|RANGE... "ACTIONS"
+///
+/// Applies ACTIONS to the rules with the given ids or in the given inclusive ranges, as
+/// if appended to each rule's own, without the defaults of `SecDefaultAction`: a
+/// disruptive action replaces the rule's. A single id must name a rule defined earlier.
+fn directive_sec_rule_update_action_by_id(options: &mut DirectiveOptions) -> Result<(), String> {
+    let (ids, actions) = split_last_argument(&options.opts)
+        .ok_or("syntax error: SecRuleUpdateActionById ID \"ACTIONS\"")?;
+    let actions = parse_actions(actions).map_err(|e| e.message)?;
+
+    for spec in ids.split_whitespace() {
+        let range = parse_id_range(spec)?;
+        let mut found = false;
+        for rule in options
+            .rules
+            .iter_mut()
+            .filter(|rule| range.contains(&rule.metadata().id))
+        {
+            apply_actions(rule, &actions).map_err(|e| e.message)?;
+            found = true;
+        }
+        if !found && range.start() == range.end() {
+            return Err(format!("rule {} not found", range.start()));
+        }
+    }
+    Ok(())
 }
 
 /// SecRuleUpdateTargetById ID|RANGE... "VARIABLES"
