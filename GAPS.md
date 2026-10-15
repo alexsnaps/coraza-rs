@@ -267,7 +267,7 @@ None of these is used by CRS v4.30.0.
     333 passed before, 342 after. The 6 left are the next item.
   - Left: collection values are still text, so `?a=%ff` puts U+FFFD in `ARGS:a` where Go keeps the byte; operators
     see the U+FFFD too.
-- [ ] **Transformations behind Go's current ones.** Found while porting the above. Go Coraza has since changed:
+- [x] **Transformations behind Go's current ones.** Found while porting the above. Go Coraza has since changed:
   - `t:urlDecodeUni`: `%uHHHH` outside full-width ASCII is mapped to its best-fit ASCII (`%u201c` is `"`, `%u00e9`
     is `e`, `unicode_bestfit.go`); ours keeps the low byte, as ModSecurity does. 4 of Go's tests.
   - `t:cssDecode`: an escape decodes to its whole code point in UTF-8 (`\123` is `ģ`); ours keeps the low byte, as
@@ -275,6 +275,9 @@ None of these is used by CRS v4.30.0.
   - `t:normalisePathWin`: it strips an NTFS stream suffix (`file.txt::$DATA`) and trailing dots and spaces from each
     element, as Windows does when it opens the file.
   - `t:cmdLine`: it reports a change only when a byte changed (a lone space doesn't).
+  - Done: all four as in Go; the best-fit table is Go's (`transformations/unicode_bestfit.rs`). `t:urlDecodeUni`
+    also reports a change only when it decoded something, as Go does. Go's transformation tests: 348 of 348 pass;
+    the 15 others name transformations neither implements (`parity*7bit`, `sqlHexDecode`).
 - [x] **`@rx` and `@pm` compiled for every value.** Found while running the FTW tests, which took about half a
   second per request. Both used the regular expression or matcher built at load time only when called without a
   transaction, which rules never do.

@@ -157,9 +157,12 @@ fn clean_path(path: &[u8]) -> Vec<u8> {
 
 /// Path normalization transformation (Windows-style).
 ///
-/// Normalizes Windows file paths by:
+/// Normalizes Windows file paths, as Go Coraza does, by:
 /// - Converting backslashes (`\`) to forward slashes (`/`)
 /// - Then applying Unix-style normalization
+/// - Removing an NTFS alternate data stream from the last element (`file.txt::$DATA`
+///   and `file.txt:hidden` are `file.txt`), and trailing dots and spaces from each
+///   element (`file.txt.`), as Windows does when it opens a file
 ///
 /// # Arguments
 ///
@@ -186,6 +189,10 @@ fn clean_path(path: &[u8]) -> Vec<u8> {
 /// let (result, changed, _) = normalise_path_win(b"dir\\\\foo\\\\bar");
 /// assert_eq!(result, b"dir/foo/bar");
 /// assert!(changed);
+///
+/// let (result, changed, _) = normalise_path_win(b"C:\\inetpub\\web.config::$DATA");
+/// assert_eq!(result, b"C:/inetpub/web.config");
+/// assert!(changed);
 /// ```
 pub fn normalise_path_win(input: &[u8]) -> TransformationResult {
     if input.is_empty() {
@@ -193,19 +200,69 @@ pub fn normalise_path_win(input: &[u8]) -> TransformationResult {
     }
 
     // Convert backslashes to forward slashes
-    let backslash_converted = input.contains(&b'\\');
     let converted: Vec<u8> = input
         .iter()
         .map(|&byte| if byte == b'\\' { b'/' } else { byte })
         .collect();
 
     // Apply Unix-style normalization
-    let (result, path_normalized, _) = normalise_path(&converted);
+    let (normalized, _, _) = normalise_path(&converted);
+    let result = strip_trailing_dots_and_spaces(&strip_alternate_data_stream(&normalized));
 
-    // Changed if either backslashes were converted OR path was normalized
-    let changed = backslash_converted || path_normalized;
-
+    let changed = result != input;
     (result, changed, None)
+}
+
+/// `path` without the NTFS alternate data stream of its last element, from the first
+/// `:` on (`file.txt::$DATA` and `file.txt:hidden` open `file.txt`); a drive letter
+/// (`C:`) isn't one.
+fn strip_alternate_data_stream(path: &[u8]) -> Vec<u8> {
+    let (drive, rest) = match path {
+        [letter, b':', ..] if letter.is_ascii_alphabetic() => path.split_at(2),
+        _ => (&[][..], path),
+    };
+    // A trailing slash keeps the last element last
+    let (rest, trailing_slash): (&[u8], &[u8]) = match rest.strip_suffix(b"/") {
+        Some(rest) => (rest, b"/"),
+        None => (rest, b""),
+    };
+    let last_element = rest
+        .iter()
+        .rposition(|&byte| byte == b'/')
+        .map_or(0, |slash| slash + 1);
+    let end = rest[last_element..]
+        .iter()
+        .position(|&byte| byte == b':')
+        .map_or(rest.len(), |colon| last_element + colon);
+    [drive, &rest[..end], trailing_slash].concat()
+}
+
+/// `path` with the trailing dots and spaces of each element removed, as Windows ignores
+/// them (`file.txt.` opens `file.txt`); an element that is all dots (`..`) is kept, one
+/// that is nothing else is dropped.
+fn strip_trailing_dots_and_spaces(path: &[u8]) -> Vec<u8> {
+    let mut stripped = Vec::with_capacity(path.len());
+    let mut first = true;
+    for element in path.split(|&byte| byte == b'/') {
+        let element = if element.iter().all(|&byte| byte == b'.') {
+            element
+        } else {
+            let end = element
+                .iter()
+                .rposition(|&byte| byte != b'.' && byte != b' ')
+                .map_or(0, |last| last + 1);
+            if end == 0 {
+                continue;
+            }
+            &element[..end]
+        };
+        if !first {
+            stripped.push(b'/');
+        }
+        stripped.extend_from_slice(element);
+        first = false;
+    }
+    stripped
 }
 
 /// Command line normalization transformation.
@@ -227,7 +284,7 @@ pub fn normalise_path_win(input: &[u8]) -> TransformationResult {
 ///
 /// Returns `(output, changed)` where:
 /// - `output` is the normalized string
-/// - `changed` is `true` if any transformations were applied, `false` otherwise
+/// - `changed` is `true` if a byte was removed or changed, `false` otherwise
 ///
 /// # Examples
 ///
@@ -243,11 +300,13 @@ pub fn normalise_path_win(input: &[u8]) -> TransformationResult {
 /// ```
 pub fn cmd_line(input: &[u8]) -> TransformationResult {
     // Check if transformation is needed
-    if let Some(pos) = input.iter().copied().position(needs_cmd_transform) {
-        (do_cmd_line(input, pos), true, None)
-    } else {
-        (input.to_vec(), false, None)
-    }
+    let Some(pos) = input.iter().copied().position(needs_cmd_transform) else {
+        return (input.to_vec(), false, None);
+    };
+    let output = do_cmd_line(input, pos);
+    // A space is left as it is, as in Go Coraza that is no change
+    let changed = output != input;
+    (output, changed, None)
 }
 
 fn do_cmd_line(input: &[u8], pos: usize) -> Vec<u8> {
@@ -1394,5 +1453,55 @@ mod tests {
         // As Go's path.Clean, whatever the platform
         assert_eq!(on_text(normalise_path, "a\\..\\b").0, "a\\..\\b");
         assert_eq!(on_text(normalise_path, "C:/x/../y").0, "C:/y");
+    }
+
+    // Go Coraza's TestNormalisePathWin
+    #[test]
+    fn test_normalise_path_win_as_windows_opens_files() {
+        for (input, want) in [
+            ("", ""),
+            (
+                r"C:\inetpub\wwwroot\index.html",
+                "C:/inetpub/wwwroot/index.html",
+            ),
+            (r"..\..\etc\passwd", "../../etc/passwd"),
+            (r"foo\..\bar", "bar"),
+            (
+                r"C:\inetpub\wwwroot\web.config.",
+                "C:/inetpub/wwwroot/web.config",
+            ),
+            (
+                r"C:\inetpub\wwwroot\web.config ",
+                "C:/inetpub/wwwroot/web.config",
+            ),
+            (
+                r"C:\inetpub\wwwroot\web.config::$DATA",
+                "C:/inetpub/wwwroot/web.config",
+            ),
+            (
+                r"C:\inetpub\wwwroot\web.config:hidden",
+                "C:/inetpub/wwwroot/web.config",
+            ),
+            (r"..\..\web.config.", "../../web.config"),
+            ("C:", "C:"),
+            (r"C:\path\web.config:$DATA\", "C:/path/web.config/"),
+            (r"C:\ \file.txt", "C:/file.txt"),
+        ] {
+            let (result, changed, _) = on_text(normalise_path_win, input);
+            assert_eq!(result, want, "{input:?}");
+            assert_eq!(changed, input != want, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn test_cmd_line_changed_only_when_a_byte_changes() {
+        // A space triggers the transformation but stays as it is
+        let (result, changed, _) = on_text(cmd_line, "cmd arg");
+        assert_eq!(result, "cmd arg");
+        assert!(!changed);
+
+        for input in ["cmd  arg", "cmd,arg", "cmd /c", "Cmd", "c^md"] {
+            assert!(on_text(cmd_line, input).1, "{input:?}");
+        }
     }
 }

@@ -14,6 +14,7 @@ pub mod complex;
 mod encoding;
 pub mod escape;
 mod simple;
+mod unicode_bestfit;
 
 pub use complex::{
     cmd_line, html_entity_decode, normalise_path, normalise_path_win, remove_comments,

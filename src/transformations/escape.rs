@@ -3,6 +3,7 @@
 //! This module provides transformations for decoding various escape sequence formats
 //! including C-style, JavaScript, CSS, and URL Unicode escapes.
 
+use super::unicode_bestfit::best_fit_ascii;
 use super::{TransformationResult, chars_lossy};
 use crate::utils::strings::{hex_value, x2c};
 
@@ -298,10 +299,11 @@ fn do_js_decode(input: &[u8], pos: usize) -> (Vec<u8>, bool) {
 /// CSS escape sequence decoding transformation.
 ///
 /// Decodes CSS hex escapes in the format `\HHHHHH` where H is a hexadecimal digit.
-/// CSS escapes can be 1-6 hex digits long. The transformation:
-/// - Uses only the lower byte (last 2 hex digits) from the escape
+/// CSS escapes can be 1-6 hex digits long. The transformation, as Go Coraza's:
+/// - Decodes the escape to its code point, in UTF-8; U+FFFD for zero, a surrogate or a
+///   value past U+10FFFF
 /// - Ignores a single whitespace character after the hex escape
-/// - Handles full-width ASCII (U+FF01 to U+FF5E) conversion
+/// - Folds full-width ASCII (U+FF01 to U+FF5E) to ASCII
 /// - Removes backslash before newline
 /// - Removes backslash before non-hex characters
 ///
@@ -362,62 +364,19 @@ fn do_css_decode(input: &[u8], pos: usize) -> Vec<u8> {
                 }
 
                 if j > 0 {
-                    // We have at least one valid hex character
-                    let mut fullcheck = false;
-
-                    match j {
-                        1 => {
-                            // Single hex digit: convert to value 0-15
-                            result.push(hex_value(input_bytes[i]).expect("checked hex digit"));
-                        }
-                        2 | 3 => {
-                            // Use last 2 hex digits
-                            result.push(x2c(&input[i + j - 2..i + j]));
-                        }
-                        4 => {
-                            // Use last 2 digits, request full-width check
-                            let byte = x2c(&input[i + j - 2..i + j]);
-                            result.push(byte);
-                            fullcheck = true;
-                        }
-                        5 => {
-                            // Use last 2 digits, check full-width if first digit is '0'
-                            let byte = x2c(&input[i + j - 2..i + j]);
-                            if input_bytes[i] == b'0' {
-                                result.push(byte);
-                                fullcheck = true;
-                            } else {
-                                result.push(byte);
-                            }
-                        }
-                        6 => {
-                            // Use last 2 digits, check full-width if first 2 digits are '00'
-                            let byte = x2c(&input[i + j - 2..i + j]);
-                            if input_bytes[i] == b'0' && input_bytes[i + 1] == b'0' {
-                                result.push(byte);
-                                fullcheck = true;
-                            } else {
-                                result.push(byte);
-                            }
-                        }
-                        _ => unreachable!(),
-                    }
-
-                    // Full-width ASCII check (0xff01 - 0xff5e) needs 0x20 added
-                    if fullcheck {
-                        let last_idx = result.len() - 1;
-                        let byte = result[last_idx];
-                        // Check if the escape represents full-width ASCII
-                        // Third and fourth hex digits from the end should be 'ff' or 'FF'
-                        if byte > 0x00
-                            && byte < 0x5f
-                            && j >= 4
-                            && (input_bytes[i + j - 3] == b'f' || input_bytes[i + j - 3] == b'F')
-                            && (input_bytes[i + j - 4] == b'f' || input_bytes[i + j - 4] == b'F')
-                        {
-                            result[last_idx] = byte.wrapping_add(0x20);
-                        }
-                    }
+                    // The escape is one code point, however many digits write it
+                    let code = input[i..i + j].iter().fold(0, |code, &digit| {
+                        (code << 4) | u32::from(hex_value(digit).expect("checked hex digit"))
+                    });
+                    let code = match code {
+                        // Zero is invalid, as are surrogates and values past U+10FFFF
+                        0 => u32::from(char::REPLACEMENT_CHARACTER),
+                        // Full-width ASCII folds to ASCII, as in ModSecurity
+                        0xff01..=0xff5e => code - 0xfee0,
+                        _ => code,
+                    };
+                    let c = char::from_u32(code).unwrap_or(char::REPLACEMENT_CHARACTER);
+                    result.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
 
                     // Ignore a single whitespace after hex escape
                     if i + j < input_len && is_css_whitespace(input_bytes[i + j]) {
@@ -456,9 +415,11 @@ fn is_css_whitespace(c: u8) -> bool {
 ///
 /// Decodes both standard URL encoding and IIS-specific Unicode encoding:
 /// - Standard URL encoding: `%HH` (2 hex digits)
-/// - IIS Unicode encoding: `%uHHHH` (4 hex digits, uses lower byte only)
+/// - IIS Unicode encoding: `%uHHHH` (4 hex digits): the code point's best-fit ASCII
+///   (`%u201c` is `"`) as ModSecurity's mapping for code page 20127 has it, as in Go
+///   Coraza; otherwise its lower byte, with full-width ASCII (U+FF01 to U+FF5E) folded
+///   to ASCII
 /// - Plus to space conversion: `+` → ` `
-/// - Full-width ASCII handling for Unicode escapes (U+FF01 to U+FF5E)
 ///
 /// # Arguments
 ///
@@ -468,7 +429,7 @@ fn is_css_whitespace(c: u8) -> bool {
 ///
 /// Returns `(output, changed)` where:
 /// - `output` is the decoded string
-/// - `changed` is `true` if any decoding occurred, `false` otherwise
+/// - `changed` is `true` if anything was decoded; invalid escapes are kept as they are
 ///
 /// # Examples
 ///
@@ -488,79 +449,74 @@ fn is_css_whitespace(c: u8) -> bool {
 /// assert!(changed);
 /// ```
 pub fn url_decode_uni(input: &[u8]) -> TransformationResult {
-    if let Some(pos) = input.iter().position(|&b| b == b'%' || b == b'+') {
-        (do_url_decode_uni(input, pos), true, None)
-    } else {
-        (input.to_vec(), false, None)
+    match input.iter().position(|&b| b == b'%' || b == b'+') {
+        Some(pos) => {
+            let (output, changed) = do_url_decode_uni(input, pos);
+            (output, changed, None)
+        }
+        None => (input.to_vec(), false, None),
     }
 }
 
-fn do_url_decode_uni(input: &[u8], pos: usize) -> Vec<u8> {
-    let input_bytes = input;
-    let input_len = input_bytes.len();
+fn do_url_decode_uni(input: &[u8], pos: usize) -> (Vec<u8>, bool) {
+    let input_len = input.len();
     let mut result = Vec::with_capacity(input_len);
+    // Whether something was decoded: an invalid escape is copied as it is
+    let mut changed = false;
 
     // Copy bytes before first % or +
-    result.extend_from_slice(&input_bytes[..pos]);
+    result.extend_from_slice(&input[..pos]);
     let mut i = pos;
 
     while i < input_len {
-        if input_bytes[i] == b'%' {
+        if input[i] == b'%' {
             // Check for IIS Unicode encoding: %uHHHH
-            if i + 1 < input_len && (input_bytes[i + 1] == b'u' || input_bytes[i + 1] == b'U') {
-                if i + 5 < input_len
-                    && input_bytes[i + 2].is_ascii_hexdigit()
-                    && input_bytes[i + 3].is_ascii_hexdigit()
-                    && input_bytes[i + 4].is_ascii_hexdigit()
-                    && input_bytes[i + 5].is_ascii_hexdigit()
-                {
-                    // Use only the lower byte (last 2 hex digits)
-                    let mut byte = x2c(&input[i + 4..i + 6]);
-
-                    // Full-width ASCII (ff01 - ff5e) needs 0x20 added
-                    if (input_bytes[i + 2] == b'f' || input_bytes[i + 2] == b'F')
-                        && (input_bytes[i + 3] == b'f' || input_bytes[i + 3] == b'F')
-                        && byte > 0x00
-                        && byte < 0x5f
-                    {
-                        byte = byte.wrapping_add(0x20);
-                    }
-
+            if i + 1 < input_len && (input[i + 1] == b'u' || input[i + 1] == b'U') {
+                if i + 5 < input_len && input[i + 2..i + 6].iter().all(u8::is_ascii_hexdigit) {
+                    let [high, low] = [x2c(&input[i + 2..i + 4]), x2c(&input[i + 4..i + 6])];
+                    let byte = best_fit_ascii(u16::from_be_bytes([high, low])).unwrap_or(
+                        // Otherwise the lower byte, full-width ASCII (U+FF01 to U+FF5E)
+                        // folded to ASCII
+                        if high == 0xff && low > 0x00 && low < 0x5f {
+                            low + 0x20
+                        } else {
+                            low
+                        },
+                    );
                     result.push(byte);
                     i += 6;
+                    changed = true;
                 } else {
                     // Invalid %u sequence, keep %u as-is
-                    result.push(input_bytes[i]);
-                    i += 1;
-                    result.push(input_bytes[i]);
-                    i += 1;
+                    result.extend_from_slice(&input[i..i + 2]);
+                    i += 2;
                 }
-            } else {
+            } else if i + 2 < input_len
+                && input[i + 1].is_ascii_hexdigit()
+                && input[i + 2].is_ascii_hexdigit()
+            {
                 // Standard URL encoding: %HH
-                if i + 2 < input_len
-                    && input_bytes[i + 1].is_ascii_hexdigit()
-                    && input_bytes[i + 2].is_ascii_hexdigit()
-                {
-                    result.push(x2c(&input[i + 1..i + 3]));
-                    i += 3;
-                } else {
-                    // Invalid % sequence, keep % as-is
-                    result.push(input_bytes[i]);
-                    i += 1;
-                }
+                result.push(x2c(&input[i + 1..i + 3]));
+                i += 3;
+                changed = true;
+            } else {
+                // Invalid % sequence, keep % as-is
+                result.push(input[i]);
+                i += 1;
             }
-        } else if input_bytes[i] == b'+' {
+        } else if input[i] == b'+' {
             // Convert + to space
             result.push(b' ');
             i += 1;
+            changed = true;
         } else {
             // Regular character
-            result.push(input_bytes[i]);
+            result.push(input[i]);
             i += 1;
         }
     }
 
-    result
+    (result, changed)
 }
 
 /// UTF-8 to Unicode encoding transformation.
@@ -941,12 +897,12 @@ mod tests {
         // %G is invalid (G is not hex), should keep %G
         let (result, changed, _) = on_text(url_decode_uni, "%GG");
         assert_eq!(result, "%GG");
-        assert!(changed); // Changed because we found a %
+        assert!(!changed); // Nothing was decoded, as in Go Coraza
 
         // %2 (incomplete) should keep %2
         let (result, changed, _) = on_text(url_decode_uni, "%2");
         assert_eq!(result, "%2");
-        assert!(changed);
+        assert!(!changed);
     }
 
     #[test]
@@ -954,12 +910,12 @@ mod tests {
         // %u12 (incomplete, only 2 hex digits) should keep %u12
         let (result, changed, _) = on_text(url_decode_uni, "%u12");
         assert_eq!(result, "%u12");
-        assert!(changed);
+        assert!(!changed);
 
         // %uGGGG (invalid hex) should keep %uGGGG
         let (result, changed, _) = on_text(url_decode_uni, "%uGGGG");
         assert_eq!(result, "%uGGGG");
-        assert!(changed);
+        assert!(!changed);
     }
 
     #[test]
@@ -1026,9 +982,36 @@ mod tests {
     fn test_bytes_that_are_not_utf8() {
         assert_eq!(escape_seq_decode(b"\\377\xfe").0, b"\xff\xfe");
         assert_eq!(js_decode(b"\\x80\\200").0, b"\x80\x80");
-        assert_eq!(css_decode(b"\\ff\xfe").0, b"\xff\xfe");
+        // The escape is U+00FF, in UTF-8
+        assert_eq!(css_decode(b"\\ff\xfe").0, b"\xc3\xbf\xfe");
         assert_eq!(url_decode_uni(b"%uff80%ff").0, b"\x80\xff");
         // As in Go, a byte that isn't part of a character is U+FFFD
         assert_eq!(utf8_to_unicode(b"a\xff").0, b"a%ufffd");
+    }
+
+    #[test]
+    fn test_url_decode_uni_best_fit() {
+        // Go Coraza's urlDecodeUni test data
+        assert_eq!(
+            on_text(url_decode_uni, "%u201dQuoted%u2019s%u2018 word%u2014dash").0,
+            "\"Quoted's' word-dash"
+        );
+        assert_eq!(on_text(url_decode_uni, "%u0041%u00e9%u00e8").0, "Aee");
+        // Unmapped: the lower byte
+        assert_eq!(url_decode_uni(b"%u4e2d").0, b"\x2d");
+        assert_eq!(url_decode_uni(b"%uff80").0, b"\x80");
+    }
+
+    #[test]
+    fn test_css_decode_code_points() {
+        // Go Coraza's cssDecode test data
+        assert_eq!(
+            on_text(css_decode, "\\123\\1234\\12345\\123456\\0").0,
+            "\u{123}\u{1234}\u{12345}\u{FFFD}\u{FFFD}"
+        );
+        // Full-width ASCII folds to ASCII
+        assert_eq!(on_text(css_decode, "\\ff01\\00ff5e").0, "!~");
+        // A surrogate is U+FFFD
+        assert_eq!(on_text(css_decode, "\\d800").0, "\u{FFFD}");
     }
 }
