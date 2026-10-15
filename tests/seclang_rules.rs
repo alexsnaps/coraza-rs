@@ -821,3 +821,25 @@ fn bodies_are_inspected_only_with_body_access() {
         );
     }
 }
+
+#[test]
+fn xml_is_the_parsed_request_xml() {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule REQUEST_HEADERS:Content-Type "^text/xml" "id:200000,phase:1,t:none,t:lowercase,pass,nolog,ctl:requestBodyProcessor=XML"
+        SecRule XML:/* "@contains evil-text" "id:1,phase:2,deny,status:403"
+        SecRule XML://@* "@contains evil-attr" "id:2,phase:2,deny,status:403"
+    "#);
+
+    for (body, rule_id) in [
+        (r#"<a b="ok">evil-text</a>"#, Some(1)),
+        (r#"<a b="evil-attr">ok</a>"#, Some(2)),
+        (r#"<a b="ok">ok</a>"#, None),
+    ] {
+        let mut tx = waf.new_transaction();
+        tx.add_request_header("Content-Type", "text/xml");
+        tx.process_request_headers();
+        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        assert_eq!(interruption.map(|i| i.rule_id), rule_id, "{body}");
+    }
+}

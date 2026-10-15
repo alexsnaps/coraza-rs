@@ -101,7 +101,8 @@ macro_rules! variable_storage {
             RuleVariable::FilesSizes => Some(Map($($borrow)+ $tx.files_sizes)),
             RuleVariable::FilesNames => Some(Map($($borrow)+ $tx.files_names)),
             RuleVariable::MultipartPartHeaders => Some(Map($($borrow)+ $tx.multipart_part_headers)),
-            RuleVariable::RequestXML => Some(Map($($borrow)+ $tx.request_xml)),
+            // As in Go Coraza, XML is REQUEST_XML under another name
+            RuleVariable::RequestXML | RuleVariable::XML => Some(Map($($borrow)+ $tx.request_xml)),
             RuleVariable::ResponseArgs => Some(Map($($borrow)+ $tx.response_args)),
             RuleVariable::ResponseXML => Some(Map($($borrow)+ $tx.response_xml)),
             RuleVariable::TX => Some(Map($($borrow)+ $tx.tx)),
@@ -184,7 +185,6 @@ macro_rules! variable_storage {
             | RuleVariable::JSON
             | RuleVariable::Env
             | RuleVariable::UrlencodedError
-            | RuleVariable::XML
             | RuleVariable::AuthType
             | RuleVariable::FullRequest
             | RuleVariable::MultipartBoundaryQuoted

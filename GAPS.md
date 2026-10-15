@@ -116,8 +116,9 @@ naming them expands to nothing. CRS v4.30.0 uses the ones below.
 - [x] **`REQUEST_URI` held only the path.** Go and ModSecurity keep the query string (`/search?q=1`); every CRS rule
   on `REQUEST_URI` saw less than it should.
   - Done: `REQUEST_URI` is the request URI without its fragment.
-- [ ] **`XML`.** 354 uses, as `XML:/*` and `XML://@*` in most request rules. In Go it is the same collection as
+- [x] **`XML`.** 354 uses, as `XML:/*` and `XML://@*` in most request rules. In Go it is the same collection as
   `REQUEST_XML`, which the XML body processor fills.
+  - Done: `XML` reads `REQUEST_XML`.
 - [ ] **`MATCHED_VAR`, `MATCHED_VAR_NAME`, `MATCHED_VARS` and `MATCHED_VARS_NAMES`.** Mostly in `logdata`, but 13
   chained rules inspect `MATCHED_VAR(S)`.
 - [ ] **The names variables:** `ARGS_NAMES` (190 uses), `REQUEST_COOKIES_NAMES` (165), `REQUEST_HEADERS_NAMES`,
