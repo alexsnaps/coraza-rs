@@ -93,7 +93,9 @@ probed bugs.
   - Actions: 32 one-line factories in a `OnceLock` map (`src/actions/mod.rs`). **Done.**
   - Operators: `match`, but the operator list is written in four places (`src/rules/operator.rs:21`, 23 `From`
     impls, `src/seclang/operator_parser.rs:179`, re-exports). `IpMatchFromFile` exists but is in neither the enum
-    nor the parser. `ParsedOperator` (`operator_parser.rs:43`) duplicates `RuleOperator`.
+    nor the parser. `ParsedOperator` (`operator_parser.rs:43`) duplicates `RuleOperator`. **Done:** one `operators!` table generates
+    `OperatorEnum`, its dispatch, `From` impls and `OperatorEnum::new(name, arg)`; `parse_operator` returns a
+    `RuleOperator`.
   - Body processors: global `LazyLock<RwLock<HashMap>>` (`src/body_processors/mod.rs:172`), reached via
     content-type → string → lookup (`src/transaction/mod.rs:1070`). An enum of the five kinds would do;
     `BodyProcessorOptions` upload fields are always `Default`.

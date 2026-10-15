@@ -42,7 +42,7 @@ pub use action::{
     RuleAction, execute_actions, execute_flow_and_disruptive_actions, execute_nondisruptive_actions,
 };
 pub use group::RuleGroup;
-pub use operator::{OperatorEnum, RuleOperator};
+pub use operator::RuleOperator;
 pub use rule::Rule;
 pub use transformation::TransformationChain;
 pub use variable::{VariableException, VariableKey, VariableSpec};

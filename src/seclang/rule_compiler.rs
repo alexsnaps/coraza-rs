@@ -6,7 +6,7 @@
 //! Compiles SecRule, SecAction, and SecMarker directives into executable Rule structures.
 
 use crate::actions::ActionError;
-use crate::rules::{Rule, RuleAction, RuleOperator};
+use crate::rules::{Rule, RuleAction};
 use crate::seclang::{parse_actions, parse_operator, parse_variables};
 use crate::utils::strings::maybe_remove_quotes;
 
@@ -72,7 +72,7 @@ pub fn compile_sec_rule(input: &str) -> CompileResult<Rule> {
         .map_err(|e| CompileError::new(format!("failed to parse variables '{}': {}", vars, e)))?;
 
     // Parse operator
-    let parsed_operator = parse_operator(&operator).map_err(|e| {
+    let rule_operator = parse_operator(&operator).map_err(|e| {
         CompileError::new(format!("failed to parse operator '{}': {}", operator, e))
     })?;
 
@@ -93,13 +93,7 @@ pub fn compile_sec_rule(input: &str) -> CompileResult<Rule> {
         rule = rule.add_variable(var_spec);
     }
 
-    // Add operator
-    let operator_instance = RuleOperator::new(
-        parsed_operator.operator,
-        parsed_operator.function_name,
-        parsed_operator.arguments,
-    );
-    rule = rule.with_operator(operator_instance);
+    rule = rule.with_operator(rule_operator);
 
     // Initialize and add actions
     for mut parsed_action in parsed_actions {
