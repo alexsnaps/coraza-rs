@@ -11,6 +11,9 @@ fastrand = "2.0"
 md-5 = "0.10"
 sha1 = "0.10"
 
+# SecLang parsing
+winnow = { version = "1.0", default-features = false, features = ["std", "parser"] }
+
 # Pattern matching
 regex = "1.10"
 aho-corasick = "1.1"

@@ -10,6 +10,11 @@
 //! - `pattern` - Default to @rx (implicit)
 //! - `!pattern` - Negated @rx (implicit)
 
+use winnow::combinator::{alt, opt, preceded};
+use winnow::error::EmptyError;
+use winnow::prelude::*;
+use winnow::token::{rest, take_till};
+
 use crate::operators::{OperatorContext, OperatorEnum};
 use crate::rules::RuleOperator;
 
@@ -62,128 +67,85 @@ pub(crate) fn parse_operator_in(
     input: &str,
     context: &OperatorContext<'_>,
 ) -> ParseResult<RuleOperator> {
-    // Normalize input to ensure it starts with @ or !@
-    let normalized = normalize_operator(input);
+    let OperatorSpec {
+        function,
+        name,
+        argument,
+    } = operator_spec
+        .parse(input.trim())
+        .expect("any text is an operator");
 
-    // Split on first space to get operator name and arguments
-    let (op_raw, op_data) = normalized
-        .split_once(' ')
-        .map(|(name, args)| (name.trim(), args.trim()))
-        .unwrap_or((normalized.trim(), ""));
+    let operator = OperatorEnum::with_context(name, argument, context)
+        .map_err(|e| CompileError::new(format!("failed to create @{} operator: {}", name, e)))?;
 
-    // Extract operator name without @ or !@ prefix
-    let op_name = extract_operator_name(op_raw);
-
-    let operator = OperatorEnum::with_context(op_name, op_data, context)
-        .map_err(|e| CompileError::new(format!("failed to create @{} operator: {}", op_name, e)))?;
-
-    Ok(RuleOperator::new(operator, op_raw, op_data))
+    Ok(RuleOperator::new(operator, function, argument))
 }
 
-/// Normalize operator string to ensure it starts with @ or !@
-///
-/// Handles default @rx operator:
-/// - "" → "@rx"
-/// - "pattern" → "@rx pattern"
-/// - "!" → "!@rx"
-/// - "!pattern" → "!@rx pattern"
-/// - "@rx pattern" → "@rx pattern" (unchanged)
-/// - "!@rx pattern" → "!@rx pattern" (unchanged)
-fn normalize_operator(input: &str) -> String {
-    let input = input.trim();
-    let len = input.len();
-
-    // Empty string → @rx
-    if len == 0 {
-        return "@rx".to_string();
-    }
-
-    let first_char = input.chars().next().unwrap();
-
-    // Already starts with @ or !@ → no change needed
-    if first_char == '@' {
-        return input.to_string();
-    }
-
-    if first_char == '!' {
-        if len == 1 {
-            // "!" alone → "!@rx"
-            return "!@rx".to_string();
-        }
-
-        let second_char = input.chars().nth(1).unwrap();
-        if second_char == '@' {
-            // Already "!@..." → no change
-            return input.to_string();
-        } else {
-            // "!pattern" → "!@rx pattern"
-            return format!("!@rx {}", &input[1..]);
-        }
-    }
-
-    // No @ or ! prefix → default to @rx
-    format!("@rx {}", input)
+/// An operator as written.
+#[derive(Debug, PartialEq, Eq)]
+struct OperatorSpec<'a> {
+    /// `@NAME` or `!@NAME`, as written but for an implicit `@rx`
+    function: &'a str,
+    /// NAME
+    name: &'a str,
+    /// What follows NAME, trimmed
+    argument: &'a str,
 }
 
-/// Extract operator name without @ or !@ prefix
+/// `[!]@NAME[ ARGUMENT]`, or `[!]ARGUMENT` for `@rx`.
 ///
-/// - "@rx" → "rx"
-/// - "!@pm" → "pm"
-/// - "@streq" → "streq"
-fn extract_operator_name(op_raw: &str) -> &str {
-    if let Some(stripped) = op_raw.strip_prefix("!@") {
-        stripped
-    } else if let Some(stripped) = op_raw.strip_prefix('@') {
-        stripped
-    } else {
-        op_raw
-    }
+/// NAME runs to the first space; whitespace around it and around ARGUMENT is dropped.
+fn operator_spec<'i>(input: &mut &'i str) -> winnow::Result<OperatorSpec<'i>, EmptyError> {
+    let explicit = (
+        preceded((opt('!'), '@'), take_till(0.., ' ')).with_taken(),
+        opt(preceded(' ', rest)),
+    )
+        .map(
+            |((name, function), argument): ((&str, &str), Option<&str>)| OperatorSpec {
+                function: function.trim_end(),
+                name: name.trim_end(),
+                argument: argument.unwrap_or_default().trim(),
+            },
+        );
+    let implicit = (opt('!'), rest).map(|(negation, argument): (Option<_>, &str)| OperatorSpec {
+        function: if negation.is_some() { "!@rx" } else { "@rx" },
+        name: "rx",
+        argument: argument.trim(),
+    });
+    alt((explicit, implicit)).parse_next(input)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_normalize_empty() {
-        assert_eq!(normalize_operator(""), "@rx");
+    /// `(function, name, argument)` of `input`, which has been trimmed.
+    fn spec(input: &str) -> (&str, &str, &str) {
+        let spec = operator_spec.parse(input).unwrap();
+        (spec.function, spec.name, spec.argument)
     }
 
     #[test]
-    fn test_normalize_pattern_only() {
-        assert_eq!(normalize_operator("attack"), "@rx attack");
+    fn test_spec_implicit_rx() {
+        assert_eq!(spec(""), ("@rx", "rx", ""));
+        assert_eq!(spec("attack"), ("@rx", "rx", "attack"));
+        assert_eq!(spec("!"), ("!@rx", "rx", ""));
+        assert_eq!(spec("!attack"), ("!@rx", "rx", "attack"));
+        assert_eq!(spec("! attack"), ("!@rx", "rx", "attack"));
     }
 
     #[test]
-    fn test_normalize_negation_only() {
-        assert_eq!(normalize_operator("!"), "!@rx");
+    fn test_spec_explicit_operator() {
+        assert_eq!(spec("@rx attack"), ("@rx", "rx", "attack"));
+        assert_eq!(spec("!@rx attack"), ("!@rx", "rx", "attack"));
+        assert_eq!(spec("@pm"), ("@pm", "pm", ""));
     }
 
     #[test]
-    fn test_normalize_negation_pattern() {
-        assert_eq!(normalize_operator("!attack"), "!@rx attack");
-    }
-
-    #[test]
-    fn test_normalize_explicit_operator() {
-        assert_eq!(normalize_operator("@rx attack"), "@rx attack");
-    }
-
-    #[test]
-    fn test_normalize_negated_operator() {
-        assert_eq!(normalize_operator("!@rx attack"), "!@rx attack");
-    }
-
-    #[test]
-    fn test_extract_operator_name_with_at() {
-        assert_eq!(extract_operator_name("@rx"), "rx");
-        assert_eq!(extract_operator_name("@pm"), "pm");
-    }
-
-    #[test]
-    fn test_extract_operator_name_with_negation() {
-        assert_eq!(extract_operator_name("!@rx"), "rx");
-        assert_eq!(extract_operator_name("!@streq"), "streq");
+    fn test_spec_name_ends_at_a_space() {
+        // A tab doesn't end the name, as in Go Coraza
+        assert_eq!(spec("@rx\tattack"), ("@rx\tattack", "rx\tattack", ""));
+        assert_eq!(spec("@rx\t attack"), ("@rx", "rx", "attack"));
     }
 
     #[test]

@@ -13,12 +13,18 @@
 //! - `XML:xpath` - XPath selection
 //! - `JSON:path` - JSON path selection
 
-use crate::rules::{VariableKey, VariableSpec};
-use crate::types::RuleVariable;
-use regex::RegexBuilder;
+use std::borrow::Cow;
 use std::str::FromStr;
 
+use regex::RegexBuilder;
+use winnow::combinator::{alt, eof, not, opt, preceded, repeat, terminated};
+use winnow::error::EmptyError;
+use winnow::prelude::*;
+use winnow::token::{any, one_of, take_till};
+
+use crate::rules::{VariableKey, VariableSpec};
 use crate::seclang::CompileError;
+use crate::types::RuleVariable;
 
 type ParseResult<T> = Result<T, CompileError>;
 
@@ -88,7 +94,16 @@ impl VariableList {
                 "empty variable specification".to_string(),
             ));
         }
-        parse_variable_list(input)?
+        // Any text is a list as written: what's wrong with one shows as its variables are
+        // looked up, in order, then built
+        let written: Vec<WrittenVariable> = repeat(0.., written_variable)
+            .parse(input.as_bytes())
+            .expect("any text is a list of variables");
+        let parsed = written
+            .into_iter()
+            .map(WrittenVariable::resolve)
+            .collect::<ParseResult<Vec<_>>>()?;
+        parsed
             .into_iter()
             .map(build_element)
             .collect::<ParseResult<_>>()
@@ -120,171 +135,187 @@ impl VariableList {
     }
 }
 
-/// Parse a list of variables (handles pipe-separated syntax)
-fn parse_variable_list(input: &str) -> ParseResult<Vec<ParsedVariable>> {
-    let bytes = input.as_bytes();
-    let mut vars = Vec::new();
+/// A variable of a list as written, its name not looked up yet.
+struct WrittenVariable<'a> {
+    /// Without the `!` and `&` marking a negation or a count
+    name: Cow<'a, [u8]>,
+    is_negation: bool,
+    is_count: bool,
+    key: WrittenKey<'a>,
+    /// Whether a quote opened in the key is left open
+    unclosed_quote: bool,
+}
 
-    // State machine states:
-    // 0 = variable name
-    // 1 = key
-    // 2 = inside regex
-    // 3 = inside xpath/jsonpath
-    let mut state = 0;
-    let mut is_negation = false;
-    let mut is_count = false;
-    let mut cur_var = Vec::new();
-    let mut cur_key = Vec::new();
-    let mut is_escaped = false;
-    let mut is_quoted = false;
+/// The key of a variable as written.
+enum WrittenKey<'a> {
+    /// A string, or no key if empty
+    Text(Vec<u8>),
+    /// An XPath or JSON path, or no key if empty
+    Path(&'a [u8]),
+    /// What's between the slashes of `/PATTERN/`, or no key if empty
+    Regex(Vec<u8>),
+}
 
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
+impl WrittenVariable<'_> {
+    /// Looks the variable up, checking it can have the key it is written with.
+    fn resolve(self) -> ParseResult<ParsedVariable> {
+        let name = String::from_utf8_lossy(&self.name);
+        let variable = RuleVariable::from_str(&name)
+            .map_err(|e| CompileError::new(format!("invalid variable name '{}': {}", name, e)))?;
 
-        // Check for variable end conditions
-        let is_pipe = c == b'|' && state != 2; // Pipe not in regex
-        let is_end = i + 1 >= bytes.len(); // Last character
-        let is_regex_end = state == 2 && c == b'/' && !is_escaped; // Unescaped / in regex
-
-        if is_pipe || is_end || is_regex_end {
-            // Finalize current character if not pipe
-            if !is_pipe {
-                if state == 0 {
-                    cur_var.push(c);
-                } else if state != 2 || c != b'/' {
-                    // Don't include closing / for regex
-                    cur_key.push(c);
-                }
-            }
-
-            // Parse variable name
-            let var_name = String::from_utf8_lossy(&cur_var).to_string();
-            let variable = RuleVariable::from_str(&var_name).map_err(|e| {
-                CompileError::new(format!("invalid variable name '{}': {}", var_name, e))
-            })?;
-
-            // Check if variable can be selected (has key)
-            if state == 1 && !cur_key.is_empty() && !variable.can_be_selected() {
-                return Err(CompileError::new(format!(
-                    "attempting to select a value inside a non-selectable collection: {}",
-                    var_name
-                )));
-            }
-
-            // Handle quoted keys
-            if is_quoted {
-                if i + 1 < bytes.len() && bytes[i + 1] != b'\'' && bytes[i] != b'\'' {
+        let (text, key) = match &self.key {
+            WrittenKey::Text(text) => {
+                if !text.is_empty() && !variable.can_be_selected() {
                     return Err(CompileError::new(format!(
-                        "unclosed quote: {:?}",
-                        String::from_utf8_lossy(&cur_key)
+                        "attempting to select a value inside a non-selectable collection: {}",
+                        name
                     )));
                 }
-                i += 2; // Skip closing quote
-                is_quoted = false;
-            } else if state == 2 {
-                i += 1; // Skip closing /
+                (text.as_slice(), String::from_utf8_lossy(text).into_owned())
             }
-
-            // Build key string
-            let key = if cur_key.is_empty() {
-                None
-            } else {
-                let key_str = String::from_utf8_lossy(&cur_key).to_string();
-                if state == 2 {
-                    // Regex key - add slashes
-                    Some(format!("/{}/", key_str))
-                } else {
-                    Some(key_str)
-                }
-            };
-
-            // Store parsed variable
-            vars.push(ParsedVariable {
-                variable,
-                key,
-                is_negation,
-                is_count,
-            });
-
-            // Reset state
-            cur_var.clear();
-            cur_key.clear();
-            is_count = false;
-            is_negation = false;
-            state = 0;
-
-            i += 1;
-            continue;
+            WrittenKey::Path(path) => (*path, String::from_utf8_lossy(path).into_owned()),
+            WrittenKey::Regex(pattern) => (
+                pattern.as_slice(),
+                format!("/{}/", String::from_utf8_lossy(pattern)),
+            ),
+        };
+        if self.unclosed_quote {
+            return Err(CompileError::new(format!(
+                "unclosed quote: {:?}",
+                String::from_utf8_lossy(text)
+            )));
         }
 
-        // State machine transitions
-        match state {
-            0 => {
-                // Parsing variable name
-                match c {
-                    b'!' => is_negation = true,
-                    b'&' => is_count = true,
-                    b':' => state = 1, // Transition to key
-                    _ => cur_var.push(c),
-                }
-            }
-            1 => {
-                // Parsing key
-                if cur_key.is_empty() {
-                    let var_name = String::from_utf8_lossy(&cur_var).to_string();
-                    if var_name == "XML" || var_name == "JSON" {
-                        // Start xpath/jsonpath
-                        state = 3;
-                        cur_key.push(c);
-                    } else if c == b'/' {
-                        // Start regex
-                        state = 2;
-                    } else if c == b'\'' {
-                        // Start quoted key
-                        is_quoted = true;
-                    } else {
-                        cur_key.push(c);
-                    }
-                } else if c == b'/' {
-                    // Start regex
-                    state = 2;
-                } else if c == b'\'' {
-                    is_quoted = true;
-                } else {
-                    cur_key.push(c);
-                }
-            }
-            2 => {
-                // Inside regex
-                if c == b'/' && !is_escaped {
-                    // Unescaped / ends regex
-                    state = 1;
-                } else if c == b'\\' {
-                    cur_key.push(b'\\');
-                    is_escaped = !is_escaped;
-                } else {
-                    cur_key.push(c);
-                    if is_escaped {
-                        is_escaped = false;
-                    }
-                }
-            }
-            3 => {
-                // Inside xpath/jsonpath
-                cur_key.push(c);
-            }
-            _ => unreachable!(),
+        Ok(ParsedVariable {
+            variable,
+            key: (!text.is_empty()).then_some(key),
+            is_negation: self.is_negation,
+            is_count: self.is_count,
+        })
+    }
+}
+
+/// A variable of a list, `[!][&]NAME[:KEY]`, and the `|` ending it.
+///
+/// The list's last character belongs to the name or key it ends, whatever it is: `ARGS:`
+/// names a variable `ARGS:`, as in Go Coraza.
+fn written_variable<'i>(input: &mut &'i [u8]) -> winnow::Result<WrittenVariable<'i>, EmptyError> {
+    not(eof).parse_next(input)?;
+    let (name, is_negation, is_count) = name(input)?;
+    let (key, unclosed_quote) = match opt(b':').parse_next(input)? {
+        None => {
+            opt(b'|').parse_next(input)?;
+            (WrittenKey::Text(Vec::new()), false)
         }
+        Some(_) if *name == *b"XML" || *name == *b"JSON" => {
+            let path = terminated(take_till(0.., b'|'), opt(b'|')).parse_next(input)?;
+            (WrittenKey::Path(path), false)
+        }
+        Some(_) => key(input)?,
+    };
+    Ok(WrittenVariable {
+        name,
+        is_negation,
+        is_count,
+        key,
+        unclosed_quote,
+    })
+}
 
-        i += 1;
-    }
+/// NAME, up to a `|` or `:`: `(name, is_negation, is_count)`, a `!` or `&` anywhere in
+/// it marking a negation or a count.
+fn name<'i>(input: &mut &'i [u8]) -> winnow::Result<(Cow<'i, [u8]>, bool, bool), EmptyError> {
+    // The list's last character is the name's, even a `:`, `!` or `&`
+    let written = (take_till(0.., (b'|', b':')), opt((b':', eof)))
+        .take()
+        .parse_next(input)?;
+    let (marked, last) = match input.is_empty() {
+        true => written.split_at(written.len().saturating_sub(1)),
+        false => (written, &b""[..]),
+    };
+    let is_marker = |c: &u8| matches!(c, b'!' | b'&');
+    let name = match marked.iter().any(is_marker) {
+        true => Cow::Owned(
+            marked
+                .iter()
+                .filter(|c| !is_marker(c))
+                .chain(last)
+                .copied()
+                .collect(),
+        ),
+        false => Cow::Borrowed(written),
+    };
+    Ok((name, marked.contains(&b'!'), marked.contains(&b'&')))
+}
 
-    if vars.is_empty() {
-        return Err(CompileError::new("no variables parsed".to_string()));
-    }
+/// KEY of a collection other than `XML` and `JSON`, and what ends the variable: a
+/// string, `/PATTERN/`, or a string then `/PATTERN/`, which join into one regex; and
+/// whether a quote is left open.
+///
+/// A `'` in KEY is dropped, and marks the key quoted. What follows the `/` closing a
+/// regex, or the `|` ending a string, is then skipped unread: two characters for a quoted
+/// key, taken to be the `'` and `|` of `'/PATTERN/'|` (the quote is left open unless the
+/// first is a `'`), and one for an unquoted regex, taken to be the `|`.
+fn key<'i>(input: &mut &'i [u8]) -> winnow::Result<(WrittenKey<'i>, bool), EmptyError> {
+    let piece = alt((
+        take_till(1.., (b'|', b'/', b'\'')).map(Some),
+        terminated(one_of((b'/', b'\'')), eof).take().map(Some),
+        b'\''.value(None),
+    ));
+    let (mut text, is_quoted): (Vec<u8>, bool) = repeat(0.., piece)
+        .fold(
+            || (Vec::new(), false),
+            |(mut text, is_quoted), piece| match piece {
+                Some(piece) => {
+                    text.extend_from_slice(piece);
+                    (text, is_quoted)
+                }
+                None => (text, true),
+            },
+        )
+        .parse_next(input)?;
 
-    Ok(vars)
+    let (key, is_closed_regex) = match opt(preceded(b'/', pattern)).parse_next(input)? {
+        Some((pattern, is_closed)) => {
+            text.extend_from_slice(pattern);
+            (WrittenKey::Regex(text), is_closed)
+        }
+        None => {
+            opt(b'|').parse_next(input)?;
+            (WrittenKey::Text(text), false)
+        }
+    };
+    let unclosed_quote = is_quoted && input.first().is_some_and(|&c| c != b'\'');
+    let skipped = match (is_quoted, is_closed_regex) {
+        (true, _) => 2,
+        (false, true) => 1,
+        (false, false) => 0,
+    };
+    repeat::<_, _, (), _, _>(0..=skipped, any).parse_next(input)?;
+    Ok((key, unclosed_quote))
+}
+
+/// What follows the `/` opening a regex: PATTERN, in which a backslash escapes the
+/// character after it, up to the `/` closing it or the end of the list; and whether it
+/// is closed.
+fn pattern<'i>(input: &mut &'i [u8]) -> winnow::Result<(&'i [u8], bool), EmptyError> {
+    let pattern = repeat::<_, _, (), _, _>(
+        0..,
+        alt((
+            (b'\\', any).void(),
+            take_till(1.., (b'\\', b'/')).void(),
+            (b'\\', eof).void(),
+        )),
+    )
+    .take()
+    .parse_next(input)?;
+    let is_closed = opt(b'/').parse_next(input)?.is_some();
+    // An escaped `/` ending the list is dropped, as the closing one would be
+    let pattern = match is_closed {
+        true => pattern,
+        false => pattern.strip_suffix(b"/").unwrap_or(pattern),
+    };
+    Ok((pattern, is_closed))
 }
 
 /// What one element of a variable list does to the rule's variables.
@@ -476,5 +507,37 @@ mod tests {
         );
         // Argument names are case-sensitive
         assert_eq!(keys("ARGS:/^Foo$/", &tx), ["Foo"]);
+    }
+
+    #[test]
+    fn test_regex_keys_quoted_or_holding_a_pipe() {
+        let mut tx = crate::transaction::Transaction::new("test");
+        tx.args_mut().add("id_1", "1");
+        tx.args_mut().add("name", "2");
+
+        assert_eq!(keys("ARGS:'/^id_/'", &tx), ["id_1"]);
+        assert_eq!(keys("ARGS:/a|e/|ARGS_NAMES", &tx), ["id_1", "name", "name"]);
+    }
+
+    #[test]
+    fn test_parse_path_keys() {
+        let vars = parse_variables("XML:/*|XML://@*|JSON:a.b").unwrap();
+        assert_eq!(vars.len(), 3);
+    }
+
+    #[test]
+    fn test_parse_last_character_belongs_to_the_last_variable() {
+        let err = parse_variables("ARGS|ARGS:").unwrap_err();
+        assert!(
+            err.message.contains("invalid variable name 'ARGS:'"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_parse_unclosed_quote() {
+        let err = parse_variables("ARGS:'/a/|TX").unwrap_err();
+        assert_eq!(err.message, "unclosed quote: \"a\"");
     }
 }

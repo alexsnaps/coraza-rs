@@ -8,6 +8,11 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
+use winnow::combinator::{alt, delimited, repeat};
+use winnow::error::EmptyError;
+use winnow::prelude::*;
+use winnow::token::{any, take_till};
+
 use crate::RulePhase;
 use crate::actions::{Action, ActionType, RuleMetadata};
 use crate::operators::OperatorContext;
@@ -56,26 +61,24 @@ pub(crate) fn compile_sec_rule_in(
     context: &OperatorContext<'_>,
     defaults: &DefaultActions,
 ) -> CompileResult<Rule> {
-    // Parse the three components: VARIABLES OPERATOR ACTIONS
-    let (vars, operator, actions) = parse_rule_with_operator(input)?;
+    let RuleArguments {
+        variables: vars,
+        operator,
+        actions,
+    } = RuleArguments::parse(input)?;
 
     // Parse variables
-    let variable_specs = parse_variables(&vars)
+    let variable_specs = parse_variables(vars)
         .map_err(|e| CompileError::new(format!("failed to parse variables '{}': {}", vars, e)))?;
 
     // Parse operator
-    let rule_operator = parse_operator_in(&operator, context).map_err(|e| {
+    let rule_operator = parse_operator_in(operator, context).map_err(|e| {
         CompileError::new(format!("failed to parse operator '{}': {}", operator, e))
     })?;
 
-    // Parse actions (if any)
-    let parsed_actions = if actions.is_empty() {
-        Vec::new()
-    } else {
-        parse_actions(&actions).map_err(|e| {
-            CompileError::new(format!("failed to parse actions '{}': {}", actions, e))
-        })?
-    };
+    // Parse actions (none if empty)
+    let parsed_actions = parse_actions(actions)
+        .map_err(|e| CompileError::new(format!("failed to parse actions '{}': {}", actions, e)))?;
 
     // Build rule
     let mut rule = Rule::new();
@@ -301,15 +304,7 @@ impl DefaultActions {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn compile_sec_marker(input: &str) -> CompileResult<Rule> {
-    let mut label = input.trim();
-
-    // Strip surrounding quotes if present
-    if (label.starts_with('"') && label.ends_with('"'))
-        || (label.starts_with('\'') && label.ends_with('\''))
-    {
-        label = &label[1..label.len() - 1];
-    }
-
+    let label = maybe_remove_quotes(input.trim());
     if label.is_empty() {
         return Err(CompileError::new("SecMarker requires a label".to_string()));
     }
@@ -324,161 +319,122 @@ pub fn compile_sec_marker(input: &str) -> CompileResult<Rule> {
     Ok(rule)
 }
 
-/// Parse a SecRule with operator into three parts: VARIABLES OPERATOR ACTIONS
-///
-/// Format: `VARIABLES "OPERATOR" "ACTIONS"`
-///
-/// Returns: (variables, operator, actions)
-fn parse_rule_with_operator(data: &str) -> CompileResult<(String, String, String)> {
-    let data = data.trim();
-
-    // Split on first space to get variables
-    let (vars, rest) = data.split_once(' ').ok_or_else(|| {
-        CompileError::new(format!("invalid format for rule with operator: {:?}", data))
-    })?;
-
-    let rest = rest.trim_start();
-
-    // Operator must be quoted
-    if rest.is_empty() || !rest.starts_with('"') {
-        return Err(CompileError::new(format!(
-            "invalid operator for rule with operator: {:?}",
-            data
-        )));
-    }
-
-    // Extract quoted operator
-    let (operator, rest) = cut_quoted_string(rest)?;
-    let operator = maybe_remove_quotes(&operator);
-
-    let rest = rest.trim_start();
-
-    // Actions are optional
-    if rest.is_empty() {
-        return Ok((vars.to_string(), operator.to_string(), String::new()));
-    }
-
-    // Actions must be quoted
-    if rest.len() < 2 || !rest.starts_with('"') || !rest.ends_with('"') {
-        return Err(CompileError::new(format!(
-            "invalid actions for rule with operator: {:?}",
-            data
-        )));
-    }
-
-    let actions = maybe_remove_quotes(rest);
-
-    Ok((vars.to_string(), operator.to_string(), actions.to_string()))
+/// The arguments of a `SecRule`, as written: `VARIABLES "OPERATOR" ["ACTIONS"]`.
+#[derive(Debug, PartialEq, Eq)]
+struct RuleArguments<'a> {
+    variables: &'a str,
+    /// Between the quotes, escapes kept
+    operator: &'a str,
+    /// Between the quotes; empty without actions
+    actions: &'a str,
 }
 
-/// Cut a quoted string from the beginning of input.
-///
-/// Returns: (quoted_string, remaining_input)
-///
-/// Handles escaped quotes: `"value with \" quote"` correctly
-fn cut_quoted_string(s: &str) -> CompileResult<(String, String)> {
-    if s.is_empty() || !s.starts_with('"') {
-        return Err(CompileError::new(format!(
-            "expected quoted string: {:?}",
-            s
-        )));
-    }
+impl<'a> RuleArguments<'a> {
+    /// Splits `data`: VARIABLES runs to the first space, then OPERATOR is double-quoted, a
+    /// backslash escaping the character after it, and ACTIONS takes all that follows, in
+    /// double quotes.
+    fn parse(data: &'a str) -> CompileResult<Self> {
+        let data = data.trim();
+        let invalid = |part: &str| {
+            CompileError::new(format!("invalid {part} for rule with operator: {data:?}"))
+        };
 
-    let bytes = s.as_bytes();
-    let mut previous_escape_count = 0;
-
-    for i in 1..bytes.len() {
-        // Search until first quote that isn't part of an escape sequence
-        if bytes[i] != b'"' {
-            if bytes[i] == b'\\' {
-                previous_escape_count += 1;
-            } else {
-                previous_escape_count = 0;
-            }
-            continue;
+        let (variables, rest) = data.split_once(' ').ok_or_else(|| invalid("format"))?;
+        let rest = rest.trim_start();
+        if !rest.starts_with('"') {
+            return Err(invalid("operator"));
         }
+        let (rest, operator) = double_quoted
+            .parse_peek(rest)
+            .map_err(|_| CompileError::new(format!("expected terminating quote: {:?}", rest)))?;
+        let actions = match rest.trim_start() {
+            "" => "",
+            rest => rest
+                .strip_prefix('"')
+                .and_then(|rest| rest.strip_suffix('"'))
+                .ok_or_else(|| invalid("actions"))?,
+        };
 
-        // If the number of backslashes is odd, it's an escaped quote
-        if previous_escape_count % 2 == 1 {
-            previous_escape_count = 0;
-            continue;
-        }
-
-        // Found unescaped closing quote
-        let quoted = &s[..i + 1];
-        let rest = &s[i + 1..];
-        return Ok((quoted.to_string(), rest.to_string()));
+        Ok(Self {
+            variables,
+            operator,
+            actions,
+        })
     }
+}
 
-    Err(CompileError::new(format!(
-        "expected terminating quote: {:?}",
-        s
-    )))
+/// `"..."`, in which a backslash escapes the character after it; returns what's between
+/// the quotes, escapes kept.
+fn double_quoted<'i>(input: &mut &'i str) -> winnow::Result<&'i str, EmptyError> {
+    let inside = repeat::<_, _, (), _, _>(
+        0..,
+        alt((('\\', any).void(), take_till(1.., ['\\', '"']).void())),
+    );
+    delimited('"', inside.take(), '"').parse_next(input)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_cut_quoted_string_simple() {
-        let (quoted, rest) = cut_quoted_string("\"value\" rest").unwrap();
-        assert_eq!(quoted, "\"value\"");
-        assert_eq!(rest, " rest");
+    /// `(variables, operator, actions)` of `data`.
+    fn split(data: &str) -> CompileResult<(&str, &str, &str)> {
+        RuleArguments::parse(data).map(|args| (args.variables, args.operator, args.actions))
     }
 
     #[test]
-    fn test_cut_quoted_string_with_escaped_quote() {
-        let (quoted, rest) = cut_quoted_string("\"val\\\"ue\" rest").unwrap();
-        assert_eq!(quoted, "\"val\\\"ue\"");
-        assert_eq!(rest, " rest");
+    fn test_double_quoted() {
+        assert_eq!(
+            double_quoted.parse_peek("\"value\" rest"),
+            Ok((" rest", "value"))
+        );
+        assert_eq!(
+            double_quoted.parse_peek("\"val\\\"ue\" rest"),
+            Ok((" rest", "val\\\"ue"))
+        );
+        // An even number of backslashes doesn't escape the quote
+        assert_eq!(double_quoted.parse_peek("\"a\\\\\"b"), Ok(("b", "a\\\\")));
+        assert!(double_quoted.parse_peek("\"unclosed").is_err());
+        assert!(double_quoted.parse_peek("\"unclosed\\\"").is_err());
+        assert!(double_quoted.parse_peek("value\"").is_err());
     }
 
     #[test]
-    fn test_cut_quoted_string_no_closing_quote() {
-        let result = cut_quoted_string("\"unclosed");
-        assert!(result.is_err());
+    fn test_split_rule_arguments() {
+        assert_eq!(
+            split("ARGS \"@rx attack\" \"id:1,deny\""),
+            Ok(("ARGS", "@rx attack", "id:1,deny"))
+        );
+        assert_eq!(split("ARGS \"@rx attack\""), Ok(("ARGS", "@rx attack", "")));
+        assert_eq!(
+            split("ARGS \"@rx \\\"quoted\\\"\" \"id:1\""),
+            Ok(("ARGS", "@rx \\\"quoted\\\"", "id:1"))
+        );
+        assert_eq!(
+            split("ARGS|REQUEST_HEADERS  \t\"@rx attack\"\t\"id:1\""),
+            Ok(("ARGS|REQUEST_HEADERS", "@rx attack", "id:1"))
+        );
     }
 
     #[test]
-    fn test_cut_quoted_string_no_opening_quote() {
-        let result = cut_quoted_string("value\"");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_rule_with_operator_simple() {
-        let (vars, op, acts) =
-            parse_rule_with_operator("ARGS \"@rx attack\" \"id:1,deny\"").unwrap();
-        assert_eq!(vars, "ARGS");
-        assert_eq!(op, "@rx attack");
-        assert_eq!(acts, "id:1,deny");
-    }
-
-    #[test]
-    fn test_parse_rule_with_operator_no_actions() {
-        let (vars, op, acts) = parse_rule_with_operator("ARGS \"@rx attack\"").unwrap();
-        assert_eq!(vars, "ARGS");
-        assert_eq!(op, "@rx attack");
-        assert_eq!(acts, "");
-    }
-
-    #[test]
-    fn test_parse_rule_with_operator_escaped_quote_in_operator() {
-        let (vars, op, acts) =
-            parse_rule_with_operator("ARGS \"@rx \\\"quoted\\\"\" \"id:1\"").unwrap();
-        assert_eq!(vars, "ARGS");
-        assert_eq!(op, "@rx \\\"quoted\\\"");
-        assert_eq!(acts, "id:1");
-    }
-
-    #[test]
-    fn test_parse_rule_with_operator_multiple_variables() {
-        let (vars, op, acts) =
-            parse_rule_with_operator("ARGS|REQUEST_HEADERS \"@rx attack\" \"id:1\"").unwrap();
-        assert_eq!(vars, "ARGS|REQUEST_HEADERS");
-        assert_eq!(op, "@rx attack");
-        assert_eq!(acts, "id:1");
+    fn test_split_rule_arguments_errors() {
+        let message = |data| split(data).unwrap_err().message;
+        assert_eq!(
+            message("ARGS"),
+            "invalid format for rule with operator: \"ARGS\""
+        );
+        assert_eq!(
+            message("ARGS @rx"),
+            "invalid operator for rule with operator: \"ARGS @rx\""
+        );
+        assert_eq!(
+            message("ARGS  \"@rx"),
+            "expected terminating quote: \"\\\"@rx\""
+        );
+        assert_eq!(
+            message("ARGS \"@rx\" id:1"),
+            "invalid actions for rule with operator: \"ARGS \\\"@rx\\\" id:1\""
+        );
     }
 
     #[test]
@@ -507,6 +463,13 @@ mod tests {
     fn test_compile_sec_marker_empty() {
         let result = compile_sec_marker("");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_compile_sec_marker_lone_quote() {
+        // Not a pair of quotes around the label, which is the quote
+        let rule = compile_sec_marker("\"").unwrap();
+        assert_eq!(rule.metadata().sec_mark.as_deref(), Some("\""));
     }
 
     #[test]
