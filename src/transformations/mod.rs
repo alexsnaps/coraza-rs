@@ -13,6 +13,7 @@
 pub mod complex;
 mod encoding;
 pub mod escape;
+mod html_entities;
 mod simple;
 mod unicode_bestfit;
 

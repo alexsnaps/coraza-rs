@@ -330,6 +330,12 @@ None of these is used by CRS v4.30.0.
   for plain paths, did nothing, nor would any exclusion written this way.
   - Done: as in Go Coraza, a rule (and its chain's links, under its id) leaves out the keys removed from it, also
     when counting (`&ARGS`). The key can be a `/regex/`, as in Go; names and patterns match whatever the key's case.
+- [x] **`t:htmlEntityDecode` gave up on a value at its first problem.** Found by the FTW tests (941110-9,
+  944150-22, 944151-22): the `htmlescape` crate rejects a whole value for one unterminated or unknown reference
+  (`&lt;script&gt` ends without `;`), and knows HTML4's names only (`&lcub;` is HTML5), so nothing was decoded.
+  - Done: references are decoded as Go Coraza decodes them, with Go's `html.UnescapeString`, ported with its table
+    of HTML5 names (`transformations/html_entities.rs`); `htmlescape` is no longer a dependency. Go's
+    transformation tests still pass in full.
 - [ ] **Run CRS v4.30.0's FTW tests and record the pass rate.** Not run yet; `ftw-runner/` drives
   `examples/ftw_server_async.rs`.
   - Go Coraza's CI runs all 5,260 tests (`testing/coreruleset`). It ignores 7 (`.ftw.yml`) and changes the expected

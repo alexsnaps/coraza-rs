@@ -8,7 +8,9 @@ use super::TransformationResult;
 /// HTML entity decoding transformation.
 ///
 /// Decodes HTML entities (both named entities like `&lt;` and numeric entities
-/// like `&#60;` or `&#x3C;`) into their corresponding characters.
+/// like `&#60;` or `&#x3C;`) into their corresponding characters, as Go Coraza does with
+/// Go's `html.UnescapeString`: HTML5's names, legacy ones (`&lt`) also without `;`, and
+/// anything that isn't a reference left as it is.
 ///
 /// # Arguments
 ///
@@ -18,7 +20,7 @@ use super::TransformationResult;
 ///
 /// Returns `(output, changed)` where:
 /// - `output` is the decoded string
-/// - `changed` is `true` if any entities were decoded, `false` otherwise
+/// - `changed` is `true` if the output's length differs, as Go Coraza reports it
 ///
 /// # Examples
 ///
@@ -35,18 +37,14 @@ use super::TransformationResult;
 /// let (result, changed, _) = html_entity_decode(b"&#60;&#x3E;");
 /// assert_eq!(result, b"<>");
 /// assert!(changed);
+///
+/// let (result, changed, _) = html_entity_decode(b"&lcub;&gt");
+/// assert_eq!(result, b"{>");
+/// assert!(changed);
 /// ```
 pub fn html_entity_decode(input: &[u8]) -> TransformationResult {
-    let mut decoded = Vec::with_capacity(input.len());
-    for chunk in input.utf8_chunks() {
-        let text = chunk.valid();
-        match htmlescape::decode_html(text) {
-            Ok(text) => decoded.extend_from_slice(text.as_bytes()),
-            Err(_) => decoded.extend_from_slice(text.as_bytes()),
-        }
-        decoded.extend_from_slice(chunk.invalid());
-    }
-    let changed = decoded != input;
+    let decoded = super::html_entities::unescape(input);
+    let changed = decoded.len() != input.len();
     (decoded, changed, None)
 }
 
