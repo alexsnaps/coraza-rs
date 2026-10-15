@@ -256,8 +256,11 @@ impl Rule {
     /// A rule without an operator (SecAction, SecMarker) always matches once.
     fn match_values(&self, tx: &mut Transaction) -> Vec<MatchData> {
         let Some(operator) = &self.operator else {
+            // As in Go Coraza, an operator-less rule matches an empty, unknown variable
+            let matched = MatchData::new_empty();
+            tx.record_matched_variable(&matched);
             execute_nondisruptive_actions(&self.actions, &self.metadata, tx);
-            return vec![MatchData::new_empty()];
+            return vec![matched];
         };
 
         // Operators store regex groups in TX.0-TX.9 only for rules with `capture`
@@ -280,12 +283,11 @@ impl Rule {
 
                 for value in values {
                     if operator.evaluate(Some(tx), &value) {
-                        matched_values.push(MatchData::new(
-                            var_match.variable,
-                            var_match.key.clone(),
-                            value,
-                        ));
+                        let matched =
+                            MatchData::new(var_match.variable, var_match.key.clone(), value);
+                        tx.record_matched_variable(&matched);
                         execute_nondisruptive_actions(&self.actions, &self.metadata, tx);
+                        matched_values.push(matched);
                     }
                 }
             }

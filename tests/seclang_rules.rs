@@ -843,3 +843,22 @@ fn xml_is_the_parsed_request_xml() {
         assert_eq!(interruption.map(|i| i.rule_id), rule_id, "{body}");
     }
 }
+
+#[test]
+fn matched_variables_describe_the_matches_of_the_current_rule() {
+    let waf = waf(r#"
+        SecRule ARGS "@rx ^evil" "id:1,phase:1,pass,setvar:tx.var=%{MATCHED_VAR},setvar:tx.name=%{MATCHED_VAR_NAME},chain"
+            SecRule MATCHED_VARS_NAMES "@streq ARGS:q" "chain"
+            SecRule MATCHED_VARS "@rx ^evil" "setvar:tx.chained=1"
+        SecRule MATCHED_VARS "@rx ." "id:2,phase:1,pass,setvar:tx.leaked=1"
+    "#);
+
+    let mut tx = request_with_arg(&waf, "q", "evil");
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "var").as_deref(), Some("evil"));
+    assert_eq!(tx_var(&tx, "name").as_deref(), Some("ARGS:q"));
+    assert_eq!(tx_var(&tx, "chained").as_deref(), Some("1"));
+    // MATCHED_VARS starts empty for each rule
+    assert_eq!(tx_var(&tx, "leaked"), None);
+}

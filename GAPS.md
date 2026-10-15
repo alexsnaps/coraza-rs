@@ -119,8 +119,12 @@ naming them expands to nothing. CRS v4.30.0 uses the ones below.
 - [x] **`XML`.** 354 uses, as `XML:/*` and `XML://@*` in most request rules. In Go it is the same collection as
   `REQUEST_XML`, which the XML body processor fills.
   - Done: `XML` reads `REQUEST_XML`.
-- [ ] **`MATCHED_VAR`, `MATCHED_VAR_NAME`, `MATCHED_VARS` and `MATCHED_VARS_NAMES`.** Mostly in `logdata`, but 13
+- [x] **`MATCHED_VAR`, `MATCHED_VAR_NAME`, `MATCHED_VARS` and `MATCHED_VARS_NAMES`.** Mostly in `logdata`, but 13
   chained rules inspect `MATCHED_VAR(S)`.
+  - Done: as in Go, each value a rule or chain link matches sets `MATCHED_VAR` and `MATCHED_VAR_NAME` (`ARGS:id`)
+    and joins `MATCHED_VARS` before the rule's actions run; `MATCHED_VARS` is emptied before each rule, so a chain
+    sees its parent's matches. `MATCHED_VARS_NAMES` is the keys of `MATCHED_VARS`, through a new names view
+    (`VariableCollection::Names`) that the next item reuses.
 - [ ] **The names variables:** `ARGS_NAMES` (190 uses), `REQUEST_COOKIES_NAMES` (165), `REQUEST_HEADERS_NAMES`,
   `ARGS_GET_NAMES`, and the unused `ARGS_POST_NAMES` and `RESPONSE_HEADERS_NAMES`.
 - [ ] **`REQBODY_PROCESSOR`, `ARGS_COMBINED_SIZE`, `UNIQUE_ID` and `MULTIPART_INVALID_QUOTING`.** `REQBODY_PROCESSOR`

@@ -195,11 +195,18 @@ impl VariableSpec {
             return Vec::new();
         };
 
+        let select = |map: &crate::collection::Map| match &self.key {
+            Some(VariableKey::Regex(rx)) => map.find_regex(rx),
+            Some(VariableKey::String(key)) => map.find_string(key),
+            None => map.find_all(),
+        };
         // Extract matches based on key type; single-value variables have no keys
         let mut matches = match (collection, &self.key) {
-            (VariableCollection::Map(map), Some(VariableKey::Regex(rx))) => map.find_regex(rx),
-            (VariableCollection::Map(map), Some(VariableKey::String(key))) => map.find_string(key),
-            (VariableCollection::Map(map), None) => map.find_all(),
+            (VariableCollection::Map(map), _) => select(map),
+            (VariableCollection::Names(variable, map), _) => select(map)
+                .into_iter()
+                .map(|m| MatchData::new(variable, m.key.clone(), m.key))
+                .collect(),
             (VariableCollection::Single(single), None) => single.find_all(),
             (VariableCollection::Single(_), Some(_)) => Vec::new(),
         };

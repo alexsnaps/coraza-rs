@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::RuleVariable;
 use crate::actions::AllowType;
 use crate::body_processors::{BodyProcessorKind, BodyProcessorOptions};
-use crate::collection::{Map, Single};
+use crate::collection::{Map, MatchData, Single};
 use crate::config::WafConfig;
 use crate::rules::RuleGroup;
 use crate::types::{AuditEngineStatus, AuditLogPart, AuditLogParts, RuleEngineStatus, RulePhase};
@@ -72,7 +72,8 @@ pub struct Interruption {
     pub data: String,
 }
 
-/// The data behind one rule variable in a transaction: a single value or a key-value map.
+/// The data behind one rule variable in a transaction: a single value, a key-value map,
+/// or the keys of a map.
 ///
 /// `S` and `M` are `&Single`/`&Map` or their `&mut` forms.
 #[derive(Debug)]
@@ -81,6 +82,9 @@ pub enum VariableCollection<S, M> {
     Single(S),
     /// A variable with values selected by key, such as `ARGS`
     Map(M),
+    /// The keys of a map, as variable `.0`, such as `ARGS_NAMES`: each value of the map
+    /// stands for its key, which is also the value
+    Names(RuleVariable, M),
 }
 
 /// Maps each rule variable to the transaction field that holds it; `$borrow` is `&` or
@@ -88,7 +92,7 @@ pub enum VariableCollection<S, M> {
 /// compile here until it is mapped to a field or listed as not populated.
 macro_rules! variable_storage {
     ($tx:expr, $variable:expr, $($borrow:tt)+) => {{
-        use VariableCollection::{Map, Single};
+        use VariableCollection::{Map, Names, Single};
         match $variable {
             RuleVariable::Args => Some(Map($($borrow)+ $tx.args)),
             RuleVariable::ArgsGet => Some(Map($($borrow)+ $tx.args_get)),
@@ -106,6 +110,12 @@ macro_rules! variable_storage {
             RuleVariable::ResponseArgs => Some(Map($($borrow)+ $tx.response_args)),
             RuleVariable::ResponseXML => Some(Map($($borrow)+ $tx.response_xml)),
             RuleVariable::TX => Some(Map($($borrow)+ $tx.tx)),
+            RuleVariable::MatchedVars => Some(Map($($borrow)+ $tx.matched_vars)),
+            RuleVariable::MatchedVarsNames => {
+                Some(Names(RuleVariable::MatchedVarsNames, $($borrow)+ $tx.matched_vars))
+            }
+            RuleVariable::MatchedVar => Some(Single($($borrow)+ $tx.matched_var)),
+            RuleVariable::MatchedVarName => Some(Single($($borrow)+ $tx.matched_var_name)),
             RuleVariable::RequestURI => Some(Single($($borrow)+ $tx.request_uri)),
             RuleVariable::RequestMethod => Some(Single($($borrow)+ $tx.request_method)),
             RuleVariable::RemoteAddr => Some(Single($($borrow)+ $tx.remote_addr)),
@@ -160,8 +170,6 @@ macro_rules! variable_storage {
             | RuleVariable::ArgsCombinedSize
             | RuleVariable::FullRequestLength
             | RuleVariable::InboundDataError
-            | RuleVariable::MatchedVar
-            | RuleVariable::MatchedVarName
             | RuleVariable::MultipartDataAfter
             | RuleVariable::OutboundDataError
             | RuleVariable::RemoteHost
@@ -174,8 +182,6 @@ macro_rules! variable_storage {
             | RuleVariable::FilesTmpContent
             | RuleVariable::MultipartFilename
             | RuleVariable::MultipartName
-            | RuleVariable::MatchedVarsNames
-            | RuleVariable::MatchedVars
             | RuleVariable::Geo
             | RuleVariable::RequestCookiesNames
             | RuleVariable::ArgsNames
@@ -392,6 +398,16 @@ pub struct Transaction {
     /// TX - Transaction variables (created with setvar, etc.)
     tx: Map,
 
+    /// MATCHED_VAR - The value of the latest match
+    matched_var: Single,
+
+    /// MATCHED_VAR_NAME - The variable of the latest match, as `ARGS:id`
+    matched_var_name: Single,
+
+    /// MATCHED_VARS - The matches of the rule being evaluated, chain included, by
+    /// variable name; emptied before each rule
+    matched_vars: Map,
+
     // ===== CTL-Modifiable Settings =====
     /// Rule engine status (controlled by ctl:ruleEngine)
     pub(crate) rule_engine: RuleEngineStatus,
@@ -574,6 +590,9 @@ impl Transaction {
             response_args: Map::new_case_sensitive(RuleVariable::ResponseArgs),
             response_xml: Map::new_case_sensitive(RuleVariable::ResponseXML),
             tx: Map::new(RuleVariable::TX),
+            matched_var: Single::new(RuleVariable::MatchedVar),
+            matched_var_name: Single::new(RuleVariable::MatchedVarName),
+            matched_vars: Map::new(RuleVariable::MatchedVars),
             rule_engine: RuleEngineStatus::On,
             request_body_access: true,
             request_body_limit: 131072, // 128KB default
@@ -649,6 +668,25 @@ impl Transaction {
     /// whether it triggers a disruptive action.
     pub(crate) fn record_match(&mut self, matched: MatchedRule) {
         self.matched_rules.push(matched);
+    }
+
+    /// Records a value a rule (or chain link) matched, before its actions run: in
+    /// MATCHED_VAR, MATCHED_VAR_NAME (`ARGS:id`, or `ARGS` without a key) and
+    /// MATCHED_VARS.
+    pub(crate) fn record_matched_variable(&mut self, matched: &MatchData) {
+        let name = if matched.key.is_empty() {
+            matched.variable.name().to_string()
+        } else {
+            format!("{}:{}", matched.variable.name(), matched.key)
+        };
+        self.matched_vars.add(&name, &matched.value);
+        self.matched_var.set(matched.value.as_str());
+        self.matched_var_name.set(name);
+    }
+
+    /// Empties MATCHED_VARS, before a rule is evaluated.
+    pub(crate) fn reset_matched_vars(&mut self) {
+        self.matched_vars.reset();
     }
 
     /// The data a rule variable reads in this transaction, or `None` for a variable
@@ -1664,6 +1702,9 @@ impl Transaction {
         match (self.collection(variable)?, key) {
             (VariableCollection::Single(single), None) => Some(single.get().to_string()),
             (VariableCollection::Map(map), Some(key)) => map.get(key).first().cloned(),
+            (VariableCollection::Names(_, map), Some(key)) => {
+                (!map.get(key).is_empty()).then(|| key.to_string())
+            }
             _ => None,
         }
     }

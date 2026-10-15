@@ -322,7 +322,7 @@ impl RuleGroup {
                 continue;
             }
 
-            // Evaluate the rule
+            tx.reset_matched_vars();
             let _matches = rule.evaluate(tx, rule_engine_on);
         }
 
