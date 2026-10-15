@@ -244,7 +244,9 @@ None of these is used by CRS v4.30.0.
 
 ## 6. Measure
 
-- [ ] **Load CRS with nothing skipped.** Re-run the load check above until `Parser::skipped()` is empty.
+- [x] **Load CRS with nothing skipped.** Re-run the load check above until `Parser::skipped()` is empty.
+  - Done: CRS v4.30.0 with Go's `coraza.conf-recommended` and `crs-setup.conf.example` loads with nothing
+    skipped (709 `SecRule`/`SecAction` directives), as of 1.6; checked again at `420abaf`.
 - [ ] **Run CRS v4.30.0's FTW tests and record the pass rate.** Not run yet; `ftw-runner/` drives
   `examples/ftw_server_async.rs`.
   - Go Coraza's CI runs all 5,260 tests (`testing/coreruleset`). It ignores 7 (`.ftw.yml`) and changes the expected
