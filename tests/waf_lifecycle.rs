@@ -30,10 +30,12 @@ fn test_waf_creation_with_default_config() {
 
 #[test]
 fn test_waf_creation_with_custom_config() {
-    let config = WafConfig::new()
-        .with_rule_engine(RuleEngineStatus::DetectionOnly)
-        .with_request_body_limit(1048576)
-        .with_response_body_limit(524288);
+    let config = WafConfig {
+        rule_engine: RuleEngineStatus::DetectionOnly,
+        request_body_limit: 1048576,
+        response_body_limit: 524288,
+        ..WafConfig::default()
+    };
 
     let waf = Waf::new(config).expect("Failed to create WAF");
     let tx = waf.new_transaction();
@@ -43,9 +45,11 @@ fn test_waf_creation_with_custom_config() {
 
 #[test]
 fn test_waf_config_inheritance_to_transactions() {
-    let config = WafConfig::new()
-        .with_rule_engine(RuleEngineStatus::Off)
-        .with_request_body_limit(2097152);
+    let config = WafConfig {
+        rule_engine: RuleEngineStatus::Off,
+        request_body_limit: 2097152,
+        ..WafConfig::default()
+    };
 
     let waf = Waf::new(config).expect("Failed to create WAF");
 
@@ -59,7 +63,10 @@ fn test_waf_config_inheritance_to_transactions() {
 
 #[test]
 fn test_waf_invalid_config_rejected() {
-    let config = WafConfig::new().with_request_body_limit(-1);
+    let config = WafConfig {
+        request_body_limit: -1,
+        ..WafConfig::default()
+    };
 
     let result = Waf::new(config);
     assert!(result.is_err(), "Invalid config should be rejected");
@@ -333,7 +340,10 @@ fn test_transaction_variables_populated() {
 
 #[test]
 fn test_waf_config_immutable_after_creation() {
-    let config = WafConfig::new().with_rule_engine(RuleEngineStatus::DetectionOnly);
+    let config = WafConfig {
+        rule_engine: RuleEngineStatus::DetectionOnly,
+        ..WafConfig::default()
+    };
 
     let waf = Waf::new(config).expect("Failed to create WAF");
 
@@ -344,8 +354,14 @@ fn test_waf_config_immutable_after_creation() {
 
 #[test]
 fn test_multiple_wafs_independent() {
-    let config1 = WafConfig::new().with_rule_engine(RuleEngineStatus::On);
-    let config2 = WafConfig::new().with_rule_engine(RuleEngineStatus::Off);
+    let config1 = WafConfig {
+        rule_engine: RuleEngineStatus::On,
+        ..WafConfig::default()
+    };
+    let config2 = WafConfig {
+        rule_engine: RuleEngineStatus::Off,
+        ..WafConfig::default()
+    };
 
     let waf1 = Waf::new(config1).expect("Failed to create WAF1");
     let waf2 = Waf::new(config2).expect("Failed to create WAF2");

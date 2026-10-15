@@ -23,12 +23,14 @@ fn main() {
 
     // Step 1: Create WAF with configuration
     println!("📝 Step 1: Creating WAF with configuration...");
-    let config = WafConfig::new()
-        .with_rule_engine(RuleEngineStatus::On)
-        .with_request_body_access(true)
-        .with_response_body_access(true)
-        .with_request_body_limit(1048576) // 1MB
-        .with_web_app_id("demo-app".to_string());
+    let config = WafConfig {
+        rule_engine: RuleEngineStatus::On,
+        request_body_access: true,
+        response_body_access: true,
+        request_body_limit: 1048576, // 1MB
+        web_app_id: "demo-app".to_string(),
+        ..WafConfig::default()
+    };
 
     let mut waf = Waf::new(config).expect("Failed to create WAF");
     println!("✅ WAF created with configuration\n");

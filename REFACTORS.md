@@ -8,15 +8,19 @@ probed bugs.
 
 ## 1. One config type, one way from SecLang to a `Waf`
 
-- [ ] **Merge the two `WafConfig` types.**
+- [x] **Merge the two `WafConfig` types.**
   - `config::WafConfig` (`src/config.rs:32`, `with_*` builder) and `seclang::WafConfig` (`src/seclang/waf_config.rs:39`,
     public fields) model the same thing with different defaults: rule engine `On` (`config.rs:105`) vs `Off`
     (`waf_config.rs:114`).
   - `tests/e2e_seclang.rs:19` exists only to copy 9 of the seclang config's 23 fields across.
   - Only 5 of `config::WafConfig`'s 20 fields reach a `Transaction` (`src/waf.rs:167`); the rest are stored and at
     most validated. Keep only fields the engine reads.
-- [ ] **Merge the two `AuditEngineStatus` enums.** `coraza::AuditEngineStatus` (`src/types/waf.rs:17`) and
+  - Done: one plain-data `config::WafConfig` (public fields, `Default` with the Go defaults). Kept every field a
+    SecLang directive sets, so directives aren't silently dropped; removed the fields nothing sets or reads
+    (`response_body_mime_types`, `audit_log_parts`, `audit_log_format`, `argument_separator`, `tmp_dir`).
+- [x] **Merge the two `AuditEngineStatus` enums.** `coraza::AuditEngineStatus` (`src/types/waf.rs:17`) and
   `coraza::seclang::AuditEngineStatus` (`src/seclang/waf_config.rs:13`) are distinct types **(probe)**.
+  - Done with the config merge: the seclang copy went with `seclang::WafConfig`.
 - [ ] **Make `seclang::Parser` compile rules.** It handles no `SecRule`/`SecAction`/`SecMarker`, so
   `examples/ftw_server.rs:281` and `examples/ftw_server_async.rs:273` each carry a second SecLang reader
   (`process_lines`, `parse_directive`). The two already differ on line continuations, and `ftw_server.rs` never calls

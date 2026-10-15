@@ -16,8 +16,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 
-use crate::seclang::WafConfig;
-use crate::types::{BodyLimitAction, RuleEngineStatus};
+use crate::config::WafConfig;
+use crate::types::{AuditEngineStatus, BodyLimitAction, RuleEngineStatus};
 
 /// Maximum include recursion depth to prevent DoS attacks
 const MAX_INCLUDE_RECURSION: usize = 100;
@@ -654,14 +654,15 @@ fn directive_sec_debug_log_level(options: &mut DirectiveOptions) -> ParseResult<
         )
     })?;
 
-    options.waf_config.set_debug_log_level(level).map_err(|e| {
-        ParseError::new(
-            e,
+    if level > 9 {
+        return Err(ParseError::new(
+            format!("debug log level must be 0-9, got {}", level),
             options.parser_state.current_line,
             options.parser_state.current_file.clone(),
-        )
-    })?;
+        ));
+    }
 
+    options.waf_config.debug_log_level = level;
     Ok(())
 }
 
@@ -974,23 +975,16 @@ fn directive_sec_audit_engine(options: &mut DirectiveOptions) -> ParseResult<()>
         ));
     }
 
-    use crate::seclang::waf_config::AuditEngineStatus;
-
-    let status = match options.opts.to_lowercase().as_str() {
-        "on" => AuditEngineStatus::On,
-        "off" => AuditEngineStatus::Off,
-        "relevantonly" => AuditEngineStatus::RelevantOnly,
-        _ => {
-            return Err(ParseError::new(
-                format!(
-                    "invalid SecAuditEngine value: {} (expected On, Off, or RelevantOnly)",
-                    options.opts
-                ),
-                options.parser_state.current_line,
-                options.parser_state.current_file.clone(),
-            ));
-        }
-    };
+    let status = AuditEngineStatus::from_str(&options.opts).map_err(|_| {
+        ParseError::new(
+            format!(
+                "invalid SecAuditEngine value: {} (expected On, Off, or RelevantOnly)",
+                options.opts
+            ),
+            options.parser_state.current_line,
+            options.parser_state.current_file.clone(),
+        )
+    })?;
 
     options.waf_config.audit_engine = status;
     Ok(())
@@ -1555,7 +1549,7 @@ SecWebAppId production
 
     #[test]
     fn test_sec_audit_engine() {
-        use crate::seclang::AuditEngineStatus;
+        use crate::types::AuditEngineStatus;
 
         let mut parser = Parser::new();
         assert!(parser.from_string("SecAuditEngine On").is_ok());

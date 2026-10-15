@@ -8,7 +8,8 @@
 //! - coraza/internal/seclang/rule_parser_test.go
 //! - coraza/internal/seclang/directives_test.go
 
-use coraza::seclang::{AuditEngineStatus, Parser};
+use coraza::AuditEngineStatus;
+use coraza::seclang::Parser;
 use coraza::types::{BodyLimitAction, RuleEngineStatus};
 use std::fs;
 

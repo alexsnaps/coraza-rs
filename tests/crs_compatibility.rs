@@ -200,8 +200,11 @@ fn test_crs_scanner_detection_rule_loading() {
 #[test]
 fn test_crs_multi_rule_loading() {
     // Test loading multiple CRS-style rules
-    let mut waf = Waf::new(WafConfig::new().with_rule_engine(coraza::types::RuleEngineStatus::On))
-        .expect("Failed to create WAF");
+    let mut waf = Waf::new(WafConfig {
+        rule_engine: coraza::types::RuleEngineStatus::On,
+        ..WafConfig::default()
+    })
+    .expect("Failed to create WAF");
 
     // Scanner detection rule
     let mut scanner_rule = Rule::new()
@@ -650,8 +653,11 @@ fn test_crs_java_deserialization_attack() {
 #[test]
 fn test_crs_comprehensive_rule_loading() {
     // Load rules from multiple CRS categories
-    let mut waf = Waf::new(WafConfig::new().with_rule_engine(coraza::types::RuleEngineStatus::On))
-        .expect("Failed to create WAF");
+    let mut waf = Waf::new(WafConfig {
+        rule_engine: coraza::types::RuleEngineStatus::On,
+        ..WafConfig::default()
+    })
+    .expect("Failed to create WAF");
 
     // Protocol violation (920xxx)
     let mut rule_920170 = Rule::new()

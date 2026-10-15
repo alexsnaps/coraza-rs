@@ -71,9 +71,11 @@ impl std::error::Error for WafError {}
 /// use coraza::config::WafConfig;
 /// use coraza::RuleEngineStatus;
 ///
-/// let config = WafConfig::new()
-///     .with_rule_engine(RuleEngineStatus::On)
-///     .with_request_body_limit(1048576);
+/// let config = WafConfig {
+///     rule_engine: RuleEngineStatus::On,
+///     request_body_limit: 1048576,
+///     ..WafConfig::default()
+/// };
 ///
 /// let waf = Waf::new(config).unwrap();
 ///
@@ -168,11 +170,11 @@ impl Waf {
         let mut tx = Transaction::new(id);
 
         // Inherit configuration from WAF
-        tx.set_rule_engine(self.config.rule_engine());
-        tx.set_request_body_access(self.config.request_body_access());
-        tx.set_request_body_limit(self.config.request_body_limit());
-        tx.set_response_body_access(self.config.response_body_access());
-        tx.set_response_body_limit(self.config.response_body_limit());
+        tx.set_rule_engine(self.config.rule_engine);
+        tx.set_request_body_access(self.config.request_body_access);
+        tx.set_request_body_limit(self.config.request_body_limit);
+        tx.set_response_body_access(self.config.response_body_access);
+        tx.set_response_body_limit(self.config.response_body_limit);
 
         // Share rules reference for CTL tag/msg-based exclusions
         tx.set_rules(Arc::clone(&self.rules));
@@ -189,10 +191,13 @@ impl Waf {
     /// use coraza::config::WafConfig;
     /// use coraza::RuleEngineStatus;
     ///
-    /// let config = WafConfig::new().with_rule_engine(RuleEngineStatus::DetectionOnly);
+    /// let config = WafConfig {
+    ///     rule_engine: RuleEngineStatus::DetectionOnly,
+    ///     ..WafConfig::default()
+    /// };
     /// let waf = Waf::new(config).unwrap();
     ///
-    /// assert_eq!(waf.config().rule_engine(), RuleEngineStatus::DetectionOnly);
+    /// assert_eq!(waf.config().rule_engine, RuleEngineStatus::DetectionOnly);
     /// ```
     pub fn config(&self) -> &WafConfig {
         &self.config
@@ -542,32 +547,32 @@ impl Waf {
     /// - Valid log levels
     fn validate_config(config: &WafConfig) -> Result<(), ConfigError> {
         // Validate body limits
-        if config.request_body_limit() < 0 {
+        if config.request_body_limit < 0 {
             return Err(ConfigError::new("Request body limit must be non-negative"));
         }
 
-        if config.response_body_limit() < 0 {
+        if config.response_body_limit < 0 {
             return Err(ConfigError::new("Response body limit must be non-negative"));
         }
 
-        if config.request_body_in_memory_limit() < 0 {
+        if config.request_body_in_memory_limit < 0 {
             return Err(ConfigError::new(
                 "Request body in-memory limit must be non-negative",
             ));
         }
 
         // Validate collection timeout
-        if config.collection_timeout() < 0 {
+        if config.collection_timeout < 0 {
             return Err(ConfigError::new("Collection timeout must be non-negative"));
         }
 
         // Validate debug log level
-        if !(0..=9).contains(&config.debug_log_level()) {
+        if config.debug_log_level > 9 {
             return Err(ConfigError::new("Debug log level must be between 0 and 9"));
         }
 
         // Validate argument limit
-        if config.argument_limit() == 0 {
+        if config.argument_limit == 0 {
             return Err(ConfigError::new("Argument limit must be greater than 0"));
         }
 
@@ -597,19 +602,21 @@ mod tests {
     #[test]
     fn test_waf_default() {
         let waf = Waf::default();
-        assert_eq!(waf.config().rule_engine(), RuleEngineStatus::On);
+        assert_eq!(waf.config().rule_engine, RuleEngineStatus::On);
     }
 
     #[test]
     fn test_waf_config_access() {
-        let config = WafConfig::new()
-            .with_rule_engine(RuleEngineStatus::DetectionOnly)
-            .with_request_body_limit(2097152);
+        let config = WafConfig {
+            rule_engine: RuleEngineStatus::DetectionOnly,
+            request_body_limit: 2097152,
+            ..WafConfig::default()
+        };
 
         let waf = Waf::new(config).unwrap();
 
-        assert_eq!(waf.config().rule_engine(), RuleEngineStatus::DetectionOnly);
-        assert_eq!(waf.config().request_body_limit(), 2097152);
+        assert_eq!(waf.config().rule_engine, RuleEngineStatus::DetectionOnly);
+        assert_eq!(waf.config().request_body_limit, 2097152);
     }
 
     #[test]
@@ -618,7 +625,7 @@ mod tests {
         let tx = waf.new_transaction();
 
         // Transaction should inherit WAF config
-        assert_eq!(tx.rule_engine(), waf.config().rule_engine());
+        assert_eq!(tx.rule_engine(), waf.config().rule_engine);
     }
 
     #[test]
@@ -631,12 +638,14 @@ mod tests {
 
     #[test]
     fn test_waf_transaction_inherits_config() {
-        let config = WafConfig::new()
-            .with_rule_engine(RuleEngineStatus::DetectionOnly)
-            .with_request_body_access(true)
-            .with_request_body_limit(1048576)
-            .with_response_body_access(true)
-            .with_response_body_limit(2097152);
+        let config = WafConfig {
+            rule_engine: RuleEngineStatus::DetectionOnly,
+            request_body_access: true,
+            request_body_limit: 1048576,
+            response_body_access: true,
+            response_body_limit: 2097152,
+            ..WafConfig::default()
+        };
 
         let waf = Waf::new(config).unwrap();
         let tx = waf.new_transaction();
@@ -656,7 +665,10 @@ mod tests {
 
     #[test]
     fn test_waf_validate_negative_request_body_limit() {
-        let config = WafConfig::new().with_request_body_limit(-1);
+        let config = WafConfig {
+            request_body_limit: -1,
+            ..WafConfig::default()
+        };
         let result = Waf::new(config);
 
         assert!(result.is_err());
@@ -668,7 +680,10 @@ mod tests {
 
     #[test]
     fn test_waf_validate_negative_response_body_limit() {
-        let config = WafConfig::new().with_response_body_limit(-1);
+        let config = WafConfig {
+            response_body_limit: -1,
+            ..WafConfig::default()
+        };
         let result = Waf::new(config);
 
         assert!(result.is_err());
@@ -680,7 +695,10 @@ mod tests {
 
     #[test]
     fn test_waf_validate_negative_collection_timeout() {
-        let config = WafConfig::new().with_collection_timeout(-1);
+        let config = WafConfig {
+            collection_timeout: -1,
+            ..WafConfig::default()
+        };
         let result = Waf::new(config);
 
         assert!(result.is_err());
@@ -692,7 +710,10 @@ mod tests {
 
     #[test]
     fn test_waf_validate_invalid_debug_log_level() {
-        let config = WafConfig::new().with_debug_log_level(10);
+        let config = WafConfig {
+            debug_log_level: 10,
+            ..WafConfig::default()
+        };
         let result = Waf::new(config);
 
         assert!(result.is_err());
@@ -704,7 +725,10 @@ mod tests {
 
     #[test]
     fn test_waf_validate_zero_argument_limit() {
-        let config = WafConfig::new().with_argument_limit(0);
+        let config = WafConfig {
+            argument_limit: 0,
+            ..WafConfig::default()
+        };
         let result = Waf::new(config);
 
         assert!(result.is_err());
@@ -716,12 +740,14 @@ mod tests {
 
     #[test]
     fn test_waf_validate_valid_config() {
-        let config = WafConfig::new()
-            .with_request_body_limit(1048576)
-            .with_response_body_limit(524288)
-            .with_collection_timeout(3600)
-            .with_debug_log_level(5)
-            .with_argument_limit(500);
+        let config = WafConfig {
+            request_body_limit: 1048576,
+            response_body_limit: 524288,
+            collection_timeout: 3600,
+            debug_log_level: 5,
+            argument_limit: 500,
+            ..WafConfig::default()
+        };
 
         let result = Waf::new(config);
         assert!(result.is_ok());
