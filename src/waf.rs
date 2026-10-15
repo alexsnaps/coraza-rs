@@ -118,19 +118,18 @@ impl Waf {
     /// let waf = Waf::new(config).unwrap();
     /// ```
     pub fn new(config: WafConfig) -> Result<Self, ConfigError> {
-        // Validate configuration
+        Self::with_rules(config, RuleGroup::new())
+    }
+
+    /// Creates a WAF from a configuration and rules listed in file order, linking chained rules.
+    pub(crate) fn with_rules(config: WafConfig, mut rules: RuleGroup) -> Result<Self, ConfigError> {
         Self::validate_config(&config)?;
-
-        // Create empty rule group wrapped in Arc for sharing with transactions
-        let rules = Arc::new(RuleGroup::new());
-
-        // Initialize default actions storage
-        let default_actions = HashMap::new();
+        rules.link_chains();
 
         Ok(Self {
             config,
-            rules,
-            default_actions,
+            rules: Arc::new(rules),
+            default_actions: HashMap::new(),
         })
     }
 

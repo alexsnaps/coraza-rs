@@ -17,7 +17,12 @@ use std::path::Path;
 use std::str::FromStr;
 
 use crate::config::WafConfig;
+use crate::rules::{Rule, RuleGroup};
+use crate::seclang::rule_compiler::{
+    CompileError, compile_sec_action, compile_sec_marker, compile_sec_rule,
+};
 use crate::types::{AuditEngineStatus, BodyLimitAction, RuleEngineStatus};
+use crate::waf::{ConfigError, Waf};
 
 /// Maximum include recursion depth to prevent DoS attacks
 const MAX_INCLUDE_RECURSION: usize = 100;
@@ -71,6 +76,9 @@ pub struct DirectiveOptions<'a> {
 
     /// Mutable reference to WAF configuration
     pub waf_config: &'a mut WafConfig,
+
+    /// Rules compiled so far, in file order
+    pub rules: &'a mut RuleGroup,
 }
 
 /// Parser configuration and state
@@ -88,7 +96,8 @@ pub struct ParserState {
 
 /// SecLang parser
 ///
-/// Parses ModSecurity SecLang directives and compiles them into executable rules.
+/// Parses ModSecurity SecLang directives into a WAF configuration and a set of
+/// compiled rules, then turns both into a [`Waf`] with [`Parser::into_waf`].
 ///
 /// # Example
 ///
@@ -96,15 +105,13 @@ pub struct ParserState {
 /// use coraza::seclang::Parser;
 ///
 /// let mut parser = Parser::new();
+/// parser.from_string(r#"
+///     SecRuleEngine On
+///     SecRule ARGS "@contains attack" "id:1,phase:1,deny,status:403"
+/// "#)?;
 ///
-/// // Parse directives from string
-/// parser.from_string("SecRuleEngine On")?;
-///
-/// // Get the resulting WAF configuration
-/// let config = parser.config();
-///
-/// // Parse from file (when implemented)
-/// // parser.from_file("rules.conf")?;
+/// let waf = parser.into_waf()?;
+/// assert_eq!(waf.rule_count(), 1);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct Parser {
@@ -119,6 +126,15 @@ pub struct Parser {
 
     /// WAF configuration (populated by directives)
     waf_config: WafConfig,
+
+    /// Rules compiled from SecRule, SecAction and SecMarker, in file order
+    rules: RuleGroup,
+
+    /// Whether a failing directive is recorded in `skipped` instead of returned
+    skip_failed: bool,
+
+    /// Directives skipped because they failed, in parse order
+    skipped: Vec<ParseError>,
 }
 
 impl Parser {
@@ -129,6 +145,9 @@ impl Parser {
             include_count: 0,
             directives: HashMap::new(),
             waf_config: WafConfig::new(),
+            rules: RuleGroup::new(),
+            skip_failed: false,
+            skipped: Vec::new(),
         };
 
         // Register built-in directives
@@ -147,8 +166,40 @@ impl Parser {
         &mut self.waf_config
     }
 
+    /// Makes later parsing skip directives that fail, instead of stopping at the first one.
+    ///
+    /// Use this to load a rule set the engine only partly supports. Each skipped
+    /// directive's error is kept, in order, and returned by [`Parser::skipped`].
+    /// A skipped `SecRule` that is part of a chain leaves the rest of its chain loaded.
+    pub fn skip_failed_directives(&mut self) {
+        self.skip_failed = true;
+    }
+
+    /// Errors of the directives skipped so far; empty unless
+    /// [`Parser::skip_failed_directives`] was called.
+    pub fn skipped(&self) -> &[ParseError] {
+        &self.skipped
+    }
+
+    /// Creates a WAF from the parsed configuration and rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] if the parsed configuration is invalid (see [`Waf::new`]).
+    pub fn into_waf(self) -> Result<Waf, ConfigError> {
+        Waf::with_rules(self.waf_config, self.rules)
+    }
+
     /// Register all built-in directives
     fn register_directives(&mut self) {
+        // Rule directives
+        self.directives
+            .insert("secrule".to_string(), directive_sec_rule);
+        self.directives
+            .insert("secaction".to_string(), directive_sec_action);
+        self.directives
+            .insert("secmarker".to_string(), directive_sec_marker);
+
         // Engine configuration directives
         self.directives
             .insert("secruleengine".to_string(), directive_sec_rule_engine);
@@ -401,8 +452,12 @@ impl Parser {
             } else {
                 // Complete line - process it
                 line_buffer.push_str(trimmed);
-                self.evaluate_line(&line_buffer)?;
+                let result = self.evaluate_line(&line_buffer);
                 line_buffer.clear();
+                match result {
+                    Err(e) if self.skip_failed => self.skipped.push(e),
+                    result => result?,
+                }
             }
         }
 
@@ -466,6 +521,7 @@ impl Parser {
                     opts,
                     parser_state: self.state.clone(),
                     waf_config: &mut self.waf_config,
+                    rules: &mut self.rules,
                 };
 
                 func(&mut options).map_err(|e| {
@@ -505,6 +561,37 @@ fn parse_boolean(value: &str) -> Result<bool, String> {
         "off" => Ok(false),
         _ => Err(format!("expected On or Off, got: {}", value)),
     }
+}
+
+/// Adds a compiled rule, reporting compile and duplicate-id errors at the directive's location.
+fn add_rule(options: &mut DirectiveOptions, rule: Result<Rule, CompileError>) -> ParseResult<()> {
+    rule.map_err(|e| e.message)
+        .and_then(|rule| options.rules.add(rule))
+        .map_err(|message| {
+            ParseError::new(
+                message,
+                options.parser_state.current_line,
+                options.parser_state.current_file.clone(),
+            )
+        })
+}
+
+/// SecRule VARIABLES "OPERATOR" "ACTIONS"
+fn directive_sec_rule(options: &mut DirectiveOptions) -> ParseResult<()> {
+    let rule = compile_sec_rule(&options.opts);
+    add_rule(options, rule)
+}
+
+/// SecAction "ACTIONS"
+fn directive_sec_action(options: &mut DirectiveOptions) -> ParseResult<()> {
+    let rule = compile_sec_action(&options.opts);
+    add_rule(options, rule)
+}
+
+/// SecMarker LABEL
+fn directive_sec_marker(options: &mut DirectiveOptions) -> ParseResult<()> {
+    let rule = compile_sec_marker(&options.opts);
+    add_rule(options, rule)
 }
 
 /// SecRuleEngine On|Off|DetectionOnly
@@ -1753,5 +1840,98 @@ SecWebAppId production
         if let Err(e) = result {
             assert!(e.message.contains("failed to read file"));
         }
+    }
+
+    // ===== Rule directives =====
+
+    #[test]
+    fn test_rule_directives_compile_into_waf() {
+        let mut parser = Parser::new();
+        parser
+            .from_string(
+                r#"
+                SecRule ARGS "@contains attack" "id:1,phase:1,deny"
+                SecAction "id:2,phase:1,pass"
+                SecMarker END
+                "#,
+            )
+            .unwrap();
+
+        let waf = parser.into_waf().unwrap();
+        assert_eq!(waf.rule_count(), 3);
+        assert!(waf.find_rule_by_id(1).unwrap().operator().is_some());
+        assert!(waf.find_rule_by_id(2).unwrap().operator().is_none());
+    }
+
+    #[test]
+    fn test_rule_compile_error_reports_location() {
+        let mut parser = Parser::new();
+        let err = parser
+            .from_string("SecRuleEngine On\nSecRule ARGS \"@nosuchop x\" \"id:1\"")
+            .unwrap_err();
+
+        assert_eq!(err.line, 2);
+        assert!(err.message.contains("unknown operator"), "{}", err.message);
+    }
+
+    #[test]
+    fn test_duplicate_rule_id_rejected() {
+        let mut parser = Parser::new();
+        let err = parser
+            .from_string("SecAction \"id:1,pass\"\nSecAction \"id:1,pass\"")
+            .unwrap_err();
+
+        assert_eq!(err.line, 2);
+        assert!(
+            err.message.contains("duplicated rule id 1"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_into_waf_links_chained_rules() {
+        let mut parser = Parser::new();
+        parser
+            .from_string(
+                r#"
+                SecRule ARGS "@contains a" "id:1,phase:1,deny,chain"
+                    SecRule ARGS "@contains b" ""
+                "#,
+            )
+            .unwrap();
+
+        let waf = parser.into_waf().unwrap();
+        assert_eq!(waf.rule_count(), 1);
+        assert!(waf.find_rule_by_id(1).unwrap().chain().is_some());
+    }
+
+    #[test]
+    fn test_skip_failed_directives() {
+        let mut parser = Parser::new();
+        parser.skip_failed_directives();
+        parser
+            .from_string(
+                r#"
+                SecDefaultAction "phase:1,log,pass"
+                SecRule ARGS "@nosuchop x" "id:1"
+                SecRule ARGS "@contains attack" "id:2,phase:1,deny"
+                "#,
+            )
+            .unwrap();
+
+        let lines: Vec<usize> = parser.skipped().iter().map(|e| e.line).collect();
+        assert_eq!(lines, vec![2, 3]);
+        assert_eq!(parser.into_waf().unwrap().rule_count(), 1);
+    }
+
+    #[test]
+    fn test_failed_directive_stops_parsing_by_default() {
+        let mut parser = Parser::new();
+        let result = parser.from_string("SecDefaultAction \"phase:1\"\nSecAction \"id:2,pass\"");
+
+        assert!(result.is_err());
+        assert!(parser.skipped().is_empty());
+        assert_eq!(parser.into_waf().unwrap().rule_count(), 0);
     }
 }

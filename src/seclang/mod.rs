@@ -12,23 +12,21 @@
 //! - Line continuations (`\` at end of line)
 //! - Comments (`#` lines)
 //! - Multi-line backtick blocks for SecDataset
-//! - 66 different directive types (SecRule, SecAction, SecRuleEngine, etc.)
+//! - Rule directives (SecRule, SecAction, SecMarker) and engine configuration directives
 //!
 //! # Example
 //!
 //! ```
 //! use coraza::seclang::Parser;
 //!
-//! // let waf = Waf::new();
-//! // let mut parser = Parser::new(&waf);
-//! //
-//! // // Parse a SecRule directive
-//! // parser.from_string(r#"
-//! //     SecRule ARGS "@rx attack" "id:1,deny,log"
-//! // "#)?;
-//! //
-//! // // Parse from file
-//! // parser.from_file("/etc/coraza/rules.conf")?;
+//! let mut parser = Parser::new();
+//! parser.from_string(r#"
+//!     SecRuleEngine On
+//!     SecRule ARGS "@rx attack" "id:1,phase:1,deny,log"
+//! "#)?;
+//! // or: parser.from_file("/etc/coraza/rules.conf")?;
+//!
+//! let waf = parser.into_waf()?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 

@@ -21,10 +21,13 @@ probed bugs.
 - [x] **Merge the two `AuditEngineStatus` enums.** `coraza::AuditEngineStatus` (`src/types/waf.rs:17`) and
   `coraza::seclang::AuditEngineStatus` (`src/seclang/waf_config.rs:13`) are distinct types **(probe)**.
   - Done with the config merge: the seclang copy went with `seclang::WafConfig`.
-- [ ] **Make `seclang::Parser` compile rules.** It handles no `SecRule`/`SecAction`/`SecMarker`, so
+- [x] **Make `seclang::Parser` compile rules.** It handles no `SecRule`/`SecAction`/`SecMarker`, so
   `examples/ftw_server.rs:281` and `examples/ftw_server_async.rs:273` each carry a second SecLang reader
   (`process_lines`, `parse_directive`). The two already differ on line continuations, and `ftw_server.rs` never calls
   `link_chains()`.
+  - Done: `SecRule`/`SecAction`/`SecMarker` are directives; `Parser::into_waf()` builds the `Waf` and links chains.
+    The examples use the parser. Their skip-and-warn behaviour is kept as an opt-in
+    `Parser::skip_failed_directives()`, so a partly supported CRS still loads.
 - [ ] **Split `Waf` into `WafBuilder` → `Waf`.** `Waf` is builder and runtime at once: 9
   `Arc::get_mut(..).expect("Cannot modify rules after sharing with transactions")` in `src/waf.rs`, and
   `link_chains()` is documented as "MUST be called". `WafBuilder` takes `&mut` with no panics; `build()` links chains
