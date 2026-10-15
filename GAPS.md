@@ -310,6 +310,10 @@ None of these is used by CRS v4.30.0.
   - Done: as in Go, they hold the path of the URL `url.ParseRequestURI` reads, `%`-decoded (`+` stays), or the raw
     path when the URI doesn't parse (`URI_PARSE_ERROR`); an absolute URL's path is its own (`/a` for
     `http://host/a`), and a path ending with `/` is its own basename.
+- [x] **Cookies without `=` were dropped.** Found by the FTW tests (933100-89, 941190-3, 942480-2): Go Coraza keeps
+  `Cookie: 'msdasql'` as a cookie named `'msdasql'` with an empty value.
+  - Done: cookies are parsed as Go does: a pair without `=` is a name; only control characters and spaces are
+    trimmed (U+00A0 stays, as a backend keeps it); a bare `=` is skipped.
 - [ ] **Run CRS v4.30.0's FTW tests and record the pass rate.** Not run yet; `ftw-runner/` drives
   `examples/ftw_server_async.rs`.
   - Go Coraza's CI runs all 5,260 tests (`testing/coreruleset`). It ignores 7 (`.ftw.yml`) and changes the expected

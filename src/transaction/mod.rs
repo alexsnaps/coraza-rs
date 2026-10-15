@@ -1687,18 +1687,21 @@ impl Transaction {
         self.res_body_processor.set(processor.name());
     }
 
-    /// Parse cookie header value and populate REQUEST_COOKIES.
+    /// Parse cookie header value and populate REQUEST_COOKIES, as Go Coraza does: each
+    /// `;`-separated pair is a name and an optional value, without the control
+    /// characters and spaces around them. A pair with neither is skipped.
     fn parse_cookies(&mut self, cookie_header: &str) {
+        // Only what RFC 6265 excludes from names and values: other whitespace
+        // (U+00A0) is kept, as a backend would keep it
+        fn trim(text: &str) -> &str {
+            text.trim_matches(|c: char| c <= ' ' || c == '\x7f')
+        }
         for pair in cookie_header.split(';') {
-            let pair = pair.trim();
-            if pair.is_empty() {
-                continue;
-            }
-
-            if let Some(eq_pos) = pair.find('=') {
-                let key = pair[..eq_pos].trim();
-                let value = pair[eq_pos + 1..].trim();
-                self.request_cookies_mut().add(key, value);
+            let pair = trim(pair);
+            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+            let (name, value) = (trim(name), trim(value));
+            if !name.is_empty() || !value.is_empty() {
+                self.request_cookies.add(name, value);
             }
         }
     }
@@ -2529,6 +2532,36 @@ mod tests {
         // Check ARGS_GET populated
         assert_eq!(tx.args_get().get("q"), vec!["test"]);
         assert_eq!(tx.args_get().get("page"), vec!["2"]);
+    }
+
+    #[test]
+    fn test_cookies_are_parsed_as_go_coraza_does() {
+        let mut tx = Transaction::new("tx");
+        tx.add_request_header(
+            "Cookie",
+            "<?php phpinfo(); ?>=value; 'msdasql'; =; =payload; \x0ba\x0b=x; b=\u{a0}y\u{a0}",
+        );
+        let mut cookies: Vec<(String, String)> = tx
+            .request_cookies
+            .find_all()
+            .into_iter()
+            .map(|cookie| (cookie.key, cookie.value))
+            .collect();
+        cookies.sort();
+        let pair = |name: &str, value: &str| (name.to_string(), value.to_string());
+        assert_eq!(
+            cookies,
+            [
+                // A name without a value is kept; a bare "=" is not
+                pair("", "payload"),
+                pair("'msdasql'", ""),
+                pair("<?php phpinfo()", ""),
+                pair("?>", "value"),
+                // Control characters and spaces are trimmed, not other whitespace
+                pair("a", "x"),
+                pair("b", "\u{a0}y\u{a0}"),
+            ]
+        );
     }
 
     #[test]
