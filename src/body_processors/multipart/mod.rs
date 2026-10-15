@@ -83,6 +83,10 @@ impl BodyProcessor for MultipartBodyProcessor {
                 content_disp.push_str(&format!("; filename=\"{}\"", filename));
             }
             tx.multipart_part_headers.add(&part.name, &content_disp);
+            tx.multipart_name.add(&part.name, &part.name);
+            if let Some(filename) = &part.filename {
+                tx.multipart_filename.add(&part.name, filename);
+            }
 
             // Add Content-Type if present
             if let Some(content_type) = &part.content_type {

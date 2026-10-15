@@ -150,6 +150,9 @@ naming them expands to nothing. CRS v4.30.0 uses the ones below.
     the transaction started, in UTC where Go uses local time. `URLENCODED_ERROR`, `FULL_REQUEST_LENGTH`,
     `DURATION`, `MULTIPART_DATA_AFTER` and `OUTBOUND_DATA_ERROR` are `0`, as Go sets them and (but for the last)
     never changes them.
+  - Done for `ARGS_PATH`, `MULTIPART_NAME` and `MULTIPART_FILENAME`: `Transaction::add_path_argument` (Go's
+    `AddPathRequestArgument`) adds to `ARGS_PATH` and `ARGS` within the argument limit, and the multipart processor
+    records each part's name and file name.
 
 ## 4. Other missing directives
 

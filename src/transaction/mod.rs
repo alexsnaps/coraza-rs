@@ -99,6 +99,9 @@ macro_rules! variable_storage {
             RuleVariable::Args => Some(Map($($borrow)+ $tx.args)),
             RuleVariable::ArgsGet => Some(Map($($borrow)+ $tx.args_get)),
             RuleVariable::ArgsPost => Some(Map($($borrow)+ $tx.args_post)),
+            RuleVariable::ArgsPath => Some(Map($($borrow)+ $tx.args_path)),
+            RuleVariable::MultipartName => Some(Map($($borrow)+ $tx.multipart_name)),
+            RuleVariable::MultipartFilename => Some(Map($($borrow)+ $tx.multipart_filename)),
             RuleVariable::RequestHeaders => Some(Map($($borrow)+ $tx.request_headers)),
             RuleVariable::RequestCookies => Some(Map($($borrow)+ $tx.request_cookies)),
             RuleVariable::ResponseHeaders => Some(Map($($borrow)+ $tx.response_headers)),
@@ -214,10 +217,7 @@ macro_rules! variable_storage {
             | RuleVariable::InboundDataError
             | RuleVariable::RemoteHost
             | RuleVariable::StatusLine
-            | RuleVariable::ArgsPath
             | RuleVariable::FilesTmpContent
-            | RuleVariable::MultipartFilename
-            | RuleVariable::MultipartName
             | RuleVariable::Geo
             | RuleVariable::JSON
             | RuleVariable::AuthType
@@ -277,6 +277,9 @@ pub struct Transaction {
 
     /// POST body parameters
     args_post: Map,
+
+    /// Arguments taken from the URL path by the connector (ARGS_PATH)
+    args_path: Map,
 
     /// Request headers (case-insensitive)
     request_headers: Map,
@@ -387,6 +390,12 @@ pub struct Transaction {
 
     /// MULTIPART_PART_HEADERS - Headers from each multipart part
     pub(crate) multipart_part_headers: Map,
+
+    /// MULTIPART_NAME - The name of each multipart part, by name
+    pub(crate) multipart_name: Map,
+
+    /// MULTIPART_FILENAME - The file name of each multipart file part, by part name
+    pub(crate) multipart_filename: Map,
 
     /// MULTIPART_STRICT_ERROR - Set to "1" when multipart parsing fails
     pub(crate) multipart_strict_error: Single,
@@ -665,6 +674,7 @@ impl Transaction {
             args: Map::new_case_sensitive(RuleVariable::Args),
             args_get: Map::new_case_sensitive(RuleVariable::ArgsGet),
             args_post: Map::new_case_sensitive(RuleVariable::ArgsPost),
+            args_path: Map::new_case_sensitive(RuleVariable::ArgsPath),
             request_headers: Map::new(RuleVariable::RequestHeaders),
             request_cookies: Map::new(RuleVariable::RequestCookies),
             response_headers: Map::new(RuleVariable::ResponseHeaders),
@@ -701,6 +711,8 @@ impl Transaction {
             files_names: Map::new_case_sensitive(RuleVariable::FilesNames),
             files_combined_size: Single::new(RuleVariable::FilesCombinedSize),
             multipart_part_headers: Map::new_case_sensitive(RuleVariable::MultipartPartHeaders),
+            multipart_name: Map::new_case_sensitive(RuleVariable::MultipartName),
+            multipart_filename: Map::new_case_sensitive(RuleVariable::MultipartFilename),
             multipart_strict_error: Single::new(RuleVariable::MultipartStrictError),
             multipart_duplicate_part_header: flag(RuleVariable::MultipartDuplicatePartHeader),
             multipart_invalid_quoting: flag(RuleVariable::MultipartInvalidQuoting),
@@ -1134,6 +1146,16 @@ impl Transaction {
     pub fn add_post_argument(&mut self, key: &str, value: &str) {
         if self.within_argument_limit(self.args_post.value_count()) {
             self.args_post.add(key, value);
+            self.args.add(key, value);
+        }
+    }
+
+    /// Adds an argument the connector took from the URL path (e.g. `/users/{id}`) to
+    /// ARGS_PATH and ARGS, within the argument limit as [`Transaction::add_get_argument`]
+    /// does.
+    pub fn add_path_argument(&mut self, key: &str, value: &str) {
+        if self.within_argument_limit(self.args_path.value_count()) {
+            self.args_path.add(key, value);
             self.args.add(key, value);
         }
     }

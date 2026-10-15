@@ -1023,3 +1023,36 @@ fn time_variables_are_set_when_the_transaction_starts() {
     assert!((0..=6).contains(&get(TimeWday).parse::<u8>().unwrap()));
     assert!(get(TimeYear).parse::<u16>().unwrap() >= 2026);
 }
+
+#[test]
+fn path_arguments_are_in_args_path_and_args() {
+    let waf = waf(r#"
+        SecRule ARGS_PATH:id "@streq 42" "id:1,phase:1,pass,setvar:tx.path=1"
+        SecRule ARGS:id "@streq 42" "id:2,phase:1,pass,setvar:tx.args=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.add_path_argument("id", "42");
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "path").as_deref(), Some("1"));
+    assert_eq!(tx_var(&tx, "args").as_deref(), Some("1"));
+}
+
+#[test]
+fn multipart_part_names_and_filenames_are_variables() {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule MULTIPART_NAME "@streq upload" "id:1,phase:2,pass,setvar:tx.name=1"
+        SecRule MULTIPART_FILENAME:upload "@streq evil.php" "id:2,phase:2,deny,status:403"
+    "#);
+
+    let body = "--b\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"evil.php\"\r\n\r\n<?php\r\n--b--\r\n";
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
+    tx.process_request_headers();
+    let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+
+    assert_eq!(tx_var(&tx, "name").as_deref(), Some("1"));
+    assert_eq!(interruption.map(|i| i.rule_id), Some(2));
+}
