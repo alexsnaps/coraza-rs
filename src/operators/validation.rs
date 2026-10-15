@@ -261,14 +261,6 @@ pub fn validate_byte_range(ranges: &str) -> Result<ValidateByteRange, String> {
 #[derive(Debug, Clone, Copy)]
 pub struct ValidateUrlEncoding;
 
-impl ValidateUrlEncoding {
-    /// Checks if a character is a valid hexadecimal digit.
-    #[inline]
-    fn is_hex_digit(c: u8) -> bool {
-        c.is_ascii_hexdigit()
-    }
-}
-
 impl Operator for ValidateUrlEncoding {
     fn evaluate(&self, _tx: Option<&mut Transaction>, input: &str) -> bool {
         if input.is_empty() {
@@ -290,7 +282,7 @@ impl Operator for ValidateUrlEncoding {
                 let c1 = bytes[i + 1];
                 let c2 = bytes[i + 2];
 
-                if !Self::is_hex_digit(c1) || !Self::is_hex_digit(c2) {
+                if !c1.is_ascii_hexdigit() || !c2.is_ascii_hexdigit() {
                     return true; // Non-hexadecimal characters (violation)
                 }
 

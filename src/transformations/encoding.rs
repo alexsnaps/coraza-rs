@@ -7,7 +7,7 @@
 //! hex, base64, and URL encoding.
 
 use crate::transformations::{TransformationError, TransformationResult};
-use crate::utils::strings::wrap_unsafe;
+use crate::utils::strings::{hex_value, wrap_unsafe};
 use md5::{Digest, Md5};
 use sha1::Sha1;
 
@@ -162,27 +162,16 @@ fn hex_decode_bytes(input: &str) -> Result<Vec<u8>, TransformationError> {
     let mut result = Vec::with_capacity(input.len() / 2);
     let bytes = input.as_bytes();
 
-    for i in (0..bytes.len()).step_by(2) {
-        let high = hex_char_to_value(bytes[i])?;
-        let low = hex_char_to_value(bytes[i + 1])?;
-        result.push((high << 4) | low);
+    let digit = |c: u8| {
+        hex_value(c).ok_or_else(|| {
+            TransformationError::new(format!("invalid hex character: {}", c as char))
+        })
+    };
+    for &[high, low] in bytes.as_chunks::<2>().0 {
+        result.push((digit(high)? << 4) | digit(low)?);
     }
 
     Ok(result)
-}
-
-/// Converts a hex character to its numeric value.
-#[inline]
-fn hex_char_to_value(c: u8) -> Result<u8, TransformationError> {
-    match c {
-        b'0'..=b'9' => Ok(c - b'0'),
-        b'a'..=b'f' => Ok(c - b'a' + 10),
-        b'A'..=b'F' => Ok(c - b'A' + 10),
-        _ => Err(TransformationError::new(format!(
-            "invalid hex character: {}",
-            c as char
-        ))),
-    }
 }
 
 /// URL encodes the input (percent-encoding and space to +).

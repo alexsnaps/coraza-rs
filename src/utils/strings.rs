@@ -40,30 +40,26 @@ pub fn random_string(n: usize) -> String {
     result
 }
 
-/// Returns true if the byte is a valid hexadecimal character (0-9, a-f, A-F).
+/// Value (0-15) of an ASCII hex digit (`0-9`, `a-f`, `A-F`); `None` for any other byte.
 ///
 /// # Examples
 ///
 /// ```
-/// use coraza::utils::strings::valid_hex;
+/// use coraza::utils::strings::hex_value;
 ///
-/// assert!(valid_hex(b'0'));
-/// assert!(valid_hex(b'9'));
-/// assert!(valid_hex(b'a'));
-/// assert!(valid_hex(b'F'));
-/// assert!(!valid_hex(b'g'));
-/// assert!(!valid_hex(b'G'));
-/// assert!(!valid_hex(b' '));
+/// assert_eq!(hex_value(b'7'), Some(7));
+/// assert_eq!(hex_value(b'b'), Some(11));
+/// assert_eq!(hex_value(b'F'), Some(15));
+/// assert_eq!(hex_value(b'g'), None);
 /// ```
-#[inline]
-pub const fn valid_hex(x: u8) -> bool {
-    x.is_ascii_hexdigit()
+pub fn hex_value(digit: u8) -> Option<u8> {
+    char::from(digit).to_digit(16).map(|value| value as u8)
 }
 
 /// Converts a two-character hex string to its byte value.
 ///
 /// Assumes the input is exactly 2 characters and both are valid hex digits.
-/// Use `valid_hex()` to validate inputs first.
+/// Check digits with [`u8::is_ascii_hexdigit`] first.
 ///
 /// # Examples
 ///
@@ -224,23 +220,20 @@ mod tests {
     }
 
     #[test]
-    fn test_valid_hex() {
-        // Valid hex digits
-        assert!(valid_hex(b'0'));
-        assert!(valid_hex(b'9'));
-        assert!(valid_hex(b'a'));
-        assert!(valid_hex(b'f'));
-        assert!(valid_hex(b'A'));
-        assert!(valid_hex(b'F'));
-
-        // Invalid
-        assert!(!valid_hex(b'g'));
-        assert!(!valid_hex(b'G'));
-        assert!(!valid_hex(b'z'));
-        assert!(!valid_hex(b' '));
-        assert!(!valid_hex(b'/'));
-        assert!(!valid_hex(b':'));
-        assert!(!valid_hex(b'@'));
+    fn test_hex_value() {
+        for (digit, value) in [
+            (b'0', 0),
+            (b'9', 9),
+            (b'a', 10),
+            (b'f', 15),
+            (b'A', 10),
+            (b'F', 15),
+        ] {
+            assert_eq!(hex_value(digit), Some(value));
+        }
+        for &digit in b"gGz /:@" {
+            assert_eq!(hex_value(digit), None);
+        }
     }
 
     #[test]

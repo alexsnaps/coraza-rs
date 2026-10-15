@@ -128,7 +128,7 @@ probed bugs.
   `%C3%A9` to `"Ã©"`; `transformations::url_decode` gives `"é"` **(probe)**. `body_processors::urlencoded::parse_query`
   collects into a `HashMap`, losing argument order.
 - [x] **`maybe_remove_quotes` twice:** `src/seclang/action_parser.rs:253` and `src/utils/strings.rs:106`.
-- [ ] **Hex helpers four times:** `src/transformations/escape.rs:446`, `src/transformations/encoding.rs:176`,
+- [x] **Hex helpers four times:** `src/transformations/escape.rs:446`, `src/transformations/encoding.rs:176`,
   `src/operators/validation.rs:267`, `src/utils/strings.rs:59/82`. std has `u8::is_ascii_hexdigit` and
   `char::to_digit(16)`.
 - [ ] **Transformation signature defined twice:** `Transformation` (`src/rules/transformation.rs:37`) and

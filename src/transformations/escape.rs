@@ -3,7 +3,7 @@
 //! This module provides transformations for decoding various escape sequence formats
 //! including C-style, JavaScript, CSS, and URL Unicode escapes.
 
-use crate::utils::strings::{valid_hex, x2c};
+use crate::utils::strings::{hex_value, x2c};
 
 /// C-style escape sequence decoding transformation.
 ///
@@ -88,8 +88,8 @@ fn do_escape_seq_decode(input: &str, pos: usize) -> (String, bool) {
             // Check for hexadecimal escape: \xHH
             if input_bytes[i + 1] == b'x' || input_bytes[i + 1] == b'X' {
                 if i + 3 < input_len
-                    && valid_hex(input_bytes[i + 2])
-                    && valid_hex(input_bytes[i + 3])
+                    && input_bytes[i + 2].is_ascii_hexdigit()
+                    && input_bytes[i + 3].is_ascii_hexdigit()
                 {
                     let hex_byte = x2c(&input[i + 2..i + 4]);
                     result.push(hex_byte);
@@ -201,10 +201,10 @@ fn do_js_decode(input: &str, pos: usize) -> (String, bool) {
             // Check for Unicode escape: \uHHHH
             if i + 5 < input_len
                 && input_bytes[i + 1] == b'u'
-                && valid_hex(input_bytes[i + 2])
-                && valid_hex(input_bytes[i + 3])
-                && valid_hex(input_bytes[i + 4])
-                && valid_hex(input_bytes[i + 5])
+                && input_bytes[i + 2].is_ascii_hexdigit()
+                && input_bytes[i + 3].is_ascii_hexdigit()
+                && input_bytes[i + 4].is_ascii_hexdigit()
+                && input_bytes[i + 5].is_ascii_hexdigit()
             {
                 // Use only the lower byte (last 2 hex digits)
                 let mut byte = x2c(&input[i + 4..i + 6]);
@@ -229,8 +229,8 @@ fn do_js_decode(input: &str, pos: usize) -> (String, bool) {
             if !matched
                 && i + 3 < input_len
                 && input_bytes[i + 1] == b'x'
-                && valid_hex(input_bytes[i + 2])
-                && valid_hex(input_bytes[i + 3])
+                && input_bytes[i + 2].is_ascii_hexdigit()
+                && input_bytes[i + 3].is_ascii_hexdigit()
             {
                 let byte = x2c(&input[i + 2..i + 4]);
                 result.push(byte);
@@ -352,7 +352,7 @@ fn do_css_decode(input: &str, pos: usize) -> String {
 
                 // Count hex digits (1-6)
                 let mut j = 0;
-                while j < 6 && i + j < input_len && valid_hex(input_bytes[i + j]) {
+                while j < 6 && i + j < input_len && input_bytes[i + j].is_ascii_hexdigit() {
                     j += 1;
                 }
 
@@ -363,7 +363,7 @@ fn do_css_decode(input: &str, pos: usize) -> String {
                     match j {
                         1 => {
                             // Single hex digit: convert to value 0-15
-                            result.push(hex_digit_to_byte(input_bytes[i]));
+                            result.push(hex_value(input_bytes[i]).expect("checked hex digit"));
                         }
                         2 | 3 => {
                             // Use last 2 hex digits
@@ -442,15 +442,6 @@ fn do_css_decode(input: &str, pos: usize) -> String {
     String::from_utf8_lossy(&result).into_owned()
 }
 
-/// Converts a single hex digit to its byte value (0-15)
-fn hex_digit_to_byte(hex: u8) -> u8 {
-    if hex >= b'A' {
-        ((hex & 0xdf) - b'A') + 10
-    } else {
-        hex - b'0'
-    }
-}
-
 /// Checks if a byte is CSS whitespace
 fn is_css_whitespace(c: u8) -> bool {
     matches!(c, b' ' | b'\x0C' | b'\n' | b'\t' | b'\r' | b'\x0B')
@@ -513,10 +504,10 @@ fn do_url_decode_uni(input: &str, pos: usize) -> String {
             // Check for IIS Unicode encoding: %uHHHH
             if i + 1 < input_len && (input_bytes[i + 1] == b'u' || input_bytes[i + 1] == b'U') {
                 if i + 5 < input_len
-                    && valid_hex(input_bytes[i + 2])
-                    && valid_hex(input_bytes[i + 3])
-                    && valid_hex(input_bytes[i + 4])
-                    && valid_hex(input_bytes[i + 5])
+                    && input_bytes[i + 2].is_ascii_hexdigit()
+                    && input_bytes[i + 3].is_ascii_hexdigit()
+                    && input_bytes[i + 4].is_ascii_hexdigit()
+                    && input_bytes[i + 5].is_ascii_hexdigit()
                 {
                     // Use only the lower byte (last 2 hex digits)
                     let mut byte = x2c(&input[i + 4..i + 6]);
@@ -542,8 +533,8 @@ fn do_url_decode_uni(input: &str, pos: usize) -> String {
             } else {
                 // Standard URL encoding: %HH
                 if i + 2 < input_len
-                    && valid_hex(input_bytes[i + 1])
-                    && valid_hex(input_bytes[i + 2])
+                    && input_bytes[i + 1].is_ascii_hexdigit()
+                    && input_bytes[i + 2].is_ascii_hexdigit()
                 {
                     result.push(x2c(&input[i + 1..i + 3]));
                     i += 3;
