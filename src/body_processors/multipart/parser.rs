@@ -7,8 +7,6 @@
 //! This implementation follows the Go stdlib mime/multipart closely
 //! for maximum compatibility.
 
-use std::collections::HashMap;
-
 /// Errors that can occur during multipart parsing
 #[derive(Debug)]
 #[allow(dead_code)] // Some variants reserved for future use
@@ -67,12 +65,8 @@ pub struct Part {
     /// Whether the `filename*` parameter is malformed
     pub malformed_filename: bool,
 
-    /// Content-Type of this part, if specified
-    pub content_type: Option<String>,
-
-    /// All headers as key-value pairs (reserved for future use)
-    #[allow(dead_code)]
-    pub headers: HashMap<String, Vec<String>>,
+    /// Its headers, in order: each name as sent, and its value
+    pub headers: Vec<(String, String)>,
 
     /// Whether the part repeats a header, or a parameter of its Content-Disposition
     pub repeats_header: bool,
@@ -183,14 +177,12 @@ fn parse_part(data: &[u8]) -> Result<Part, ParseError> {
     let headers = parse_headers(header_data)?;
 
     let disposition = extract_content_disposition(&headers)?;
-    let repeats_header =
-        disposition.repeats_param || headers.values().any(|values| values.len() > 1);
-
-    // Extract Content-Type
-    let content_type = headers
-        .get("content-type")
-        .and_then(|v| v.first())
-        .map(|s| s.to_string());
+    let repeats_header = disposition.repeats_param
+        || headers.iter().enumerate().any(|(i, (name, _))| {
+            headers[..i]
+                .iter()
+                .any(|(earlier, _)| earlier.eq_ignore_ascii_case(name))
+        });
 
     Ok(Part {
         name: disposition.name,
@@ -198,7 +190,6 @@ fn parse_part(data: &[u8]) -> Result<Part, ParseError> {
         alt_filename: disposition.alt_filename,
         filename_encoding: disposition.filename_encoding,
         malformed_filename: disposition.malformed_extended_filename,
-        content_type,
         headers,
         repeats_header,
         invalid_quoting: disposition.quoted_extended_filename,
@@ -206,9 +197,17 @@ fn parse_part(data: &[u8]) -> Result<Part, ParseError> {
     })
 }
 
-/// Parse headers from header data
-fn parse_headers(data: &[u8]) -> Result<HashMap<String, Vec<String>>, ParseError> {
-    let mut headers = HashMap::new();
+/// The value of the first header named `name`, whatever its case.
+fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(header, _)| header.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str())
+}
+
+/// Parse headers from header data, in order, each name as sent
+fn parse_headers(data: &[u8]) -> Result<Vec<(String, String)>, ParseError> {
+    let mut headers = Vec::new();
     let header_str = String::from_utf8_lossy(data);
 
     for line in header_str.lines() {
@@ -219,10 +218,10 @@ fn parse_headers(data: &[u8]) -> Result<HashMap<String, Vec<String>>, ParseError
 
         // Parse "Key: Value"
         if let Some(colon_pos) = line.find(':') {
-            let key = line[..colon_pos].trim().to_lowercase();
+            let name = line[..colon_pos].trim().to_string();
             let value = line[colon_pos + 1..].trim().to_string();
 
-            headers.entry(key).or_insert_with(Vec::new).push(value);
+            headers.push((name, value));
         }
     }
 
@@ -250,11 +249,9 @@ struct ContentDisposition {
 ///
 /// Example: `form-data; name="field"; filename="file.txt"`
 fn extract_content_disposition(
-    headers: &HashMap<String, Vec<String>>,
+    headers: &[(String, String)],
 ) -> Result<ContentDisposition, ParseError> {
-    let disposition = headers
-        .get("content-disposition")
-        .and_then(|v| v.first())
+    let disposition = header(headers, "content-disposition")
         .ok_or_else(|| ParseError::MalformedHeaders("missing Content-Disposition".to_string()))?;
 
     let params = parse_header_params(disposition);
@@ -529,7 +526,10 @@ file content\r\n\
         assert_eq!(parts.len(), 1);
         assert_eq!(parts[0].name, "file");
         assert_eq!(parts[0].filename, Some("test.txt".to_string()));
-        assert_eq!(parts[0].content_type, Some("text/plain".to_string()));
+        assert_eq!(
+            header(&parts[0].headers, "Content-Type"),
+            Some("text/plain")
+        );
         assert_eq!(parts[0].data, b"file content");
     }
 

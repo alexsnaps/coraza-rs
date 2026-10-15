@@ -320,6 +320,11 @@ None of these is used by CRS v4.30.0.
   pattern in multiline mode (`(?sm)`), ours in `(?s)` only. And a group that didn't take part ended the capture,
   leaving the later `TX.N` unset, where Go sets it empty.
   - Done: all three as in Go. Go captures `TX.0` to `TX.8`; this keeps ModSecurity's `TX.0` to `TX.9`.
+- [x] **`MULTIPART_PART_HEADERS` held two rebuilt headers.** Found by the FTW tests: 922120, which looks for the
+  deprecated `Content-Transfer-Encoding`, never fired, as only `Content-Disposition` (rebuilt from the parsed name
+  and file name) and `Content-Type` were listed.
+  - Done: as in Go Coraza, every header of a part, `Name: value` with the name canonical (`Content-Type` for
+    `CoNtEnT-TyPe`) and the value as sent.
 - [ ] **Run CRS v4.30.0's FTW tests and record the pass rate.** Not run yet; `ftw-runner/` drives
   `examples/ftw_server_async.rs`.
   - Go Coraza's CI runs all 5,260 tests (`testing/coreruleset`). It ignores 7 (`.ftw.yml`) and changes the expected
