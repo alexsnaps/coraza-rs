@@ -80,6 +80,8 @@ pub struct AuditRequest {
     pub files: Option<Vec<AuditFile>>,
     /// FULL_REQUEST_LENGTH
     pub length: i32,
+    /// ARGS, as key and value pairs
+    pub args: Vec<(String, String)>,
 }
 
 /// A file uploaded with an [`AuditRequest`].
@@ -173,7 +175,7 @@ impl AuditLog {
             AuditLogFormat::Native => self.native(),
             AuditLogFormat::Json => self.json().to_string(),
             AuditLogFormat::JsonLegacy => self.json_legacy().to_string(),
-            AuditLogFormat::Ocsf => String::new(),
+            AuditLogFormat::Ocsf => self.ocsf().to_string(),
         }
     }
 
@@ -345,25 +347,131 @@ impl AuditLog {
                         "actionset": message.actionset,
                         "message": message.message,
                         "error_message": message.error_message,
-                        "data": {
-                            "file": data.file,
-                            "line": data.line,
-                            "id": data.id,
-                            "rev": data.rev,
-                            "msg": data.msg,
-                            "data": data.data,
-                            "severity": data.severity,
-                            "ver": data.ver,
-                            "maturity": data.maturity,
-                            "accuracy": data.accuracy,
-                            "tags": data.tags,
-                            "raw": data.raw,
-                        },
+                        "data": message_data_json(data),
                     })
                 })
                 .collect();
         }
         entry
+    }
+
+    /// The Open Cybersecurity Schema Framework's Web Resources Activity event (OCSF
+    /// 1.2.0), as Go Coraza fills it in, without the fields that are zero or empty, as
+    /// its protobuf types leave them out.
+    ///
+    /// Its severity is the transaction's highest: Go Coraza always writes `emergency`, as
+    /// it never sets the highest severity of its entries.
+    fn ocsf(&self) -> Value {
+        let tx = &self.transaction;
+        let request = &tx.request;
+        let header_values = |headers: &Option<BTreeMap<String, Vec<String>>>, name: &str| {
+            headers
+                .iter()
+                .flatten()
+                .find(|(header, _)| *header == name)
+                .map(|(_, values)| values.clone())
+                .unwrap_or_default()
+        };
+        let header_list = |headers: &Option<BTreeMap<String, Vec<String>>>| {
+            headers
+                .iter()
+                .flatten()
+                .flat_map(|(name, values)| {
+                    values
+                        .iter()
+                        .map(move |value| json!({"name": name, "value": value}))
+                })
+                .collect::<Vec<_>>()
+        };
+        let producer = tx.producer.clone().unwrap_or_default();
+        let (action_id, action) = if tx.is_interrupted {
+            (2, "Denied")
+        } else {
+            (1, "Allowed")
+        };
+        // As Go Coraza writes them, each followed by a comma
+        let args: String = request
+            .args
+            .iter()
+            .map(|(key, value)| format!("{key}={value},"))
+            .collect();
+        let logged_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_micros());
+        // As Go's ParseRuleSeverity reads it, falling back to its zero value
+        let severity = tx
+            .highest_severity
+            .parse::<crate::types::RuleSeverity>()
+            .map_or("emergency", |severity| severity.as_str());
+        let response = tx.response.clone().unwrap_or_default();
+
+        let mut observables = Vec::new();
+        if !tx.server_id.is_empty() {
+            observables.push(json!({
+                "name": "ServerID", "type": "ServerID", "type_id": 99, "value": tx.server_id,
+            }));
+        }
+        for file in request.files.iter().flatten() {
+            observables.push(json!({
+                "name": file.name, "type": "File Name", "type_id": 7, "value": file.name,
+            }));
+            observables.push(json!({
+                "name": file.name, "type": "Size", "type_id": 99, "value": file.size.to_string(),
+            }));
+            observables.push(json!({
+                "name": file.name, "type": "Mime", "type_id": 99, "value": file.mime,
+            }));
+        }
+
+        omit_empty(json!({
+            "activity_id": 2,
+            "activity_name": "Read",
+            "category_name": "Application Activity",
+            "class_name": "Web Resources Activity",
+            "category_uid": 6,
+            "class_uid": 6001,
+            "time": tx.unix_timestamp,
+            "action_id": action_id,
+            "action": action,
+            "metadata": {
+                "log_provider": producer.connector,
+                "log_version": producer.version,
+                "logged_time": logged_time,
+                "product": {"vendor_name": "OWASP Coraza Web Application Firewall"},
+                "version": "1.2.0",
+            },
+            "type_uid": 600_102,
+            "enrichments": self.messages.iter().map(|message| json!({
+                "data": message_data_json(&message.data).to_string(),
+                "name": message.data.msg,
+                "value": message.data.data,
+            })).collect::<Vec<_>>(),
+            "http_request": {
+                "version": request.protocol,
+                "args": args,
+                "http_method": request.method,
+                "uid": tx.id,
+                "url": {"url_string": request.uri},
+                "http_headers": header_list(&request.headers),
+                "length": request.length,
+                "user_agent": header_values(&request.headers, "user-agent").first(),
+                "referrer": header_values(&request.headers, "referer").first(),
+                "x_forwarded_for": header_values(&request.headers, "x-forwarded-for"),
+            },
+            "http_response": {
+                "code": response.status,
+                "http_headers": header_list(&response.headers),
+            },
+            "src_endpoint": {"ip": tx.client_ip, "port": tx.client_port},
+            "dst_endpoint": {"ip": tx.host_ip, "port": tx.host_port},
+            "web_resources": [{"url_string": request.uri}],
+            "message": self.messages.first().map(|message| &message.message),
+            "severity": severity,
+            "severity_id": 99,
+            "start_time": tx.unix_timestamp,
+            "type_name": "Read",
+            "observables": observables,
+        }))
     }
 
     /// The JSON format of ModSecurity 2, as Go Coraza writes it.
@@ -424,6 +532,48 @@ impl AuditLog {
             });
         }
         entry
+    }
+}
+
+/// The data of a message, as Go Coraza writes it in JSON.
+fn message_data_json(data: &AuditMessageData) -> Value {
+    json!({
+        "file": data.file,
+        "line": data.line,
+        "id": data.id,
+        "rev": data.rev,
+        "msg": data.msg,
+        "data": data.data,
+        "severity": data.severity,
+        "ver": data.ver,
+        "maturity": data.maturity,
+        "accuracy": data.accuracy,
+        "tags": data.tags,
+        "raw": data.raw,
+    })
+}
+
+/// `value` without the object fields that are null, `""`, `0`, `false` or `[]`, at any
+/// depth, as protobuf's JSON tags leave them out in Go.
+fn omit_empty(value: Value) -> Value {
+    let is_empty = |value: &Value| match value {
+        Value::Null => true,
+        Value::Bool(set) => !set,
+        Value::Number(number) => number.as_f64() == Some(0.0),
+        Value::String(text) => text.is_empty(),
+        Value::Array(items) => items.is_empty(),
+        Value::Object(_) => false,
+    };
+    match value {
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .map(|(name, value)| (name, omit_empty(value)))
+                .filter(|(_, value)| !is_empty(value))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.into_iter().map(omit_empty).collect()),
+        other => other,
     }
 }
 
@@ -551,6 +701,8 @@ enum Writer {
         dir_mode: u32,
         file_mode: u32,
     },
+    /// One message each, to syslog
+    Syslog(Mutex<Syslog>),
 }
 
 impl fmt::Debug for Writer {
@@ -559,6 +711,7 @@ impl fmt::Debug for Writer {
             Self::Discard => f.write_str("Discard"),
             Self::Serial(_) => f.write_str("Serial"),
             Self::Concurrent { dir, .. } => f.debug_struct("Concurrent").field("dir", dir).finish(),
+            Self::Syslog(_) => f.write_str("Syslog"),
         }
     }
 }
@@ -568,8 +721,8 @@ impl AuditLogger {
     ///
     /// # Errors
     ///
-    /// If the file can't be opened, `SecAuditLogRelevantStatus` isn't a regular
-    /// expression, or the writer isn't supported here (`HTTPS`, `Syslog`).
+    /// If the file or syslog can't be opened, `SecAuditLogRelevantStatus` isn't a
+    /// regular expression, or the writer is `HTTPS`, which isn't supported here.
     pub(crate) fn open(config: &WafConfig) -> Result<Self, String> {
         let relevant_status = match config.audit_log_relevant_status.as_str() {
             "" => None,
@@ -584,9 +737,9 @@ impl AuditLogger {
             (AuditLogType::Https, _) => {
                 return Err("audit log type HTTPS is not supported".to_string());
             }
-            (AuditLogType::Syslog, _) => {
-                return Err("audit log type Syslog is not supported".to_string());
-            }
+            (AuditLogType::Syslog, target) => Writer::Syslog(Mutex::new(
+                Syslog::connect(target).map_err(|e| format!("syslog dial failure: {e}"))?,
+            )),
             (_, "") => Writer::Discard,
             (AuditLogType::Serial, "/dev/stdout") => {
                 Writer::Serial(Mutex::new(Box::new(io::stdout())))
@@ -634,6 +787,10 @@ impl AuditLogger {
         }
         match &self.writer {
             Writer::Discard => Ok(()),
+            Writer::Syslog(syslog) => syslog
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .send(&formatted, entry.transaction.is_interrupted),
             Writer::Serial(output) => {
                 let mut output = output
                     .lock()
@@ -679,6 +836,152 @@ impl AuditLogger {
             }
         }
     }
+}
+
+/// A connection to syslog, as Go's `log/syslog` dials it with facility `local0` and tag
+/// `com.coraza.waf`.
+struct Syslog {
+    socket: SyslogSocket,
+    /// Whether it is the local syslog, which takes a shorter header
+    local: bool,
+}
+
+enum SyslogSocket {
+    Udp(std::net::UdpSocket),
+    Tcp(std::net::TcpStream),
+    #[cfg(unix)]
+    UnixStream(std::os::unix::net::UnixStream),
+    #[cfg(unix)]
+    UnixDatagram(std::os::unix::net::UnixDatagram),
+}
+
+impl Syslog {
+    /// Connects to `target` as Go Coraza reads it: `scheme://address`, where the scheme
+    /// is `udp`, `tcp`, `unix` or `unixgram`; an address alone, over TCP; or, empty, the
+    /// local syslog.
+    fn connect(target: &str) -> io::Result<Self> {
+        let unsupported = |network: &str| {
+            io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("unsupported network {network:?}"),
+            )
+        };
+        let (network, address) = match target.split_once("://") {
+            Some((network, address)) => (network, address),
+            None => ("tcp", target),
+        };
+        let socket = match (network, address) {
+            #[cfg(unix)]
+            (_, "") => return Self::connect_local(),
+            ("udp" | "udp4" | "udp6", address) => {
+                let socket = std::net::UdpSocket::bind(if address.starts_with('[') {
+                    "[::]:0"
+                } else {
+                    "0.0.0.0:0"
+                })?;
+                socket.connect(address)?;
+                SyslogSocket::Udp(socket)
+            }
+            ("tcp" | "tcp4" | "tcp6", address) => {
+                SyslogSocket::Tcp(std::net::TcpStream::connect(address)?)
+            }
+            #[cfg(unix)]
+            ("unix", path) => {
+                SyslogSocket::UnixStream(std::os::unix::net::UnixStream::connect(path)?)
+            }
+            #[cfg(unix)]
+            ("unixgram", path) => {
+                let socket = std::os::unix::net::UnixDatagram::unbound()?;
+                socket.connect(path)?;
+                SyslogSocket::UnixDatagram(socket)
+            }
+            (network, _) => return Err(unsupported(network)),
+        };
+        Ok(Self {
+            socket,
+            local: false,
+        })
+    }
+
+    /// The local syslog, at the first of Go's known socket paths that answers.
+    #[cfg(unix)]
+    fn connect_local() -> io::Result<Self> {
+        let mut last_error = io::Error::new(io::ErrorKind::NotFound, "no local syslog");
+        for path in ["/dev/log", "/var/run/syslog", "/var/run/log"] {
+            let datagram = std::os::unix::net::UnixDatagram::unbound()
+                .and_then(|socket| socket.connect(path).map(|()| socket));
+            let socket = match datagram {
+                Ok(socket) => SyslogSocket::UnixDatagram(socket),
+                Err(_) => match std::os::unix::net::UnixStream::connect(path) {
+                    Ok(stream) => SyslogSocket::UnixStream(stream),
+                    Err(e) => {
+                        last_error = e;
+                        continue;
+                    }
+                },
+            };
+            return Ok(Self {
+                socket,
+                local: true,
+            });
+        }
+        Err(last_error)
+    }
+
+    /// Sends `message` at severity `err` if `error`, `info` otherwise, framed as Go's
+    /// `log/syslog` does.
+    fn send(&mut self, message: &str, error: bool) -> io::Result<()> {
+        // local0 (16) times 8, plus the severity
+        let priority = 16 * 8 + if error { 3 } else { 6 };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs());
+        let at = UtcTime::from_unix(now);
+        let tag = format!("com.coraza.waf[{}]", std::process::id());
+        let newline = if message.ends_with('\n') { "" } else { "\n" };
+        let framed = if self.local {
+            const MONTHS: [&str; 12] = [
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            ];
+            format!(
+                "<{priority}>{} {:>2} {:02}:{:02}:{:02} {tag}: {message}{newline}",
+                MONTHS[(at.month - 1) as usize],
+                at.day,
+                at.hour,
+                at.minute,
+                at.second
+            )
+        } else {
+            format!(
+                "<{priority}>{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z {} {tag}: {message}{newline}",
+                at.year,
+                at.month,
+                at.day,
+                at.hour,
+                at.minute,
+                at.second,
+                hostname()
+            )
+        };
+        match &mut self.socket {
+            SyslogSocket::Udp(socket) => socket.send(framed.as_bytes()).map(|_| ()),
+            SyslogSocket::Tcp(stream) => stream.write_all(framed.as_bytes()),
+            #[cfg(unix)]
+            SyslogSocket::UnixStream(stream) => stream.write_all(framed.as_bytes()),
+            #[cfg(unix)]
+            SyslogSocket::UnixDatagram(socket) => socket.send(framed.as_bytes()).map(|_| ()),
+        }
+    }
+}
+
+/// This host's name, as the kernel has it; `localhost` if unknown.
+fn hostname() -> String {
+    ["/proc/sys/kernel/hostname", "/etc/hostname"]
+        .into_iter()
+        .find_map(|path| fs::read_to_string(path).ok())
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "localhost".to_string())
 }
 
 fn open_append(path: &str, mode: u32) -> Result<File, String> {

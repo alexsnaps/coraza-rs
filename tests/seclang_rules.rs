@@ -1411,3 +1411,56 @@ fn https_audit_logs_are_not_supported() {
     let err = parser.into_waf().unwrap_err();
     assert!(err.to_string().contains("HTTPS"), "{err}");
 }
+
+#[test]
+fn audit_log_entries_can_be_ocsf() {
+    let dir = tempfile::tempdir().unwrap();
+    let waf = audited_waf(dir.path(), "SecAuditLogFormat OCSF");
+
+    audit_request(&waf, "tx-evil", "evil");
+
+    let log = std::fs::read_to_string(dir.path().join("audit.log")).unwrap();
+    let event: serde_json::Value = serde_json::from_str(log.trim_end()).unwrap();
+    assert_eq!(event["class_uid"], 6001);
+    assert_eq!(event["type_uid"], 600102);
+    assert_eq!(event["action"], "Denied");
+    assert_eq!(event["action_id"], 2);
+    assert_eq!(event["http_request"]["uid"], "tx-evil");
+    assert_eq!(event["http_request"]["url"]["url_string"], "/x?q=evil");
+    assert_eq!(event["src_endpoint"]["ip"], "10.0.0.1");
+    assert_eq!(event["enrichments"][0]["name"], "Evil");
+    assert_eq!(event["message"], "Evil");
+    // Zero values are left out, as protobuf's JSON tags do in Go
+    assert!(event["http_request"].get("length").is_none(), "{event}");
+}
+
+#[test]
+fn audit_log_entries_can_go_to_syslog() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    server
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    let address = server.local_addr().unwrap();
+    let waf = waf(&format!(
+        r#"
+        SecRuleEngine On
+        SecAuditEngine RelevantOnly
+        SecAuditLogType Syslog
+        SecAuditLog udp://{address}
+        SecAuditLogParts ABHZ
+        SecRule ARGS:q "@streq evil" "id:1,phase:1,deny,status:403,log,auditlog,msg:'Evil'"
+        "#
+    ));
+    let _ = dir;
+
+    audit_request(&waf, "tx-evil", "evil");
+
+    let mut buffer = [0; 65_536];
+    let received = server.recv(&mut buffer).unwrap();
+    let message = String::from_utf8_lossy(&buffer[..received]);
+    // local0.err, as the transaction was interrupted
+    assert!(message.starts_with("<131>"), "{message}");
+    assert!(message.contains(" com.coraza.waf["), "{message}");
+    assert!(message.contains("[id \"1\"]"), "{message}");
+}

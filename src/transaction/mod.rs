@@ -2025,6 +2025,12 @@ impl Transaction {
                 protocol: self.request_protocol.get().to_string(),
                 uri: self.request_uri.get().to_string(),
                 length: self.full_request_length.get().parse().unwrap_or(0),
+                args: self
+                    .args
+                    .find_all()
+                    .into_iter()
+                    .map(|arg| (arg.key, arg.value))
+                    .collect(),
                 ..AuditRequest::default()
             },
             highest_severity: self.highest_severity.get().to_string(),

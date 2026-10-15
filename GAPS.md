@@ -196,7 +196,7 @@ Go Coraza has 69 `Sec*` directives; we have 26. Section 1 covers 11 of the 43 mi
   `SecTmpDir` and `SecUnicodeMap`. In Go, `SecRemoteRules` is an error ("not implemented").
   - Done: they are accepted with any argument and ignored, and `SecRemoteRules` fails with "not supported". The
     parser now knows all 69 of Go's directives.
-- [ ] **Audit logging.** Found while working on 1.6: Go writes audit logs itself, in its `Native`, `JSON`,
+- [x] **Audit logging.** Found while working on 1.6: Go writes audit logs itself, in its `Native`, `JSON`,
   `JSONLegacy` and `OCSF` formats, to `Serial`, `Concurrent`, `HTTPS` and `Syslog` writers. The library writes none;
   `examples/ftw_server*.rs` write their own.
   - Done for Go's error log line: `MatchedRule` now records the rule (with its file, line, raw text and
@@ -209,6 +209,10 @@ Go Coraza has 69 `Sec*` directives; we have 26. Section 1 covers 11 of the 43 mi
     `JSONLegacy`; writers `Serial` (including `/dev/stdout` and `/dev/stderr`) and `Concurrent`, opened when the
     WAF is built. Timestamps are in UTC. `HTTPS` is refused when the WAF is built, as it needs an HTTP client with
     TLS that no dependency provides.
+  - Done for the rest: the `OCSF` format, built as Go fills in OCSF 1.2.0's Web Resources Activity event (checked
+    against Go's output for a sample entry), with the transaction's real highest severity where Go always writes
+    `emergency`; and the `Syslog` writer, framed as Go's `log/syslog` does, over UDP, TCP, a Unix socket or the
+    local syslog. Only `HTTPS` remains unsupported.
 
 ## 5. Operators, actions and names
 
