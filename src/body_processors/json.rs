@@ -19,15 +19,13 @@ impl BodyProcessor for JsonBodyProcessor {
         &self,
         body: &[u8],
         tx: &mut Transaction,
-        _options: &BodyProcessorOptions,
+        options: &BodyProcessorOptions,
     ) -> Result<(), BodyProcessorError> {
         // Convert body to string
         let body_str = String::from_utf8_lossy(body).to_string();
         let body_len = body.len();
 
-        // Parse JSON
-        let json_value: Value = serde_json::from_str(&body_str)
-            .map_err(|e| BodyProcessorError::Malformed("json".to_string(), e.to_string()))?;
+        let json_value = parse_json(&body_str, options.json_depth_limit)?;
 
         // Flatten JSON into dot-notation map
         let flattened = flatten_json(&json_value);
@@ -47,14 +45,12 @@ impl BodyProcessor for JsonBodyProcessor {
         &self,
         body: &[u8],
         tx: &mut Transaction,
-        _options: &BodyProcessorOptions,
+        options: &BodyProcessorOptions,
     ) -> Result<(), BodyProcessorError> {
         // Parse JSON response
         let body_str = String::from_utf8_lossy(body).to_string();
 
-        // Parse JSON
-        let json_value: Value = serde_json::from_str(&body_str)
-            .map_err(|e| BodyProcessorError::Malformed("json".to_string(), e.to_string()))?;
+        let json_value = parse_json(&body_str, options.json_depth_limit)?;
 
         // Flatten JSON into dot-notation map
         let flattened = flatten_json(&json_value);
@@ -64,6 +60,31 @@ impl BodyProcessor for JsonBodyProcessor {
         }
 
         Ok(())
+    }
+}
+
+/// Parses a JSON body whose objects and arrays nest at most `depth_limit` deep.
+///
+/// serde_json itself rejects nesting deeper than 128, whatever the limit.
+fn parse_json(body: &str, depth_limit: usize) -> Result<Value, BodyProcessorError> {
+    let malformed = |message: String| BodyProcessorError::Malformed("json".to_string(), message);
+    let value: Value = serde_json::from_str(body).map_err(|e| malformed(e.to_string()))?;
+    if depth(&value) > depth_limit {
+        return Err(malformed(format!(
+            "nesting deeper than the limit of {}",
+            depth_limit
+        )));
+    }
+    Ok(value)
+}
+
+/// How deep objects and arrays nest in `value`: 0 for a scalar, 1 for `{"a": 1}`.
+fn depth(value: &Value) -> usize {
+    let deepest = |children: &mut dyn Iterator<Item = &Value>| children.map(depth).max();
+    match value {
+        Value::Object(map) => 1 + deepest(&mut map.values()).unwrap_or(0),
+        Value::Array(items) => 1 + deepest(&mut items.iter()).unwrap_or(0),
+        _ => 0,
     }
 }
 

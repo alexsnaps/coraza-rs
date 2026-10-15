@@ -310,7 +310,12 @@ fn test_exec_action_is_never_run() {
 
 #[test]
 fn test_complete_transaction_flow() {
-    let mut tx = Transaction::new("complete-flow-test");
+    let waf = coraza::waf::Waf::new(coraza::config::WafConfig {
+        response_body_mime_types: vec!["application/json".to_string()],
+        ..Default::default()
+    })
+    .unwrap();
+    let mut tx = waf.new_transaction_with_id("complete-flow-test".to_string());
 
     // 1. Connection phase
     tx.process_connection("192.168.1.1", 12345, "10.0.0.1", 443);
@@ -335,6 +340,7 @@ fn test_complete_transaction_flow() {
     assert_eq!(tx.args_post().get("password"), vec!["P@ssw0rd"]); // Decoded
 
     // 4. Response headers phase
+    tx.add_response_header("Content-Type", "application/json");
     let interruption = tx.process_response_headers(200, "HTTP/1.1");
     assert!(interruption.is_none()); // No interruption
 

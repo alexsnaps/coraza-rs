@@ -17,8 +17,8 @@ pub use phase::RulePhase;
 pub use severity::RuleSeverity;
 pub use variables::RuleVariable;
 pub use waf::{
-    AuditEngineStatus, AuditLogPart, AuditLogParts, BodyLimitAction, ParseAuditLogPartsError,
-    RuleEngineStatus, apply_audit_log_parts, parse_audit_log_parts,
+    AuditEngineStatus, AuditLogFormat, AuditLogPart, AuditLogParts, AuditLogType, BodyLimitAction,
+    ParseAuditLogPartsError, RuleEngineStatus, apply_audit_log_parts, parse_audit_log_parts,
 };
 
 /// A string (or character) that names none of a type's values: a phase, severity,

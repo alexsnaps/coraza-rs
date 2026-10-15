@@ -83,7 +83,7 @@ impl From<io::Error> for BodyProcessorError {
 }
 
 /// Options passed to body processors
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BodyProcessorOptions {
     /// MIME type of the request body (e.g., "multipart/form-data; boundary=...")
     pub mime: String,
@@ -102,6 +102,23 @@ pub struct BodyProcessorOptions {
 
     /// Keep uploaded files after transaction
     pub keep_files: bool,
+
+    /// Deepest nesting of objects and arrays a JSON body may have
+    pub json_depth_limit: usize,
+}
+
+impl Default for BodyProcessorOptions {
+    fn default() -> Self {
+        Self {
+            mime: String::new(),
+            upload_dir: String::new(),
+            file_mode: 0,
+            dir_mode: 0,
+            file_limit: 0,
+            keep_files: false,
+            json_depth_limit: crate::config::DEFAULT_JSON_DEPTH_LIMIT,
+        }
+    }
 }
 
 /// Body processor trait for processing request and response bodies

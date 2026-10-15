@@ -84,8 +84,8 @@ impl std::error::Error for WafError {}
 /// ```
 #[derive(Debug)]
 pub struct Waf {
-    /// Configuration settings
-    config: WafConfig,
+    /// Configuration settings, shared with transactions
+    config: Arc<WafConfig>,
 
     /// Rules in evaluation order, shared with transactions for CTL rule exclusion
     rules: Arc<RuleGroup>,
@@ -155,7 +155,7 @@ impl Waf {
         tx.set_request_body_limit(self.config.request_body_limit);
         tx.set_response_body_access(self.config.response_body_access);
         tx.set_response_body_limit(self.config.response_body_limit);
-        tx.set_argument_limit(self.config.argument_limit);
+        tx.set_config(Arc::clone(&self.config));
 
         // Share rules reference for CTL tag/msg-based exclusions
         tx.set_rules(Arc::clone(&self.rules));
@@ -261,7 +261,7 @@ impl WafBuilder {
         validate_config(&self.config)?;
 
         Ok(Waf {
-            config: self.config,
+            config: Arc::new(self.config),
             rules: Arc::new(self.rules),
         })
     }

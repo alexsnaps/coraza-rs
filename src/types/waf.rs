@@ -71,6 +71,70 @@ impl FromStr for AuditEngineStatus {
     }
 }
 
+/// Format of audit log entries (`SecAuditLogFormat`), as Go Coraza names them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum AuditLogFormat {
+    /// ModSecurity's native, section-per-part format
+    #[default]
+    Native,
+    /// One JSON document per entry
+    Json,
+    /// The JSON format of ModSecurity 2
+    JsonLegacy,
+    /// Open Cybersecurity Schema Framework
+    Ocsf,
+}
+
+impl FromStr for AuditLogFormat {
+    type Err = ParseValueError;
+
+    /// Parses a format name (case-insensitive): `Native`, `JSON`, `JSONLegacy` or `OCSF`.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "native" => Ok(Self::Native),
+            "json" => Ok(Self::Json),
+            "jsonlegacy" => Ok(Self::JsonLegacy),
+            "ocsf" => Ok(Self::Ocsf),
+            _ => Err(ParseValueError::new(
+                "invalid audit log format",
+                s.to_string(),
+            )),
+        }
+    }
+}
+
+/// Where audit log entries are written (`SecAuditLogType`), as Go Coraza names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum AuditLogType {
+    /// All entries in one file
+    #[default]
+    Serial,
+    /// One file per entry
+    Concurrent,
+    /// Sent to an HTTP endpoint
+    Https,
+    /// Sent to syslog
+    Syslog,
+}
+
+impl FromStr for AuditLogType {
+    type Err = ParseValueError;
+
+    /// Parses a type name (case-insensitive): `Serial`, `Concurrent`, `HTTPS` or `Syslog`.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "serial" => Ok(Self::Serial),
+            "concurrent" => Ok(Self::Concurrent),
+            "https" => Ok(Self::Https),
+            "syslog" => Ok(Self::Syslog),
+            _ => Err(ParseValueError::new(
+                "invalid audit log type",
+                s.to_string(),
+            )),
+        }
+    }
+}
+
 /// Status of the rule processing engine.
 ///
 /// Controls whether rules are processed and whether they can generate disruptive actions.

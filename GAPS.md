@@ -67,9 +67,21 @@ Suggested order: 1 → 2 → 3 → 6, then 4 and 5. The first three items of 1 a
 - [x] **Transformation `removeCommentsChar`.** 1 skipped: 942190.
   - Done: ported from Go, with its test vectors; it removes the markers `/*`, `*/`, `<!--`, `-->`, `--` and `#` and
     keeps what they enclose. The CRS load check now skips 8 directives.
-- [ ] **Configuration directives.** 8 skipped: `SecAuditLogFormat`, `SecAuditLogParts`, `SecAuditLogType`,
+- [x] **Configuration directives.** 8 skipped: `SecAuditLogFormat`, `SecAuditLogParts`, `SecAuditLogType`,
   `SecAuditLogRelevantStatus`, `SecRxPreFilter`, `SecRequestBodyJsonDepthLimit`, `SecResponseBodyJsonDepthLimit`
   and `SecResponseBodyMimeType`.
+  - Done: all eight are validated as in Go and set `WafConfig`. Transactions now share their WAF's
+    `Arc<WafConfig>`, which carries the settings below to them.
+    - `SecResponseBodyMimeType`: the response body is stored and inspected only for a listed content type (none by
+      default, as in Go) or with `ctl:forceResponseBodyVariable`; `Transaction::is_response_body_processable` tells
+      a connector which.
+    - `SecRequestBodyJsonDepthLimit`/`SecResponseBodyJsonDepthLimit`: a deeper JSON body is a body error. serde_json
+      still rejects nesting past 128, whatever the limit.
+    - `SecAuditLogFormat`, `SecAuditLogParts`, `SecAuditLogType`, `SecAuditLogRelevantStatus`: stored for the
+      embedder, as the library writes no audit log (see section 4).
+    - `SecRxPreFilter`: checked, and has no effect. In Go it only speeds `@rx` up, which the regex engine here does
+      on its own.
+    - The CRS load check now skips nothing.
 
 ## 2. Accepted but ignored
 
@@ -78,6 +90,8 @@ Suggested order: 1 → 2 → 3 → 6, then 4 and 5. The first three items of 1 a
   (`src/actions/ctl.rs:81`-`96`).
   - The body parser is chosen by a prefix match on `Content-Type` instead. So rule 200006 of
     `coraza.conf-recommended`, which sends `application/*+json` bodies to the JSON parser, has no effect.
+- [ ] **`SecRequestBodyAccess` and `SecResponseBodyAccess` are not enforced.** Found while working on 1.6: bodies are
+  stored and processed whatever the setting, while Go skips them (and defaults both to `Off`, as `WafConfig` does).
 
 ## 3. Variables that parse but are never set
 
@@ -122,6 +136,9 @@ Go Coraza has 69 `Sec*` directives; we have 26. Section 1 covers 11 of the 43 mi
   `SecHashEngine`, `SecHashKey`, `SecHashMethodPm`, `SecHashMethodRx`, `SecHashParam`, `SecHttpBlKey`,
   `SecPcreMatchLimit`, `SecPcreMatchLimitRecursion`, `SecRulePerfTime`, `SecRuleScript`, `SecRuleUpdateTargetByMsg`,
   `SecTmpDir` and `SecUnicodeMap`. In Go, `SecRemoteRules` is an error ("not implemented").
+- [ ] **Audit logging.** Found while working on 1.6: Go writes audit logs itself, in its `Native`, `JSON`,
+  `JSONLegacy` and `OCSF` formats, to `Serial`, `Concurrent`, `HTTPS` and `Syslog` writers. The library writes none;
+  `examples/ftw_server*.rs` write their own.
 
 ## 5. Operators, actions and names
 

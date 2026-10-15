@@ -24,7 +24,10 @@ use crate::seclang::rule_compiler::{
     DefaultActions, compile_sec_action_in, compile_sec_marker, compile_sec_rule_in,
 };
 use crate::seclang::variable_parser::VariableList;
-use crate::types::{AuditEngineStatus, BodyLimitAction, RuleEngineStatus};
+use crate::types::{
+    AuditEngineStatus, AuditLogFormat, AuditLogType, BodyLimitAction, RuleEngineStatus,
+    parse_audit_log_parts,
+};
 use crate::waf::{ConfigError, Waf, WafBuilder};
 
 /// Maximum include recursion depth to prevent DoS attacks
@@ -471,6 +474,14 @@ fn directive_handler(name: &str) -> Option<DirectiveFn> {
         "secuploadkeepfiles" => directive_sec_upload_keep_files,
         "secauditengine" => directive_sec_audit_engine,
         "secauditlog" => directive_sec_audit_log,
+        "secauditlogformat" => directive_sec_audit_log_format,
+        "secauditlogparts" => directive_sec_audit_log_parts,
+        "secauditlogtype" => directive_sec_audit_log_type,
+        "secauditlogrelevantstatus" => directive_sec_audit_log_relevant_status,
+        "secrxprefilter" => directive_sec_rx_pre_filter,
+        "secrequestbodyjsondepthlimit" => directive_sec_request_body_json_depth_limit,
+        "secresponsebodyjsondepthlimit" => directive_sec_response_body_json_depth_limit,
+        "secresponsebodymimetype" => directive_sec_response_body_mime_type,
         "secdatadir" => directive_sec_data_dir,
         "seccollectiontimeout" => directive_sec_collection_timeout,
         _ => return None,
@@ -863,6 +874,78 @@ fn directive_sec_audit_engine(options: &mut DirectiveOptions) -> Result<(), Stri
 /// Sets the path to the audit log file.
 fn directive_sec_audit_log(options: &mut DirectiveOptions) -> Result<(), String> {
     options.waf_config.audit_log = options.opts.clone();
+    Ok(())
+}
+
+/// SecAuditLogFormat Native|JSON|JSONLegacy|OCSF
+fn directive_sec_audit_log_format(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.audit_log_format =
+        AuditLogFormat::from_str(&options.opts).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// SecAuditLogParts PARTS, e.g. `ABCFHZ`
+fn directive_sec_audit_log_parts(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.audit_log_parts =
+        parse_audit_log_parts(&options.opts).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// SecAuditLogType Serial|Concurrent|HTTPS|Syslog
+fn directive_sec_audit_log_type(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.audit_log_type =
+        AuditLogType::from_str(&options.opts).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// SecAuditLogRelevantStatus REGEX
+fn directive_sec_audit_log_relevant_status(options: &mut DirectiveOptions) -> Result<(), String> {
+    regex::Regex::new(&options.opts).map_err(|e| format!("invalid regular expression: {e}"))?;
+    options.waf_config.audit_log_relevant_status = options.opts.clone();
+    Ok(())
+}
+
+/// SecRxPreFilter On|Off
+///
+/// In Go Coraza it lets `@rx` skip a regex that can't match, a speed-up only. The
+/// regex engine here does that on its own, so the setting is checked and has no effect.
+fn directive_sec_rx_pre_filter(options: &mut DirectiveOptions) -> Result<(), String> {
+    parse_boolean(&options.opts).map(|_| ())
+}
+
+/// A positive integer argument.
+fn parse_positive(opts: &str) -> Result<usize, String> {
+    match opts.parse::<usize>() {
+        Ok(value) if value > 0 => Ok(value),
+        _ => Err(format!("expected a positive integer, got: {}", opts)),
+    }
+}
+
+/// SecRequestBodyJsonDepthLimit LIMIT
+fn directive_sec_request_body_json_depth_limit(
+    options: &mut DirectiveOptions,
+) -> Result<(), String> {
+    options.waf_config.request_body_json_depth_limit = parse_positive(&options.opts)?;
+    Ok(())
+}
+
+/// SecResponseBodyJsonDepthLimit LIMIT
+fn directive_sec_response_body_json_depth_limit(
+    options: &mut DirectiveOptions,
+) -> Result<(), String> {
+    options.waf_config.response_body_json_depth_limit = parse_positive(&options.opts)?;
+    Ok(())
+}
+
+/// SecResponseBodyMimeType TYPE...
+///
+/// Sets the response content types whose body is inspected, replacing earlier ones.
+fn directive_sec_response_body_mime_type(options: &mut DirectiveOptions) -> Result<(), String> {
+    options.waf_config.response_body_mime_types = options
+        .opts
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
     Ok(())
 }
 

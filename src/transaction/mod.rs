@@ -11,7 +11,7 @@ use crate::RuleVariable;
 use crate::actions::AllowType;
 use crate::body_processors::{BodyProcessorKind, BodyProcessorOptions};
 use crate::collection::{Map, Single};
-use crate::config::DEFAULT_ARGUMENT_LIMIT;
+use crate::config::WafConfig;
 use crate::rules::RuleGroup;
 use crate::types::{RuleEngineStatus, RulePhase};
 
@@ -368,9 +368,9 @@ pub struct Transaction {
     /// Request body size limit in bytes (controlled by ctl:requestBodyLimit)
     pub(crate) request_body_limit: i64,
 
-    /// Most values ARGS_GET, ARGS_POST and RESPONSE_ARGS each hold; see
-    /// [`Transaction::add_get_argument`]
-    argument_limit: usize,
+    /// Settings of the WAF the transaction belongs to; the defaults for one made with
+    /// [`Transaction::new`]
+    config: Arc<WafConfig>,
 
     /// Force REQUEST_BODY variable creation (controlled by ctl:forceRequestBodyVariable)
     pub(crate) force_request_body_variable: bool,
@@ -525,7 +525,7 @@ impl Transaction {
             rule_engine: RuleEngineStatus::On,
             request_body_access: true,
             request_body_limit: 131072, // 128KB default
-            argument_limit: DEFAULT_ARGUMENT_LIMIT,
+            config: Arc::new(WafConfig::default()),
             force_request_body_variable: false,
             response_body_access: false,
             response_body_limit: 524288, // 512KB default
@@ -554,6 +554,11 @@ impl Transaction {
     /// like `ctl:ruleRemoveByTag` and `ctl:ruleRemoveByMsg`.
     pub(crate) fn set_rules(&mut self, rules: Arc<RuleGroup>) {
         self.rules = Some(rules);
+    }
+
+    /// Makes the transaction use the settings of its WAF.
+    pub(crate) fn set_config(&mut self, config: Arc<WafConfig>) {
+        self.config = config;
     }
 
     /// Get all rules that matched during this transaction.
@@ -819,16 +824,11 @@ impl Transaction {
         self.request_body_limit = limit;
     }
 
-    /// Sets the most values ARGS_GET, ARGS_POST and RESPONSE_ARGS each hold
-    /// (`SecArgumentsLimit`); see [`Transaction::add_get_argument`].
-    pub fn set_argument_limit(&mut self, limit: usize) {
-        self.argument_limit = limit;
-    }
-
     /// Adds a query string argument to ARGS_GET and ARGS.
     ///
-    /// Once ARGS_GET holds the argument limit's worth of values, counting each value of
-    /// a repeated key, the argument is dropped and ARGUMENTS_LIMIT_REACHED set to 1.
+    /// Once ARGS_GET holds the argument limit's worth of values (`SecArgumentsLimit`),
+    /// counting each value of a repeated key, the argument is dropped and
+    /// ARGUMENTS_LIMIT_REACHED set to 1.
     pub fn add_get_argument(&mut self, key: &str, value: &str) {
         if self.within_argument_limit(self.args_get.value_count()) {
             self.args_get.add(key, value);
@@ -856,7 +856,7 @@ impl Transaction {
     /// Whether a collection holding `values` values can take one more; sets
     /// ARGUMENTS_LIMIT_REACHED if not.
     fn within_argument_limit(&mut self, values: usize) -> bool {
-        let within = values < self.argument_limit;
+        let within = values < self.config.argument_limit;
         if !within {
             self.arguments_limit_reached.set("1");
         }
@@ -1243,6 +1243,7 @@ impl Transaction {
         if let Some(processor) = BodyProcessorKind::for_content_type(content_type) {
             let options = BodyProcessorOptions {
                 mime: content_type.to_string(),
+                json_depth_limit: self.config.request_body_json_depth_limit,
                 ..Default::default()
             };
 
@@ -1308,6 +1309,20 @@ impl Transaction {
         self.interruption.clone()
     }
 
+    /// Whether [`Transaction::process_response_body`] inspects the body: its content
+    /// type, as set by the `Content-Type` response header, is one of
+    /// `SecResponseBodyMimeType`, or `ctl:forceResponseBodyVariable` is on.
+    ///
+    /// A connector can use it to stream other responses rather than buffer them.
+    pub fn is_response_body_processable(&self) -> bool {
+        self.force_response_body_variable
+            || self
+                .config
+                .response_body_mime_types
+                .iter()
+                .any(|mime| mime.eq_ignore_ascii_case(self.response_content_type.get()))
+    }
+
     /// Process response body.
     ///
     /// # Example
@@ -1330,10 +1345,11 @@ impl Transaction {
             return None;
         }
 
-        // Store raw response body
-        let body_str = String::from_utf8_lossy(body).to_string();
-        self.response_body.set(&body_str);
-        self.response_content_length.set(body.len().to_string());
+        if self.is_response_body_processable() {
+            let body_str = String::from_utf8_lossy(body).to_string();
+            self.response_body.set(&body_str);
+            self.response_content_length.set(body.len().to_string());
+        }
 
         // Update phase
         self.last_phase = Some(RulePhase::ResponseBody);
@@ -1921,9 +1937,20 @@ value1\r\n\
         assert_eq!(tx.response_protocol.get(), "HTTP/1.1");
     }
 
+    /// A transaction inspecting `application/json` response bodies.
+    fn json_response_transaction(id: &str) -> Transaction {
+        let mut tx = Transaction::new(id);
+        tx.set_config(Arc::new(WafConfig {
+            response_body_mime_types: vec!["application/json".to_string()],
+            ..WafConfig::default()
+        }));
+        tx.add_response_header("Content-Type", "application/json");
+        tx
+    }
+
     #[test]
     fn test_process_response_body() {
-        let mut tx = Transaction::new("tx-028");
+        let mut tx = json_response_transaction("tx-028");
         tx.process_response_headers(200, "HTTP/1.1");
 
         let body = b"{\"status\":\"ok\",\"data\":123}";
@@ -1941,7 +1968,7 @@ value1\r\n\
 
     #[test]
     fn test_process_response_body_already_processed() {
-        let mut tx = Transaction::new("tx-029");
+        let mut tx = json_response_transaction("tx-029");
         tx.process_response_headers(200, "HTTP/1.1");
 
         tx.process_response_body(b"body1");
@@ -1951,6 +1978,18 @@ value1\r\n\
 
         // Should still have first body
         assert_eq!(tx.response_body.get(), "body1");
+    }
+
+    #[test]
+    fn test_response_body_of_unlisted_type_is_not_stored() {
+        let mut tx = json_response_transaction("tx-029b");
+        tx.add_response_header("Content-Type", "image/png");
+        tx.process_response_headers(200, "HTTP/1.1");
+
+        tx.process_response_body(b"\x89PNG");
+
+        assert_eq!(tx.response_body.get(), "");
+        assert_eq!(tx.last_phase, Some(RulePhase::ResponseBody));
     }
 
     #[test]

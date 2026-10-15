@@ -549,3 +549,91 @@ fn repeated_multipart_part_headers_are_flagged() {
         );
     }
 }
+
+#[test]
+fn audit_log_and_body_directives_set_the_config() {
+    use coraza::types::{AuditLogFormat, AuditLogType, parse_audit_log_parts};
+
+    let mut parser = Parser::new();
+    parser
+        .from_string(
+            r#"
+            SecAuditLogFormat JSON
+            SecAuditLogParts ABIJDEFHZ
+            SecAuditLogType Concurrent
+            SecAuditLogRelevantStatus "^(?:(5|4)(0|1)[0-9])$"
+            SecRxPreFilter Off
+            SecRequestBodyJsonDepthLimit 3
+            SecResponseBodyJsonDepthLimit 4
+            SecResponseBodyMimeType text/plain text/html
+            "#,
+        )
+        .unwrap();
+
+    let config = parser.config();
+    assert_eq!(config.audit_log_format, AuditLogFormat::Json);
+    assert_eq!(
+        config.audit_log_parts,
+        parse_audit_log_parts("ABIJDEFHZ").unwrap()
+    );
+    assert_eq!(config.audit_log_type, AuditLogType::Concurrent);
+    assert_eq!(config.audit_log_relevant_status, "^(?:(5|4)(0|1)[0-9])$");
+    assert_eq!(config.request_body_json_depth_limit, 3);
+    assert_eq!(config.response_body_json_depth_limit, 4);
+    assert_eq!(config.response_body_mime_types, ["text/plain", "text/html"]);
+}
+
+#[test]
+fn invalid_audit_log_and_body_directives_are_parse_errors() {
+    for directive in [
+        "SecAuditLogFormat yaml",
+        "SecAuditLogParts BCF",
+        "SecAuditLogType carrier-pigeon",
+        "SecAuditLogRelevantStatus (",
+        "SecRxPreFilter maybe",
+        "SecRequestBodyJsonDepthLimit 0",
+        "SecResponseBodyJsonDepthLimit -1",
+    ] {
+        assert!(Parser::new().from_string(directive).is_err(), "{directive}");
+    }
+}
+
+#[test]
+fn json_bodies_deeper_than_the_limit_are_body_errors() {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRequestBodyJsonDepthLimit 2
+        SecRule REQBODY_ERROR "@eq 1" "id:1,phase:2,deny,status:400"
+    "#);
+
+    for (body, too_deep) in [
+        (r#"{"a": {"b": 1}}"#, false),
+        (r#"{"a": [{"b": 1}]}"#, true),
+    ] {
+        let mut tx = waf.new_transaction();
+        tx.add_request_header("Content-Type", "application/json");
+        tx.process_request_headers();
+        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        assert_eq!(interruption.is_some(), too_deep, "{body}");
+    }
+}
+
+#[test]
+fn only_response_bodies_of_listed_types_are_inspected() {
+    let waf = waf(r#"
+        SecResponseBodyAccess On
+        SecResponseBodyMimeType text/html
+        SecRule RESPONSE_BODY "@contains secret" "id:1,phase:4,deny,status:403"
+    "#);
+
+    for (content_type, inspected) in [
+        ("text/html; charset=utf-8", true),
+        ("application/json", false),
+    ] {
+        let mut tx = waf.new_transaction();
+        tx.add_response_header("Content-Type", content_type);
+        tx.process_response_headers(200, "HTTP/1.1");
+        let interruption = tx.process_response_body(b"a secret");
+        assert_eq!(interruption.is_some(), inspected, "{content_type}");
+    }
+}
