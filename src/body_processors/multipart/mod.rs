@@ -141,15 +141,10 @@ fn save_to_temp(upload_dir: &str, data: &[u8]) -> Result<String, BodyProcessorEr
     Ok(temp_path.to_string_lossy().to_string())
 }
 
-/// Factory function for creating multipart body processors
-pub fn create_multipart() -> Box<dyn BodyProcessor> {
-    Box::new(MultipartBodyProcessor)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::body_processors::get_body_processor;
+    use crate::body_processors::BodyProcessorKind;
     use std::fs;
 
     #[test]
@@ -390,7 +385,7 @@ Content-Type: text/plain\r
 
     #[test]
     fn test_multipart_from_registry() {
-        let processor = get_body_processor("multipart").unwrap();
+        let processor = BodyProcessorKind::Multipart;
         let mut tx = Transaction::new("test-8");
 
         let payload = "\

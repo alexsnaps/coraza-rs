@@ -154,15 +154,10 @@ fn flatten_value(value: &Value, key_buffer: &mut Vec<u8>, result: &mut HashMap<S
     }
 }
 
-/// Factory function for creating JSON body processors
-pub fn create_json() -> Box<dyn BodyProcessor> {
-    Box::new(JsonBodyProcessor)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::body_processors::get_body_processor;
+    use crate::body_processors::BodyProcessorKind;
     #[test]
     fn test_json_map() {
         let json = r#"
@@ -338,7 +333,7 @@ mod tests {
 
     #[test]
     fn test_json_from_registry() {
-        let processor = get_body_processor("json").unwrap();
+        let processor = BodyProcessorKind::Json;
         let mut tx = Transaction::new("test-3");
 
         let body = br#"{"test": "value"}"#;

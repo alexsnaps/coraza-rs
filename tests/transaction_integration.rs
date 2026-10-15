@@ -13,7 +13,7 @@
 
 use coraza::RulePhase;
 use coraza::actions::{ActionType, RuleMetadata};
-use coraza::body_processors::{BodyProcessorOptions, get_body_processor};
+use coraza::body_processors::{BodyProcessorKind, BodyProcessorOptions};
 use coraza::rules::{Rule, RuleGroup};
 use coraza::transaction::{Interruption, Transaction};
 
@@ -24,7 +24,7 @@ fn test_urlencoded_body_processing() {
     let mut tx = Transaction::new("urlencoded-test");
 
     // Process URL-encoded body
-    let processor = get_body_processor("urlencoded").unwrap();
+    let processor = BodyProcessorKind::UrlEncoded;
     let body = b"username=admin&password=secret123&remember=true";
 
     processor
@@ -48,7 +48,7 @@ fn test_json_body_processing() {
     let mut tx = Transaction::new("json-test");
 
     // Process JSON body
-    let processor = get_body_processor("json").unwrap();
+    let processor = BodyProcessorKind::Json;
     let body = br#"{"user": {"name": "admin", "role": "super"}, "items": [1, 2, 3]}"#;
 
     processor
@@ -67,7 +67,7 @@ fn test_xml_body_processing() {
     let mut tx = Transaction::new("xml-test");
 
     // Process XML body
-    let processor = get_body_processor("xml").unwrap();
+    let processor = BodyProcessorKind::Xml;
     let body = br#"<user role="admin"><name>John</name></user>"#;
 
     processor

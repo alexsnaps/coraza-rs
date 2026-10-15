@@ -113,15 +113,10 @@ fn parse_query(query: &str, separator: u8) -> std::collections::HashMap<String, 
     result
 }
 
-/// Factory function for creating URL-encoded body processors
-pub fn create_urlencoded() -> Box<dyn BodyProcessor> {
-    Box::new(UrlencodedBodyProcessor)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::body_processors::get_body_processor;
+    use crate::body_processors::BodyProcessorKind;
     #[test]
     fn test_urlencoded_basic() {
         let processor = UrlencodedBodyProcessor;
@@ -233,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_urlencoded_from_registry() {
-        let processor = get_body_processor("urlencoded").unwrap();
+        let processor = BodyProcessorKind::UrlEncoded;
         let mut tx = Transaction::new("test-8");
 
         let body = b"test=value";

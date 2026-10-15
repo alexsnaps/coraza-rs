@@ -87,7 +87,7 @@ probed bugs.
 
 ## 5. Name → implementation lookup done five ways
 
-- [ ] **Use a `match` on the lowercased name, next to the type, for every built-in set.** Keep a runtime registry
+- [x] **Use a `match` on the lowercased name, next to the type, for every built-in set.** Keep a runtime registry
   only where plugins are actually needed.
   - Directives: `HashMap` rebuilt on every `Parser::new()` (`src/seclang/parser.rs:151`). **Done.**
   - Actions: 32 one-line factories in a `OnceLock` map (`src/actions/mod.rs`). **Done.**
@@ -98,8 +98,9 @@ probed bugs.
     `RuleOperator`.
   - Body processors: global `LazyLock<RwLock<HashMap>>` (`src/body_processors/mod.rs:172`), reached via
     content-type → string → lookup (`src/transaction/mod.rs:1070`). An enum of the five kinds would do;
-    `BodyProcessorOptions` upload fields are always `Default`.
-  - Transformations: no lookup at all (see item 2).
+    `BodyProcessorOptions` upload fields are always `Default`. **Done:** `BodyProcessorKind` replaces the registry;
+    still open: the upload options are not wired from `WafConfig` (needs config plumbed into the transaction).
+  - Transformations: no lookup at all (see item 2). **Done** in item 2 (`transformations::by_name`).
 - [ ] **Remove `actions::register`.** Public, and always panics with `todo!()` (`src/actions/mod.rs:502`).
 - [ ] **Parse `ctl` once.** `CtlAction` validates its value, stores the raw string, and re-parses it in `evaluate`
   (`src/actions/ctl.rs:263`). **(probe)** `ctl:ruleEngine=bogus` compiles and is silently ignored. Use data-carrying

@@ -110,15 +110,10 @@ fn parse_xml(xml_data: &[u8]) -> (Vec<String>, Vec<String>) {
     (attrs, contents)
 }
 
-/// Factory function for creating XML body processors
-pub fn create_xml() -> Box<dyn BodyProcessor> {
-    Box::new(XmlBodyProcessor)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::body_processors::get_body_processor;
+    use crate::body_processors::BodyProcessorKind;
     #[test]
     fn test_xml_attributes() {
         // Go test: TestXMLAttribures
@@ -333,7 +328,7 @@ mod tests {
 
     #[test]
     fn test_xml_from_registry() {
-        let processor = get_body_processor("xml").unwrap();
+        let processor = BodyProcessorKind::Xml;
         let mut tx = Transaction::new("test-3");
 
         let xml_doc = br#"<test>value</test>"#;

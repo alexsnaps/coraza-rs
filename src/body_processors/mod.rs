@@ -10,24 +10,21 @@
 //! # Example
 //!
 //! ```
-//! use coraza::body_processors::{get_body_processor, BodyProcessorOptions};
+//! use coraza::body_processors::{BodyProcessorKind, BodyProcessorOptions};
 //! use coraza::transaction::Transaction;
 //!
-//! // Get the URL-encoded body processor
-//! let processor = get_body_processor("urlencoded");
-//! // Processor will be available once URL-encoded is implemented
+//! let content_type = "application/x-www-form-urlencoded";
+//! let processor = BodyProcessorKind::for_content_type(content_type).unwrap();
 //!
-//! // Example when implemented:
-//! // let mut tx = Transaction::new("tx-1");
-//! // let body = b"username=admin&password=secret";
-//! // processor.process_request(body, &mut tx, BodyProcessorOptions::default())?;
+//! let mut tx = Transaction::new("tx-1");
+//! let options = BodyProcessorOptions { mime: content_type.to_string(), ..Default::default() };
+//! processor.process_request(b"username=admin", &mut tx, &options)?;
+//! assert_eq!(tx.args_post().get("username"), vec!["admin"]);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 use crate::transaction::Transaction;
-use std::collections::HashMap;
 use std::io;
-use std::sync::{LazyLock, RwLock};
 
 pub mod json;
 pub mod multipart;
@@ -165,88 +162,79 @@ pub trait BodyProcessor: Send + Sync {
     ) -> Result<(), BodyProcessorError>;
 }
 
-/// Factory function for creating body processors
-pub type BodyProcessorFactory = fn() -> Box<dyn BodyProcessor>;
-
-/// Global registry of body processors
-static BODY_PROCESSORS: LazyLock<RwLock<HashMap<String, BodyProcessorFactory>>> =
-    LazyLock::new(|| {
-        let mut registry = HashMap::new();
-        // Register built-in processors
-        registry.insert("raw".to_string(), raw::create_raw as BodyProcessorFactory);
-        registry.insert(
-            "urlencoded".to_string(),
-            urlencoded::create_urlencoded as BodyProcessorFactory,
-        );
-        registry.insert(
-            "multipart".to_string(),
-            multipart::create_multipart as BodyProcessorFactory,
-        );
-        registry.insert(
-            "json".to_string(),
-            json::create_json as BodyProcessorFactory,
-        );
-        registry.insert("xml".to_string(), xml::create_xml as BodyProcessorFactory);
-        RwLock::new(registry)
-    });
-
-/// Register a body processor by name
-///
-/// If a processor with the same name already exists, it will be overwritten.
-///
-/// # Example
-///
-/// ```
-/// use coraza::body_processors::{register_body_processor, BodyProcessor, BodyProcessorOptions, BodyProcessorError};
-/// use coraza::transaction::Transaction;
-///
-/// struct CustomProcessor;
-///
-/// impl BodyProcessor for CustomProcessor {
-///     fn process_request(&self, _body: &[u8], _tx: &mut Transaction,
-///                        _options: &BodyProcessorOptions)
-///                       -> Result<(), BodyProcessorError> {
-///         Ok(())
-///     }
-///
-///     fn process_response(&self, _body: &[u8], _tx: &mut Transaction,
-///                         _options: &BodyProcessorOptions)
-///                        -> Result<(), BodyProcessorError> {
-///         Ok(())
-///     }
-/// }
-///
-/// fn create_custom() -> Box<dyn BodyProcessor> {
-///     Box::new(CustomProcessor)
-/// }
-///
-/// register_body_processor("custom", create_custom);
-/// ```
-pub fn register_body_processor(name: &str, factory: BodyProcessorFactory) {
-    let mut registry = BODY_PROCESSORS.write().unwrap();
-    registry.insert(name.to_lowercase(), factory);
+/// The built-in body processors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyProcessorKind {
+    /// Keeps the body as-is (`REQUEST_BODY` only)
+    Raw,
+    /// `application/x-www-form-urlencoded`
+    UrlEncoded,
+    /// `multipart/form-data`
+    Multipart,
+    /// `application/json`
+    Json,
+    /// `application/xml`, `text/xml`
+    Xml,
 }
 
-/// Get a body processor by name
-///
-/// # Errors
-///
-/// Returns an error if the processor is not registered.
-///
-/// # Example
-///
-/// ```
-/// use coraza::body_processors::get_body_processor;
-///
-/// let processor = get_body_processor("raw")?;
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-pub fn get_body_processor(name: &str) -> Result<Box<dyn BodyProcessor>, BodyProcessorError> {
-    let registry = BODY_PROCESSORS.read().unwrap();
-    registry
-        .get(&name.to_lowercase())
-        .map(|factory| factory())
-        .ok_or_else(|| BodyProcessorError::Generic(format!("invalid bodyprocessor {:?}", name)))
+impl BodyProcessorKind {
+    /// The processor for a request `Content-Type` value, matched by case-insensitive
+    /// prefix (as in Go Coraza); `None` if no processor parses that content type.
+    pub fn for_content_type(content_type: &str) -> Option<Self> {
+        const BY_PREFIX: [(&str, BodyProcessorKind); 5] = [
+            (
+                "application/x-www-form-urlencoded",
+                BodyProcessorKind::UrlEncoded,
+            ),
+            ("multipart/form-data", BodyProcessorKind::Multipart),
+            ("application/json", BodyProcessorKind::Json),
+            ("application/xml", BodyProcessorKind::Xml),
+            ("text/xml", BodyProcessorKind::Xml),
+        ];
+        let content_type = content_type.to_ascii_lowercase();
+        BY_PREFIX
+            .iter()
+            .find(|(prefix, _)| content_type.starts_with(prefix))
+            .map(|&(_, kind)| kind)
+    }
+
+    /// Parses a request body into `tx`; see [`BodyProcessor::process_request`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the body is malformed for this processor.
+    pub fn process_request(
+        self,
+        body: &[u8],
+        tx: &mut Transaction,
+        options: &BodyProcessorOptions,
+    ) -> Result<(), BodyProcessorError> {
+        self.processor().process_request(body, tx, options)
+    }
+
+    /// Parses a response body into `tx`; see [`BodyProcessor::process_response`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the body is malformed for this processor.
+    pub fn process_response(
+        self,
+        body: &[u8],
+        tx: &mut Transaction,
+        options: &BodyProcessorOptions,
+    ) -> Result<(), BodyProcessorError> {
+        self.processor().process_response(body, tx, options)
+    }
+
+    fn processor(self) -> &'static dyn BodyProcessor {
+        match self {
+            Self::Raw => &raw::RawBodyProcessor,
+            Self::UrlEncoded => &urlencoded::UrlencodedBodyProcessor,
+            Self::Multipart => &multipart::MultipartBodyProcessor,
+            Self::Json => &json::JsonBodyProcessor,
+            Self::Xml => &xml::XmlBodyProcessor,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -254,61 +242,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_register_and_get_processor() {
-        struct TestProcessor;
-
-        impl BodyProcessor for TestProcessor {
-            fn process_request(
-                &self,
-                _body: &[u8],
-                _tx: &mut Transaction,
-                _options: &BodyProcessorOptions,
-            ) -> Result<(), BodyProcessorError> {
-                Ok(())
-            }
-
-            fn process_response(
-                &self,
-                _body: &[u8],
-                _tx: &mut Transaction,
-                _options: &BodyProcessorOptions,
-            ) -> Result<(), BodyProcessorError> {
-                Ok(())
-            }
-        }
-
-        fn create_test() -> Box<dyn BodyProcessor> {
-            Box::new(TestProcessor)
-        }
-
-        register_body_processor("test", create_test);
-        let processor = get_body_processor("test");
-        assert!(processor.is_ok());
+    fn for_content_type_matches_by_prefix_ignoring_case() {
+        assert_eq!(
+            BodyProcessorKind::for_content_type("Application/JSON; charset=utf-8"),
+            Some(BodyProcessorKind::Json)
+        );
+        assert_eq!(
+            BodyProcessorKind::for_content_type("multipart/form-data; boundary=x"),
+            Some(BodyProcessorKind::Multipart)
+        );
+        assert_eq!(
+            BodyProcessorKind::for_content_type("text/xml"),
+            Some(BodyProcessorKind::Xml)
+        );
+        assert_eq!(
+            BodyProcessorKind::for_content_type("application/json-patch+json"),
+            Some(BodyProcessorKind::Json)
+        );
     }
 
     #[test]
-    fn test_get_processor_case_insensitive() {
-        let processor1 = get_body_processor("RAW");
-        let processor2 = get_body_processor("raw");
-        let processor3 = get_body_processor("Raw");
-
-        assert!(processor1.is_ok());
-        assert!(processor2.is_ok());
-        assert!(processor3.is_ok());
-    }
-
-    #[test]
-    fn test_get_nonexistent_processor() {
-        let processor = get_body_processor("nonexistent");
-        assert!(processor.is_err());
-        if let Err(e) = processor {
-            assert!(e.to_string().contains("invalid bodyprocessor"));
-        }
-    }
-
-    #[test]
-    fn test_raw_processor_registered() {
-        let processor = get_body_processor("raw");
-        assert!(processor.is_ok());
+    fn for_content_type_rejects_unparsed_types() {
+        assert_eq!(BodyProcessorKind::for_content_type("text/plain"), None);
+        assert_eq!(BodyProcessorKind::for_content_type(""), None);
     }
 }

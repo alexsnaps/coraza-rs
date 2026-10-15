@@ -44,15 +44,10 @@ impl BodyProcessor for RawBodyProcessor {
     }
 }
 
-/// Factory function for creating RAW body processors
-pub fn create_raw() -> Box<dyn BodyProcessor> {
-    Box::new(RawBodyProcessor)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::body_processors::get_body_processor;
+    use crate::body_processors::BodyProcessorKind;
     #[test]
     fn test_raw_processor_basic() {
         let processor = RawBodyProcessor;
@@ -100,7 +95,7 @@ mod tests {
 
     #[test]
     fn test_raw_processor_from_registry() {
-        let processor = get_body_processor("raw").unwrap();
+        let processor = BodyProcessorKind::Raw;
         let mut tx = Transaction::new("test");
 
         let body = b"test body";

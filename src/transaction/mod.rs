@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use crate::RuleVariable;
 use crate::actions::AllowType;
+use crate::body_processors::{BodyProcessorKind, BodyProcessorOptions};
 use crate::collection::{Map, Single};
 use crate::rules::RuleGroup;
 use crate::types::{RuleEngineStatus, RulePhase};
@@ -1161,40 +1162,15 @@ impl Transaction {
             .map(|s| s.as_str())
             .unwrap_or("");
 
-        // Determine body processor
-        let processor_name = if content_type.starts_with("application/x-www-form-urlencoded") {
-            Some("urlencoded")
-        } else if content_type.starts_with("multipart/form-data") {
-            Some("multipart")
-        } else if content_type.starts_with("application/json") {
-            Some("json")
-        } else if content_type.starts_with("application/xml")
-            || content_type.starts_with("text/xml")
-        {
-            Some("xml")
-        } else {
-            None
-        };
+        if let Some(processor) = BodyProcessorKind::for_content_type(content_type) {
+            let options = BodyProcessorOptions {
+                mime: content_type.to_string(),
+                ..Default::default()
+            };
 
-        // Process body if we have a processor
-        if let Some(processor_name) = processor_name {
-            use crate::body_processors::{BodyProcessorOptions, get_body_processor};
-
-            match get_body_processor(processor_name) {
-                Ok(processor) => {
-                    let options = BodyProcessorOptions {
-                        mime: content_type.to_string(),
-                        ..Default::default()
-                    };
-
-                    if let Err(e) = processor.process_request(body, self, &options) {
-                        // Log error but don't fail the transaction
-                        eprintln!("Body processor error: {}", e);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to get body processor: {}", e);
-                }
+            if let Err(e) = processor.process_request(body, self, &options) {
+                // Log error but don't fail the transaction
+                eprintln!("Body processor error: {}", e);
             }
         }
 
