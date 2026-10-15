@@ -85,7 +85,7 @@ Suggested order: 1 → 2 → 3 → 6, then 4 and 5. The first three items of 1 a
 
 ## 2. Accepted but ignored
 
-- [ ] **`ctl` commands that do nothing.** `requestBodyProcessor`, `responseBodyProcessor`, `auditEngine`,
+- [x] **`ctl` commands that do nothing.** `requestBodyProcessor`, `responseBodyProcessor`, `auditEngine`,
   `auditLogParts`, `debugLogLevel`, `hashEngine` and `hashEnforcement` parse to `CtlCommand::NotImplemented`
   (`src/actions/ctl.rs:81`-`96`).
   - The body parser is chosen by a prefix match on `Content-Type` instead. So rule 200006 of
@@ -97,6 +97,10 @@ Suggested order: 1 → 2 → 3 → 6, then 4 and 5. The first three items of 1 a
     sets `RESBODY_PROCESSOR`, whose processor then parses the response body instead of storing it in
     `RESPONSE_BODY`. A processor failing sets `REQBODY_ERROR`, `REQBODY_PROCESSOR_ERROR` and their messages, or
     the `RESBODY_*` ones. Unlike Go, an unknown processor name is a compile error.
+  - Done for the rest: `auditEngine`, `auditLogParts` and `debugLogLevel` change the transaction's own copy of
+    the WAF's setting (`Transaction::audit_engine`, `audit_log_parts`, `debug_log_level`), which an embedder's
+    logger can read; the library itself writes neither log. `hashEngine` and `hashEnforcement` have no effect, as in
+    Go ("not supported yet"). A transaction now takes all its `ctl`-changeable settings from the WAF in one place.
 - [ ] **`SecRequestBodyAccess` and `SecResponseBodyAccess` are not enforced.** Found while working on 1.6: bodies are
   stored and processed whatever the setting, while Go skips them (and defaults both to `Off`, as `WafConfig` does).
 

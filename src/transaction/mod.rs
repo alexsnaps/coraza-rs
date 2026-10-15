@@ -13,7 +13,7 @@ use crate::body_processors::{BodyProcessorKind, BodyProcessorOptions};
 use crate::collection::{Map, Single};
 use crate::config::WafConfig;
 use crate::rules::RuleGroup;
-use crate::types::{RuleEngineStatus, RulePhase};
+use crate::types::{AuditEngineStatus, AuditLogPart, AuditLogParts, RuleEngineStatus, RulePhase};
 
 /// Information about a rule that matched during transaction processing.
 ///
@@ -406,6 +406,15 @@ pub struct Transaction {
     /// [`Transaction::new`]
     config: Arc<WafConfig>,
 
+    /// Audit logging mode (`SecAuditEngine`, controlled by ctl:auditEngine)
+    audit_engine: AuditEngineStatus,
+
+    /// Audit log parts (`SecAuditLogParts`, controlled by ctl:auditLogParts)
+    audit_log_parts: AuditLogParts,
+
+    /// Debug log verbosity, 0 to 9 (`SecDebugLogLevel`, controlled by ctl:debugLogLevel)
+    debug_log_level: u8,
+
     /// Force REQUEST_BODY variable creation (controlled by ctl:forceRequestBodyVariable)
     pub(crate) force_request_body_variable: bool,
 
@@ -512,6 +521,7 @@ fn is_request_uri(uri: &str) -> bool {
 impl Transaction {
     /// Create a new transaction with the given ID.
     pub fn new(id: impl Into<String>) -> Self {
+        let config = WafConfig::default();
         Self {
             id: id.into(),
             args: Map::new_case_sensitive(RuleVariable::Args),
@@ -567,7 +577,10 @@ impl Transaction {
             rule_engine: RuleEngineStatus::On,
             request_body_access: true,
             request_body_limit: 131072, // 128KB default
-            config: Arc::new(WafConfig::default()),
+            audit_engine: config.audit_engine,
+            audit_log_parts: config.audit_log_parts.clone(),
+            debug_log_level: config.debug_log_level,
+            config: Arc::new(config),
             force_request_body_variable: false,
             response_body_access: false,
             response_body_limit: 524288, // 512KB default
@@ -598,8 +611,17 @@ impl Transaction {
         self.rules = Some(rules);
     }
 
-    /// Makes the transaction use the settings of its WAF.
+    /// Makes the transaction use the settings of its WAF, starting with its own copy of
+    /// those a `ctl` action can change.
     pub(crate) fn set_config(&mut self, config: Arc<WafConfig>) {
+        self.rule_engine = config.rule_engine;
+        self.request_body_access = config.request_body_access;
+        self.request_body_limit = config.request_body_limit;
+        self.response_body_access = config.response_body_access;
+        self.response_body_limit = config.response_body_limit;
+        self.audit_engine = config.audit_engine;
+        self.audit_log_parts.clone_from(&config.audit_log_parts);
+        self.debug_log_level = config.debug_log_level;
         self.config = config;
     }
 
@@ -918,6 +940,38 @@ impl Transaction {
     /// Get force request body variable status.
     pub fn force_request_body_variable(&self) -> bool {
         self.force_request_body_variable
+    }
+
+    /// Audit logging mode of this transaction; the library writes no audit log, so this
+    /// is for the embedder.
+    pub fn audit_engine(&self) -> AuditEngineStatus {
+        self.audit_engine
+    }
+
+    /// Set the audit logging mode (used by ctl:auditEngine).
+    pub fn set_audit_engine(&mut self, status: AuditEngineStatus) {
+        self.audit_engine = status;
+    }
+
+    /// Audit log parts of this transaction, `A` and `Z` included.
+    pub fn audit_log_parts(&self) -> &[AuditLogPart] {
+        &self.audit_log_parts
+    }
+
+    /// Set the audit log parts (used by ctl:auditLogParts).
+    pub fn set_audit_log_parts(&mut self, parts: AuditLogParts) {
+        self.audit_log_parts = parts;
+    }
+
+    /// Debug log verbosity of this transaction, 0 to 9; the library writes no debug log,
+    /// so this is for the embedder.
+    pub fn debug_log_level(&self) -> u8 {
+        self.debug_log_level
+    }
+
+    /// Set the debug log verbosity (used by ctl:debugLogLevel).
+    pub fn set_debug_log_level(&mut self, level: u8) {
+        self.debug_log_level = level;
     }
 
     /// Set response body access (used by ctl:responseBodyAccess).

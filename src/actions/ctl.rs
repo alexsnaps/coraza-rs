@@ -10,7 +10,10 @@
 use crate::actions::{ActionError, RuleMetadata};
 use crate::body_processors::BodyProcessorKind;
 use crate::transaction::Transaction;
-use crate::types::{AuditEngineStatus, ParseValueError, RuleEngineStatus, RulePhase, RuleVariable};
+use crate::types::{
+    AuditEngineStatus, ParseValueError, RuleEngineStatus, RulePhase, RuleVariable,
+    apply_audit_log_parts,
+};
 use std::ops::RangeInclusive;
 use std::str::FromStr;
 
@@ -33,9 +36,12 @@ enum CtlCommand {
     RuleRemoveTargetById(i32, RuleTarget),
     RuleRemoveTargetByTag(String, RuleTarget),
     RuleRemoveTargetByMsg(String, RuleTarget),
-    /// Accepted (and validated where possible) but not acted on yet: `auditEngine`,
-    /// `auditLogParts`, `debugLogLevel`, `hashEngine`, `hashEnforcement`
-    NotImplemented,
+    AuditEngine(AuditEngineStatus),
+    /// A validated change to the parts: `+E`, `-E` or all of them (`ABCFHZ`)
+    AuditLogParts(String),
+    DebugLogLevel(u8),
+    /// `hashEngine` and `hashEnforcement`: accepted with no effect, as in Go Coraza
+    Unsupported,
 }
 
 /// A variable excluded from rules by the `ruleRemoveTarget*` commands.
@@ -82,18 +88,19 @@ impl CtlCommand {
                 let (msg, target) = split_target(value)?;
                 Self::RuleRemoveTargetByMsg(msg.to_string(), target)
             }
-            "auditEngine" => {
-                AuditEngineStatus::from_str(value).map_err(|e| invalid(e.to_string()))?;
-                Self::NotImplemented
+            "auditEngine" => Self::AuditEngine(
+                AuditEngineStatus::from_str(value).map_err(|e| invalid(e.to_string()))?,
+            ),
+            "auditLogParts" => {
+                // Validated against no parts; applied to the transaction's when evaluated
+                apply_audit_log_parts(&[], value).map_err(|e| invalid(e.to_string()))?;
+                Self::AuditLogParts(value.to_string())
             }
-            "debugLogLevel" => {
-                match value.parse::<u8>() {
-                    Ok(0..=9) => {}
-                    _ => return Err(invalid(format!("log level must be 0-9, got '{}'", value))),
-                }
-                Self::NotImplemented
-            }
-            "auditLogParts" | "hashEngine" | "hashEnforcement" => Self::NotImplemented,
+            "debugLogLevel" => match value.parse::<u8>() {
+                Ok(level @ 0..=9) => Self::DebugLogLevel(level),
+                _ => return Err(invalid(format!("log level must be 0-9, got '{}'", value))),
+            },
+            "hashEngine" | "hashEnforcement" => Self::Unsupported,
             _ => return Err(invalid(format!("unknown ctl command '{}'", name))),
         };
         Ok(command)
@@ -292,7 +299,14 @@ impl CtlAction {
                     tx.remove_rule_target_by_id(id, target.variable, target.key.as_str());
                 }
             }
-            CtlCommand::NotImplemented => {}
+            CtlCommand::AuditEngine(status) => tx.set_audit_engine(*status),
+            CtlCommand::AuditLogParts(change) => {
+                let parts = apply_audit_log_parts(tx.audit_log_parts(), change)
+                    .expect("audit log parts change validated when compiled");
+                tx.set_audit_log_parts(parts);
+            }
+            CtlCommand::DebugLogLevel(level) => tx.set_debug_log_level(*level),
+            CtlCommand::Unsupported => {}
         }
     }
 }
@@ -390,13 +404,9 @@ mod tests {
     }
 
     #[test]
-    fn test_ctl_accepts_not_implemented_commands() {
-        for data in [
-            "auditEngine=RelevantOnly",
-            "auditLogParts=ABZ",
-            "debugLogLevel=3",
-        ] {
-            assert_eq!(parse(data), CtlCommand::NotImplemented, "{}", data);
+    fn test_ctl_accepts_hash_commands_with_no_effect() {
+        for data in ["hashEngine=On", "hashEnforcement=On"] {
+            assert_eq!(parse(data), CtlCommand::Unsupported, "{}", data);
         }
     }
 
@@ -412,7 +422,8 @@ mod tests {
             .unwrap()
             .evaluate(&mut tx);
         assert_eq!(
-            tx.get_variable(RuleVariable::ReqbodyProcessor, None).as_deref(),
+            tx.get_variable(RuleVariable::ReqbodyProcessor, None)
+                .as_deref(),
             Some("JSON")
         );
 
@@ -422,7 +433,8 @@ mod tests {
             .unwrap()
             .evaluate(&mut tx);
         assert_eq!(
-            tx.get_variable(RuleVariable::ReqbodyProcessor, None).as_deref(),
+            tx.get_variable(RuleVariable::ReqbodyProcessor, None)
+                .as_deref(),
             Some("JSON")
         );
     }

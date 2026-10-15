@@ -149,12 +149,6 @@ impl Waf {
     pub fn new_transaction_with_id(&self, id: String) -> Transaction {
         let mut tx = Transaction::new(id);
 
-        // Inherit configuration from WAF
-        tx.set_rule_engine(self.config.rule_engine);
-        tx.set_request_body_access(self.config.request_body_access);
-        tx.set_request_body_limit(self.config.request_body_limit);
-        tx.set_response_body_access(self.config.response_body_access);
-        tx.set_response_body_limit(self.config.response_body_limit);
         tx.set_config(Arc::clone(&self.config));
 
         // Share rules reference for CTL tag/msg-based exclusions

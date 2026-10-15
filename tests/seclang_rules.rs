@@ -744,3 +744,42 @@ fn unknown_body_processors_are_parse_errors() {
         assert!(parser.from_string(&rule).is_err(), "{ctl}");
     }
 }
+
+#[test]
+fn ctl_changes_audit_and_debug_settings_of_one_transaction() {
+    use coraza::types::{AuditEngineStatus, AuditLogPart};
+
+    let waf = waf(r#"
+        SecAuditEngine RelevantOnly
+        SecAuditLogParts ABZ
+        SecDebugLogLevel 1
+        SecRule ARGS:audit "@streq all" "id:1,phase:1,pass,nolog,ctl:auditEngine=On,ctl:auditLogParts=+E,ctl:debugLogLevel=9"
+    "#);
+
+    let tx = request_with_arg(&waf, "audit", "none");
+    assert_eq!(tx.audit_engine(), AuditEngineStatus::RelevantOnly);
+    assert_eq!(tx.debug_log_level(), 1);
+
+    let mut tx = request_with_arg(&waf, "audit", "all");
+    tx.process_request_headers();
+    assert_eq!(tx.audit_engine(), AuditEngineStatus::On);
+    assert!(
+        tx.audit_log_parts()
+            .contains(&AuditLogPart::IntermediaryResponseBody)
+    );
+    assert_eq!(tx.debug_log_level(), 9);
+    assert_eq!(waf.config().audit_engine, AuditEngineStatus::RelevantOnly);
+}
+
+#[test]
+fn invalid_ctl_audit_and_debug_values_are_parse_errors() {
+    for ctl in [
+        "auditEngine=Sometimes",
+        "auditLogParts=+A",
+        "debugLogLevel=10",
+    ] {
+        let mut parser = Parser::new();
+        let rule = format!(r#"SecAction "id:1,phase:1,pass,ctl:{ctl}""#);
+        assert!(parser.from_string(&rule).is_err(), "{ctl}");
+    }
+}
