@@ -45,8 +45,10 @@ probed bugs.
   `@streq admin` with `t:lowercase` does not match `ADMIN`.
   - Done: the chain lives in `RuleMetadata` only; `t:` resolves names via `transformations::by_name` and rejects
     unknown ones. Regression tests in `tests/seclang_rules.rs`.
-- [ ] **Wire or remove `capture`.** It sets `metadata.capture`, which nothing reads. **(probe)** `tx.capturing()`
+- [x] **Wire or remove `capture`.** It sets `metadata.capture`, which nothing reads. **(probe)** `tx.capturing()`
   stays `false`.
+  - Done: each rule sets capturing from its `capture` flag before its operator runs; captures land in `TX.0`-`TX.9`
+    (as in Go) instead of a private vector nothing read.
 - [ ] **Keep one representation of chains.** Chain role lives in `has_chain`, a `parent_id` where 0 means "none",
   and `chain: Option<Box<Rule>>`. `parent_id` is only assigned in tests (`src/rules/rule.rs:507/546/585`).
   **(probe)** A chain parent's `setvar` never runs. Derive the role from position, pass it down during evaluation,

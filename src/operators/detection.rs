@@ -162,10 +162,11 @@ mod tests {
         // Detect SQL injection and capture fingerprint
         assert!(op.evaluate(Some(&mut tx), "1' OR '1'='1"));
 
-        // Verify fingerprint was captured (field 0)
-        // The captures field is directly accessible on Transaction
-        // We can access it through the struct but ideally would have a getter
-        // For now, we just verify the SQL injection was detected
+        // The fingerprint is captured into TX.0
+        assert!(
+            tx.get_variable(crate::RuleVariable::TX, Some("0"))
+                .is_some_and(|fingerprint| !fingerprint.is_empty())
+        );
     }
 
     #[test]

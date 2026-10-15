@@ -233,6 +233,9 @@ impl Rule {
             return matches;
         }
 
+        // Operators store regex groups in TX.0-TX.9 only for rules with `capture`
+        tx.set_capturing(self.metadata.capture);
+
         // Extract matches from all variables
         let mut matched_values = Vec::new();
 

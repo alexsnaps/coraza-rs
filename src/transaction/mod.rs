@@ -240,10 +240,7 @@ pub struct Transaction {
     /// Marker ID to skip to (controlled by skipAfter action)
     pub(crate) skip_after: String,
 
-    /// Captured values from operators (rx, pm)
-    captures: Vec<Option<String>>,
-
-    /// Whether capturing is enabled
+    /// Whether operators of the rule being evaluated store their captures in TX.0-TX.9
     capturing: bool,
 
     // ===== CTL Runtime Exclusions =====
@@ -323,7 +320,6 @@ impl Transaction {
             interruption: None,
             skip: 0,
             skip_after: String::new(),
-            captures: Vec::new(),
             capturing: false,
             rule_remove_by_id: std::collections::BTreeSet::new(),
             rule_remove_target_by_id: std::collections::BTreeMap::new(),
@@ -602,12 +598,10 @@ impl Transaction {
         &self.request_xml
     }
 
-    /// Enable or disable capturing for operators.
+    /// Sets whether operators store their captures in `TX.0`..`TX.9`; follows the `capture`
+    /// action of the rule being evaluated.
     pub fn set_capturing(&mut self, enabled: bool) {
         self.capturing = enabled;
-        if !enabled {
-            self.captures.clear();
-        }
     }
 
     // ===== CTL Action Setters =====
@@ -1369,16 +1363,9 @@ impl TransactionState for Transaction {
     }
 
     fn capture_field(&mut self, index: usize, value: &str) {
-        if !self.capturing {
-            return;
+        if self.capturing {
+            self.tx.set(&index.to_string(), vec![value.to_string()]);
         }
-
-        // Extend captures array if needed
-        if index >= self.captures.len() {
-            self.captures.resize(index + 1, None);
-        }
-
-        self.captures[index] = Some(value.to_string());
     }
 
     fn interrupt(&mut self, rule_id: i32, action: &str, status: i32, data: &str) {
@@ -1539,17 +1526,16 @@ mod tests {
         assert!(tx.capturing());
 
         tx.capture_field(0, "match1");
-        tx.capture_field(1, "match2");
         tx.capture_field(5, "match6"); // Sparse indexing
 
-        assert_eq!(tx.captures[0], Some("match1".to_string()));
-        assert_eq!(tx.captures[1], Some("match2".to_string()));
-        assert_eq!(tx.captures[2], None);
-        assert_eq!(tx.captures[5], Some("match6".to_string()));
+        assert_eq!(tx.tx.get("0"), vec!["match1"]);
+        assert!(tx.tx.get("1").is_empty());
+        assert_eq!(tx.tx.get("5"), vec!["match6"]);
 
-        // Disabling capturing clears captures
+        // Captures are dropped while capturing is off
         tx.set_capturing(false);
-        assert!(tx.captures.is_empty());
+        tx.capture_field(1, "ignored");
+        assert!(tx.tx.get("1").is_empty());
     }
 
     #[test]

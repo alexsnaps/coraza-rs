@@ -47,3 +47,30 @@ fn unknown_transformation_is_a_parse_error() {
 
     assert!(err.message.contains("noSuchThing"), "{}", err.message);
 }
+
+fn tx_var(tx: &Transaction, key: &str) -> Option<String> {
+    use coraza::RuleVariable;
+    use coraza::operators::TransactionState;
+    tx.get_variable(RuleVariable::TX, Some(key))
+}
+
+#[test]
+fn capture_stores_regex_groups_in_tx() {
+    let waf = waf(r#"SecRule ARGS "@rx (ad)(min)" "id:1,phase:1,capture,setvar:tx.got=%{tx.2}""#);
+
+    let mut tx = request_with_arg(&waf, "user", "admin");
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "1").as_deref(), Some("ad"));
+    assert_eq!(tx_var(&tx, "got").as_deref(), Some("min"));
+}
+
+#[test]
+fn without_capture_regex_groups_are_not_stored() {
+    let waf = waf(r#"SecRule ARGS "@rx (ad)min" "id:1,phase:1,pass""#);
+
+    let mut tx = request_with_arg(&waf, "user", "admin");
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "1"), None);
+}
