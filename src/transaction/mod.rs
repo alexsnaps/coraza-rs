@@ -126,6 +126,11 @@ macro_rules! variable_storage {
             RuleVariable::ResponseHeadersNames => {
                 Some(Names(RuleVariable::ResponseHeadersNames, $($borrow)+ $tx.response_headers))
             }
+            RuleVariable::UniqueID => Some(Single($($borrow)+ $tx.unique_id)),
+            RuleVariable::ArgsCombinedSize => Some(Single($($borrow)+ $tx.args_combined_size)),
+            RuleVariable::MultipartInvalidQuoting => {
+                Some(Single($($borrow)+ $tx.multipart_invalid_quoting))
+            }
             RuleVariable::MatchedVars => Some(Map($($borrow)+ $tx.matched_vars)),
             RuleVariable::MatchedVarsNames => {
                 Some(Names(RuleVariable::MatchedVarsNames, $($borrow)+ $tx.matched_vars))
@@ -182,8 +187,6 @@ macro_rules! variable_storage {
 
             // Not populated by this engine yet
             RuleVariable::Unknown
-            | RuleVariable::UniqueID
-            | RuleVariable::ArgsCombinedSize
             | RuleVariable::FullRequestLength
             | RuleVariable::InboundDataError
             | RuleVariable::MultipartDataAfter
@@ -211,7 +214,6 @@ macro_rules! variable_storage {
             | RuleVariable::MultipartHeaderFolding
             | RuleVariable::MultipartInvalidHeaderFolding
             | RuleVariable::MultipartInvalidPart
-            | RuleVariable::MultipartInvalidQuoting
             | RuleVariable::MultipartLfLine
             | RuleVariable::MultipartMissingSemicolon
             | RuleVariable::MultipartUnmatchedBoundary
@@ -253,8 +255,12 @@ macro_rules! variable_storage {
 /// assert_eq!(id_values, vec!["123"]);
 /// ```
 pub struct Transaction {
-    /// Transaction ID
-    id: String,
+    /// UNIQUE_ID - The transaction ID
+    unique_id: Single,
+
+    /// ARGS_COMBINED_SIZE - Bytes in the keys and values of ARGS_GET and ARGS_POST, as of
+    /// the start of the current phase
+    args_combined_size: Single,
 
     /// Combined ARGS (GET + POST parameters)
     args: Map,
@@ -380,6 +386,9 @@ pub struct Transaction {
 
     /// MULTIPART_DUPLICATE_PART_HEADER - "1" when a part repeats a header or parameter
     pub(crate) multipart_duplicate_part_header: Single,
+
+    /// MULTIPART_INVALID_QUOTING - "1" when a part's `filename*` is quoted
+    pub(crate) multipart_invalid_quoting: Single,
 
     /// REQUEST_XML - Parsed XML data (attributes and content)
     pub(crate) request_xml: Map,
@@ -549,7 +558,12 @@ impl Transaction {
     pub fn new(id: impl Into<String>) -> Self {
         let config = WafConfig::default();
         Self {
-            id: id.into(),
+            unique_id: {
+                let mut unique_id = Single::new(RuleVariable::UniqueID);
+                unique_id.set(id);
+                unique_id
+            },
+            args_combined_size: Single::new(RuleVariable::ArgsCombinedSize),
             args: Map::new_case_sensitive(RuleVariable::Args),
             args_get: Map::new_case_sensitive(RuleVariable::ArgsGet),
             args_post: Map::new_case_sensitive(RuleVariable::ArgsPost),
@@ -591,6 +605,7 @@ impl Transaction {
             multipart_part_headers: Map::new_case_sensitive(RuleVariable::MultipartPartHeaders),
             multipart_strict_error: Single::new(RuleVariable::MultipartStrictError),
             multipart_duplicate_part_header: flag(RuleVariable::MultipartDuplicatePartHeader),
+            multipart_invalid_quoting: flag(RuleVariable::MultipartInvalidQuoting),
             request_xml: Map::new_case_sensitive(RuleVariable::RequestXML),
             response_status: Single::new(RuleVariable::ResponseStatus),
             response_protocol: Single::new(RuleVariable::ResponseProtocol),
@@ -629,7 +644,7 @@ impl Transaction {
 
     /// Get the transaction ID.
     pub fn id(&self) -> &str {
-        &self.id
+        self.unique_id.get()
     }
 
     /// Set the rules reference (called by WAF when creating transactions).
@@ -678,6 +693,22 @@ impl Transaction {
     /// whether it triggers a disruptive action.
     pub(crate) fn record_match(&mut self, matched: MatchedRule) {
         self.matched_rules.push(matched);
+    }
+
+    /// Evaluates the WAF's rules of `phase`, if the transaction has a WAF.
+    fn evaluate_rules(&mut self, phase: RulePhase) {
+        // Computed here rather than kept up to date: anything may have added an argument
+        let combined_size: usize = [&self.args_get, &self.args_post]
+            .into_iter()
+            .flat_map(|args| args.find_all())
+            .map(|arg| arg.key.len() + arg.value.len())
+            .sum();
+        self.args_combined_size.set(combined_size.to_string());
+
+        if let Some(rules) = self.rules.clone() {
+            let rule_engine_on = self.rule_engine == RuleEngineStatus::On;
+            rules.eval(phase, self, rule_engine_on);
+        }
     }
 
     /// Records a value a rule (or chain link) matched, before its actions run: in
@@ -1353,10 +1384,7 @@ impl Transaction {
         self.last_phase = Some(RulePhase::RequestHeaders);
 
         // Evaluate rules for Phase 1 (Request Headers)
-        if let Some(rules) = self.rules.clone() {
-            let rule_engine_on = self.rule_engine == RuleEngineStatus::On;
-            rules.eval(RulePhase::RequestHeaders, self, rule_engine_on);
-        }
+        self.evaluate_rules(RulePhase::RequestHeaders);
 
         self.interruption.clone()
     }
@@ -1446,10 +1474,7 @@ impl Transaction {
         self.last_phase = Some(RulePhase::RequestBody);
 
         // Evaluate rules for Phase 2 (Request Body)
-        if let Some(rules) = self.rules.clone() {
-            let rule_engine_on = self.rule_engine == RuleEngineStatus::On;
-            rules.eval(RulePhase::RequestBody, self, rule_engine_on);
-        }
+        self.evaluate_rules(RulePhase::RequestBody);
 
         Ok(self.interruption.clone())
     }
@@ -1489,10 +1514,7 @@ impl Transaction {
         self.last_phase = Some(RulePhase::ResponseHeaders);
 
         // Evaluate rules for Phase 3 (Response Headers)
-        if let Some(rules) = self.rules.clone() {
-            let rule_engine_on = self.rule_engine == RuleEngineStatus::On;
-            rules.eval(RulePhase::ResponseHeaders, self, rule_engine_on);
-        }
+        self.evaluate_rules(RulePhase::ResponseHeaders);
 
         self.interruption.clone()
     }
@@ -1560,10 +1582,7 @@ impl Transaction {
         self.last_phase = Some(RulePhase::ResponseBody);
 
         // Evaluate rules for Phase 4 (Response Body)
-        if let Some(rules) = self.rules.clone() {
-            let rule_engine_on = self.rule_engine == RuleEngineStatus::On;
-            rules.eval(RulePhase::ResponseBody, self, rule_engine_on);
-        }
+        self.evaluate_rules(RulePhase::ResponseBody);
 
         self.interruption.clone()
     }
@@ -1587,10 +1606,7 @@ impl Transaction {
 
         // Evaluate rules for Phase 5 (Logging)
         // Note: Logging phase rules run even if transaction is disrupted
-        if let Some(rules) = self.rules.clone() {
-            let rule_engine_on = self.rule_engine == RuleEngineStatus::On;
-            rules.eval(RulePhase::Logging, self, rule_engine_on);
-        }
+        self.evaluate_rules(RulePhase::Logging);
 
         // TODO: Audit logging will go here
     }

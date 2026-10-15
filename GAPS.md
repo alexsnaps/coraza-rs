@@ -128,8 +128,11 @@ naming them expands to nothing. CRS v4.30.0 uses the ones below.
 - [x] **The names variables:** `ARGS_NAMES` (190 uses), `REQUEST_COOKIES_NAMES` (165), `REQUEST_HEADERS_NAMES`,
   `ARGS_GET_NAMES`, and the unused `ARGS_POST_NAMES` and `RESPONSE_HEADERS_NAMES`.
   - Done: each is a names view of the collection it names, read on demand, so it can't fall out of step.
-- [ ] **`REQBODY_PROCESSOR`, `ARGS_COMBINED_SIZE`, `UNIQUE_ID` and `MULTIPART_INVALID_QUOTING`.** `REQBODY_PROCESSOR`
+- [x] **`REQBODY_PROCESSOR`, `ARGS_COMBINED_SIZE`, `UNIQUE_ID` and `MULTIPART_INVALID_QUOTING`.** `REQBODY_PROCESSOR`
   is done, with the `ctl` body processors in section 2.
+  - Done for the rest: `UNIQUE_ID` is the transaction id; `ARGS_COMBINED_SIZE` the bytes in the keys and values
+    of `ARGS_GET` and `ARGS_POST`, computed as each phase's rules start; `MULTIPART_INVALID_QUOTING` (and
+    `MULTIPART_STRICT_ERROR`) flags a quoted `filename*`, as in Go.
   - `REQBODY_PROCESSOR` drives 901340/901350 and three 920 rules.
   - `UNIQUE_ID` drives CRS's sampling (901450).
 - [ ] **The rest, which CRS doesn't use.**

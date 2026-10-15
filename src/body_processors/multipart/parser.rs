@@ -58,6 +58,9 @@ pub struct Part {
     /// Whether the part repeats a header, or a parameter of its Content-Disposition
     pub repeats_header: bool,
 
+    /// Whether its Content-Disposition `filename*` is quoted, which RFC 5987 forbids
+    pub invalid_quoting: bool,
+
     /// The part body data
     pub data: Vec<u8>,
 }
@@ -176,6 +179,7 @@ fn parse_part(data: &[u8]) -> Result<Part, ParseError> {
         content_type,
         headers,
         repeats_header,
+        invalid_quoting: disposition.quoted_extended_filename,
         data: body_data.to_vec(),
     })
 }
@@ -209,6 +213,8 @@ struct ContentDisposition {
     filename: Option<String>,
     /// Whether a parameter appears more than once; the last one counts
     repeats_param: bool,
+    /// Whether `filename*` is a quoted string
+    quoted_extended_filename: bool,
 }
 
 /// Extract name and filename from Content-Disposition header
@@ -223,17 +229,18 @@ fn extract_content_disposition(
         .ok_or_else(|| ParseError::MalformedHeaders("missing Content-Disposition".to_string()))?;
 
     let params = parse_header_params(disposition);
-    let param = |key: &str| {
+    let param = |name: &str| {
         params
             .iter()
             .rev()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.clone())
+            .find(|p| p.name == name)
+            .map(|p| p.value.clone())
     };
     let repeats_param = params
         .iter()
         .enumerate()
-        .any(|(i, (key, _))| params[..i].iter().any(|(earlier, _)| earlier == key));
+        .any(|(i, p)| params[..i].iter().any(|earlier| earlier.name == p.name));
+    let quoted_extended_filename = params.iter().any(|p| p.name == "filename*" && p.quoted);
 
     let name = param("name").ok_or_else(|| {
         ParseError::MalformedHeaders("missing name in Content-Disposition".to_string())
@@ -243,28 +250,37 @@ fn extract_content_disposition(
         name,
         filename: param("filename"),
         repeats_param,
+        quoted_extended_filename,
     })
 }
 
-/// Parse header parameters like: `form-data; name="value"; filename="file.txt"`
-///
-/// Returns the parameters in order, as lowercase names and values with quotes removed
-fn parse_header_params(header: &str) -> Vec<(String, String)> {
+/// One `name=value` parameter of a header.
+#[derive(Debug, PartialEq)]
+struct HeaderParam {
+    /// Lowercase name
+    name: String,
+    /// Value, without its quotes
+    value: String,
+    /// Whether the value was a quoted string
+    quoted: bool,
+}
+
+/// Parse header parameters like: `form-data; name="value"; filename="file.txt"`, in order
+fn parse_header_params(header: &str) -> Vec<HeaderParam> {
     let mut params = Vec::new();
 
     for part in header.split(';') {
         let part = part.trim();
 
         if let Some(eq_pos) = part.find('=') {
-            let key = part[..eq_pos].trim().to_lowercase();
-            let mut value = part[eq_pos + 1..].trim().to_string();
-
-            // Remove surrounding quotes
-            if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
-                value = value[1..value.len() - 1].to_string();
-            }
-
-            params.push((key, value));
+            let name = part[..eq_pos].trim().to_lowercase();
+            let value = part[eq_pos + 1..].trim();
+            let unquoted = value.strip_prefix('"').and_then(|v| v.strip_suffix('"'));
+            params.push(HeaderParam {
+                name,
+                value: unquoted.unwrap_or(value).to_string(),
+                quoted: unquoted.is_some(),
+            });
         }
     }
 
@@ -484,10 +500,14 @@ value\r\n\
         let header = "form-data; name=\"field\"; filename=\"file.txt\"";
         let params = parse_header_params(header);
 
-        let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+        let quoted = |name: &str, value: &str| HeaderParam {
+            name: name.to_string(),
+            value: value.to_string(),
+            quoted: true,
+        };
         assert_eq!(
             params,
-            [pair("name", "field"), pair("filename", "file.txt")]
+            [quoted("name", "field"), quoted("filename", "file.txt")]
         );
     }
 

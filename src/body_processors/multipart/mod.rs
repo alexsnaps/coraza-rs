@@ -70,6 +70,10 @@ impl BodyProcessor for MultipartBodyProcessor {
                 tx.multipart_duplicate_part_header.set("1");
                 tx.multipart_strict_error.set("1");
             }
+            if part.invalid_quoting {
+                tx.multipart_invalid_quoting.set("1");
+                tx.multipart_strict_error.set("1");
+            }
 
             // Collect part headers into MULTIPART_PART_HEADERS
             // Add Content-Disposition

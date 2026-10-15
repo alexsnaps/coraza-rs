@@ -901,3 +901,46 @@ fn names_variables_are_the_keys_of_their_collections() {
     let interruption = tx.process_response_headers(200, "HTTP/1.1");
     assert_eq!(interruption.map(|i| i.rule_id), Some(6));
 }
+
+#[test]
+fn args_combined_size_and_unique_id_describe_the_transaction() {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule ARGS_COMBINED_SIZE "@gt 9" "id:1,phase:2,deny,status:400"
+        SecRule UNIQUE_ID "@streq tx-42" "id:2,phase:1,pass,setvar:tx.id_seen=1"
+    "#);
+
+    // ARGS_GET and ARGS_POST keys and values: "a" + "1234" + "b" + "5678" = 10 bytes
+    let mut tx = waf.new_transaction_with_id("tx-42".to_string());
+    tx.process_uri("/?a=1234", "POST", "HTTP/1.1");
+    tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+    tx.process_request_headers();
+    assert_eq!(tx_var(&tx, "id_seen").as_deref(), Some("1"));
+    let interruption = tx.process_request_body(b"b=5678").unwrap();
+    assert_eq!(interruption.map(|i| i.rule_id), Some(1));
+
+    let mut tx = waf.new_transaction();
+    tx.process_uri("/?a=1234", "GET", "HTTP/1.1");
+    tx.process_request_headers();
+    assert_eq!(tx.process_request_body(b"").unwrap(), None);
+}
+
+#[test]
+fn quoted_extended_multipart_filenames_are_invalid_quoting() {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule MULTIPART_INVALID_QUOTING "@eq 1" "id:1,phase:2,deny,status:400"
+    "#);
+
+    for (disposition, flagged) in [
+        (r#"form-data; name="f"; filename*=UTF-8''a.txt"#, false),
+        (r#"form-data; name="f"; filename*="UTF-8''a.txt""#, true),
+    ] {
+        let body = format!("--b\r\nContent-Disposition: {disposition}\r\n\r\nx\r\n--b--\r\n");
+        let mut tx = waf.new_transaction();
+        tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
+        tx.process_request_headers();
+        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        assert_eq!(interruption.is_some(), flagged, "{disposition}");
+    }
+}
