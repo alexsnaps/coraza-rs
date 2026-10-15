@@ -174,6 +174,13 @@ pub fn trim_right(input: &[u8]) -> TransformationResult {
 /// assert!(!changed);
 /// ```
 pub fn remove_whitespace(input: &[u8]) -> TransformationResult {
+    // ASCII without whitespace comes out as it is, without reading it as characters
+    if input
+        .iter()
+        .all(|&b| b.is_ascii() && !matches!(b, b'\t'..=b'\r' | b' '))
+    {
+        return (input.to_vec(), false, None);
+    }
     let mut changed = false;
     let transformed: String = chars_lossy(input)
         .chars()
@@ -444,6 +451,10 @@ mod tests {
             ("t e s t", "test", true),
             ("  test  ", "test", true),
             ("\t\ntest\r\n", "test", true),
+            ("a\x0Bb\x0Cc", "abc", true),
+            ("a\x1Fb", "a\x1Fb", false),
+            ("a\u{a0}b\u{3000}c", "abc", true),
+            ("café", "café", false),
         ];
 
         for (input, want, want_changed) in tests {
@@ -452,6 +463,11 @@ mod tests {
             assert_eq!(got, want, "input: {:?}", input);
             assert_eq!(changed, want_changed, "input: {:?}", input);
         }
+
+        // A byte that isn't part of a character becomes U+FFFD, whitespace or not
+        let (got, changed, _) = remove_whitespace(b"a\xffb");
+        assert_eq!(got, "a\u{fffd}b".as_bytes());
+        assert!(!changed);
     }
 
     #[test]

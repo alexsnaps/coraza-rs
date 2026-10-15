@@ -65,9 +65,12 @@ pub fn none(input: &[u8]) -> TransformationResult {
 /// assert!(!changed);
 /// ```
 pub fn remove_nulls(input: &[u8]) -> TransformationResult {
+    // Spares the values without NUL, nearly all, the byte-by-byte copy
+    if !input.contains(&0) {
+        return (input.to_vec(), false, None);
+    }
     let transformed: Vec<u8> = input.iter().copied().filter(|&byte| byte != 0).collect();
-    let changed = transformed.len() != input.len();
-    (transformed, changed, None)
+    (transformed, true, None)
 }
 
 /// Replaces all NUL bytes (\x00) with spaces.

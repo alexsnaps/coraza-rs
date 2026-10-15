@@ -9,6 +9,7 @@
 use super::MatchData;
 use crate::RuleVariable;
 use regex::Regex;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 /// A key-value collection that supports multiple values per key.
@@ -81,12 +82,13 @@ impl Map {
         }
     }
 
-    /// Get the lookup key (lowercase if case-insensitive).
-    fn lookup_key(&self, key: &str) -> String {
-        if self.case_sensitive {
-            key.to_string()
+    /// The key `key` is stored under: as it is in a case-sensitive map, lowercase otherwise.
+    /// Borrowed when that is `key` itself, which spares lookups an allocation.
+    fn lookup_key<'k>(&self, key: &'k str) -> Cow<'k, str> {
+        if self.case_sensitive || !key.bytes().any(|b| b.is_ascii_uppercase() || !b.is_ascii()) {
+            Cow::Borrowed(key)
         } else {
-            key.to_lowercase()
+            Cow::Owned(key.to_lowercase())
         }
     }
 }
@@ -116,9 +118,16 @@ impl Map {
     pub fn get(&self, key: &str) -> Vec<String> {
         let lookup = self.lookup_key(key);
         self.data
-            .get(&lookup)
+            .get(lookup.as_ref())
             .map(|values| values.iter().map(|kv| kv.value.clone()).collect())
             .unwrap_or_default()
+    }
+
+    /// The first value of `key`; `None` if the key is absent.
+    pub fn first(&self, key: &str) -> Option<&str> {
+        let lookup = self.lookup_key(key);
+        let values = self.data.get(lookup.as_ref())?;
+        values.first().map(|kv| kv.value.as_str())
     }
 
     /// All key-value pairs whose (lookup) key matches `regex`.
@@ -146,7 +155,7 @@ impl Map {
 
         let lookup = self.lookup_key(key);
         self.data
-            .get(&lookup)
+            .get(lookup.as_ref())
             .map(|values| {
                 values
                     .iter()
@@ -163,7 +172,12 @@ impl Map {
             key: key.to_string(),
             value: value.to_string(),
         };
-        self.data.entry(lookup).or_default().push(kv);
+        match self.data.get_mut(lookup.as_ref()) {
+            Some(values) => values.push(kv),
+            None => {
+                self.data.insert(lookup.into_owned(), vec![kv]);
+            }
+        }
     }
 
     /// Replaces the values of `key`.
@@ -176,26 +190,29 @@ impl Map {
                 value,
             })
             .collect();
-        self.data.insert(lookup, key_values);
+        self.data.insert(lookup.into_owned(), key_values);
     }
 
     /// Replaces the value at `index` of `key`, or appends it if `index` is past the end.
     pub fn set_index(&mut self, key: &str, index: usize, value: &str) {
         let lookup = self.lookup_key(key);
-        let kv = KeyValue {
+        let new = || KeyValue {
             key: key.to_string(),
             value: value.to_string(),
         };
 
-        match self.data.get_mut(&lookup) {
+        match self.data.get_mut(lookup.as_ref()) {
+            // Rewritten in its buffers: RULE's values are set this way for every rule evaluated
             Some(values) if index < values.len() => {
-                values[index] = kv;
+                let kv = &mut values[index];
+                kv.key.clear();
+                kv.key.push_str(key);
+                kv.value.clear();
+                kv.value.push_str(value);
             }
-            Some(values) => {
-                values.push(kv);
-            }
+            Some(values) => values.push(new()),
             None => {
-                self.data.insert(lookup, vec![kv]);
+                self.data.insert(lookup.into_owned(), vec![new()]);
             }
         }
     }
@@ -203,7 +220,7 @@ impl Map {
     /// Removes `key` and all its values.
     pub fn remove(&mut self, key: &str) {
         let lookup = self.lookup_key(key);
-        self.data.remove(&lookup);
+        self.data.remove(lookup.as_ref());
     }
 
     /// Removes every key.
@@ -338,6 +355,43 @@ mod tests {
         assert_eq!(values.len(), 2);
         assert_eq!(values[0], "value0");
         assert_eq!(values[1], "value5");
+    }
+
+    #[test]
+    fn test_map_lookup_lowercases_non_ascii_keys() {
+        // Keys whose only uppercase letters aren't ASCII
+        let mut map = Map::new(RuleVariable::RequestHeaders);
+        map.add("Über", "value");
+
+        assert_eq!(map.first("über"), Some("value"));
+        assert_eq!(map.first("Über"), Some("value"));
+        assert_eq!(map.find_string("über")[0].key, "Über");
+        map.remove("Über");
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn test_map_first() {
+        let mut map = Map::new(RuleVariable::RequestHeaders);
+        assert_eq!(map.first("key"), None);
+
+        map.add("Key", "value1");
+        map.add("KEY", "value2");
+        assert_eq!(map.first("key"), Some("value1"));
+    }
+
+    #[test]
+    fn test_map_set_index_rewrites_in_place() {
+        let mut map = Map::new(RuleVariable::Rule);
+        map.add("msg", "first");
+        map.add("msg", "second");
+
+        map.set_index("MSG", 0, "a longer message than before");
+        assert_eq!(
+            map.get("msg"),
+            vec!["a longer message than before", "second"]
+        );
+        assert_eq!(map.find_string("msg")[0].key, "MSG");
     }
 
     #[test]

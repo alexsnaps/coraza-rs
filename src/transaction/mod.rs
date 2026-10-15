@@ -1066,15 +1066,17 @@ impl Transaction {
         log_data: Option<String>,
         severity: &str,
     ) {
-        self.rule.set("id", vec![id.to_string()]);
+        // Each value replaced in place, as Go's SetIndex does: this runs for every rule
+        // evaluated, and rebuilding the entries cost a fifth of a simple GET with CRS
+        self.rule.set_index("id", 0, &id.to_string());
         if let Some(msg) = msg {
-            self.rule.set("msg", vec![msg]);
+            self.rule.set_index("msg", 0, &msg);
         }
-        self.rule.set("rev", vec![rev.to_string()]);
+        self.rule.set_index("rev", 0, rev);
         if let Some(log_data) = log_data {
-            self.rule.set("logdata", vec![log_data]);
+            self.rule.set_index("logdata", 0, &log_data);
         }
-        self.rule.set("severity", vec![severity.to_string()]);
+        self.rule.set_index("severity", 0, severity);
     }
 
     /// Lowers HIGHEST_SEVERITY to `severity` if it is more severe, as a matching rule with
@@ -2336,12 +2338,19 @@ impl Transaction {
     /// single-value variable (with `key` `None`), or the first value of `key` in a
     /// collection. `None` if the variable isn't set or not available.
     pub fn get_variable(&self, variable: RuleVariable, key: Option<&str>) -> Option<String> {
+        self.variable_value(variable, key).map(str::to_string)
+    }
+
+    /// [`Transaction::get_variable`], borrowing the value.
+    pub(crate) fn variable_value<'a>(
+        &'a self,
+        variable: RuleVariable,
+        key: Option<&'a str>,
+    ) -> Option<&'a str> {
         match (self.collection(variable)?, key) {
-            (VariableCollection::Single(single), None) => Some(single.get().to_string()),
-            (VariableCollection::Map(map), Some(key)) => map.get(key).first().cloned(),
-            (VariableCollection::Names(_, map), Some(key)) => {
-                (!map.get(key).is_empty()).then(|| key.to_string())
-            }
+            (VariableCollection::Single(single), None) => Some(single.get()),
+            (VariableCollection::Map(map), Some(key)) => map.first(key),
+            (VariableCollection::Names(_, map), Some(key)) => map.first(key).map(|_| key),
             _ => None,
         }
     }
