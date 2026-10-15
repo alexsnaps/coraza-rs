@@ -101,7 +101,7 @@ probed bugs.
     `BodyProcessorOptions` upload fields are always `Default`. **Done:** `BodyProcessorKind` replaces the registry;
     still open: the upload options are not wired from `WafConfig` (needs config plumbed into the transaction).
   - Transformations: no lookup at all (see item 2). **Done** in item 2 (`transformations::by_name`).
-- [ ] **Remove `actions::register`.** Public, and always panics with `todo!()` (`src/actions/mod.rs:502`).
+- [x] **Remove `actions::register`.** Public, and always panics with `todo!()` (`src/actions/mod.rs:502`).
 - [ ] **Parse `ctl` once.** `CtlAction` validates its value, stores the raw string, and re-parses it in `evaluate`
   (`src/actions/ctl.rs:263`). **(probe)** `ctl:ruleEngine=bogus` compiles and is silently ignored. Use data-carrying
   variants such as `CtlCommand::RuleEngine(RuleEngineStatus)`.

@@ -294,75 +294,20 @@ pub trait Action: Send + Sync {
     fn action_type(&self) -> ActionType;
 }
 
-/// A function that creates a new action instance, as taken by [`register`].
-type ActionFactory = fn() -> Box<dyn Action>;
-
-/// Register a new action in the global registry.
+/// Creates a new, uninitialized instance of the built-in action named `name`
+/// (case-insensitive).
 ///
-/// This function can be used to register both built-in and plugin actions.
-/// If an action with the same name already exists, it will be overwritten.
+/// # Errors
 ///
-/// # Arguments
-///
-/// * `name` - Action name (case-insensitive)
-/// * `factory` - Factory function that creates new action instances
+/// Returns `ActionError::UnknownAction` if no built-in action has that name.
 ///
 /// # Examples
 ///
-/// ```no_run
-/// use coraza::actions::{register, Action, ActionType, ActionError, RuleMetadata};
-/// use coraza::transaction::Transaction;
-///
-/// struct CustomAction;
-///
-/// impl Action for CustomAction {
-///     fn init(&mut self, _rule: &mut RuleMetadata, _data: &str) -> Result<(), ActionError> {
-///         Ok(())
-///     }
-///
-///     fn evaluate(&self, _rule: &RuleMetadata, _tx: &mut Transaction) {
-///         // Custom action logic
-///     }
-///
-///     fn action_type(&self) -> ActionType {
-///         ActionType::Nondisruptive
-///     }
-/// }
-///
-/// // Register the custom action
-/// register("mycustom", || Box::new(CustomAction));
 /// ```
-pub fn register(_name: &str, _factory: ActionFactory) {
-    // Note: Runtime registration is not currently supported with OnceLock.
-    // The registry is initialized once with built-in actions.
-    // For plugin actions, consider using a different registration mechanism
-    // or compile-time registration via feature flags.
-    todo!(
-        "Runtime action registration not yet implemented - registry is read-only after initialization"
-    )
-}
-
-/// Get an action by name from the registry.
-///
-/// Returns a new instance of the requested action, or an error if the action
-/// is not registered.
-///
-/// # Arguments
-///
-/// * `name` - Action name (case-insensitive)
-///
-/// # Returns
-///
-/// * `Ok(Box<dyn Action>)` - New action instance
-/// * `Err(ActionError::UnknownAction)` - Action not found in registry
-///
-/// # Examples
-///
-/// ```no_run
 /// use coraza::actions::get;
 ///
-/// // Get a built-in action (when implemented)
 /// let action = get("deny").unwrap();
+/// assert!(get("noSuchAction").is_err());
 /// ```
 pub fn get(name: &str) -> Result<Box<dyn Action>, ActionError> {
     let action: Box<dyn Action> = match name.to_ascii_lowercase().as_str() {
