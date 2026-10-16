@@ -453,6 +453,27 @@ fn test_sec_upload_dir() {
     assert!(result.is_err(), "Non-existent upload dir should fail");
 }
 
+#[test]
+fn keeping_uploads_needs_an_upload_dir() {
+    // As in Go Coraza: kept files would pile up in the system's temporary directory
+    let mut parser = Parser::new();
+    parser.from_string("SecUploadKeepFiles On").unwrap();
+    let error = parser.into_waf().unwrap_err();
+    assert!(
+        error.to_string().contains("SecUploadDir is required"),
+        "{error}"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut parser = Parser::new();
+    let directives = format!(
+        "SecUploadKeepFiles On\nSecUploadDir {}",
+        dir.path().display()
+    );
+    parser.from_string(&directives).unwrap();
+    assert!(parser.into_waf().is_ok());
+}
+
 #[cfg(unix)]
 #[test]
 fn sec_upload_dir_must_be_writable() {

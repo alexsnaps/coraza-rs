@@ -409,13 +409,14 @@ Found at `ee1d995`, comparing with Go Coraza at `3fc3ae2`: by reading `internal/
   `""` (`filesCol.Add("", filename)`). CRS reads them whole, so only `MATCHED_VAR_NAME` differs (`FILES:upload` here,
   `FILES` in Go), and a rule selecting `FILES:upload` matches here but not in Go.
   - Done: as in Go, each value is under the key `""`.
-- [ ] **Uploads are stored and checked differently.**
+- [x] **Uploads are stored and checked differently.**
   - Without `SecUploadDir`, Go stores each uploaded file in the system's temporary directory
     (`os.CreateTemp("", "crzmp*")`, which reads `TMPDIR`); this crate in `/tmp`, the default of
     `WafConfig::upload_dir`. First recorded as storing none: that default was missed.
     - Done: as in Go, an empty `upload_dir`, now the default, is the system's temporary directory.
   - Go rejects `SecUploadKeepFiles` without `SecUploadDir` ("SecUploadDir is required when SecUploadKeepFiles is
     enabled"); this crate keeps the files in the temporary directory.
+    - Done: as in Go, that configuration is an error.
   - Go requires `SecUploadDir` to be writable (`IsDirWritable` creates a file in it); this crate, that it exists.
     - Done: as in Go, the directive checks by writing a file in it.
   - If the directory is gone when a file is uploaded, Go fails the body (`MULTIPART_STRICT_ERROR`,

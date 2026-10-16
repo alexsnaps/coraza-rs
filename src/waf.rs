@@ -83,6 +83,7 @@ impl Waf {
     /// - Negative body limits or timeout values
     /// - Invalid debug log level (must be 0-9)
     /// - Invalid argument limit (must be > 0)
+    /// - Uploads kept (`SecUploadKeepFiles`) without an upload directory (`SecUploadDir`)
     ///
     /// # Examples
     ///
@@ -209,6 +210,7 @@ impl Default for Waf {
 /// - Valid body limits (positive, within reasonable bounds)
 /// - Valid timeout values
 /// - Valid log levels
+/// - An upload directory for uploads that are kept
 fn validate_config(config: &WafConfig) -> Result<(), ConfigError> {
     // Validate body limits
     if config.request_body_limit < 0 {
@@ -238,6 +240,13 @@ fn validate_config(config: &WafConfig) -> Result<(), ConfigError> {
     // Validate argument limit
     if config.argument_limit == 0 {
         return Err(ConfigError::new("Argument limit must be greater than 0"));
+    }
+
+    // As in Go Coraza: kept files would otherwise pile up in the temporary directory
+    if config.upload_keep_files && config.upload_dir.is_empty() {
+        return Err(ConfigError::new(
+            "SecUploadDir is required when SecUploadKeepFiles is enabled",
+        ));
     }
 
     Ok(())
