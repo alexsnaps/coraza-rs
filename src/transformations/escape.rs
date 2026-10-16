@@ -50,20 +50,19 @@ pub fn escape_seq_decode(input: &[u8]) -> TransformationResult {
 }
 
 fn do_escape_seq_decode(input: &[u8], pos: usize) -> (Vec<u8>, bool) {
-    let input_bytes = input;
-    let input_len = input_bytes.len();
+    let input_len = input.len();
     let mut result = Vec::with_capacity(input_len);
     let mut changed = false;
 
     // Copy bytes before first backslash
-    result.extend_from_slice(&input_bytes[..pos]);
+    result.extend_from_slice(&input[..pos]);
     let mut i = pos;
 
     while i < input_len {
-        if input_bytes[i] == b'\\' && i + 1 < input_len {
+        if input[i] == b'\\' && i + 1 < input_len {
             let mut matched = true;
 
-            let c = match input_bytes[i + 1] {
+            let c = match input[i + 1] {
                 b'a' => b'\x07', // Alert (bell)
                 b'b' => b'\x08', // Backspace
                 b'f' => b'\x0C', // Form feed
@@ -89,10 +88,10 @@ fn do_escape_seq_decode(input: &[u8], pos: usize) -> (Vec<u8>, bool) {
             }
 
             // Check for hexadecimal escape: \xHH
-            if input_bytes[i + 1] == b'x' || input_bytes[i + 1] == b'X' {
+            if input[i + 1] == b'x' || input[i + 1] == b'X' {
                 if i + 3 < input_len
-                    && input_bytes[i + 2].is_ascii_hexdigit()
-                    && input_bytes[i + 3].is_ascii_hexdigit()
+                    && input[i + 2].is_ascii_hexdigit()
+                    && input[i + 3].is_ascii_hexdigit()
                 {
                     let hex_byte = x2c(&input[i + 2..i + 4]);
                     result.push(hex_byte);
@@ -108,9 +107,9 @@ fn do_escape_seq_decode(input: &[u8], pos: usize) -> (Vec<u8>, bool) {
             }
 
             // Check for octal escape: \OOO
-            if is_octal_digit(input_bytes[i + 1]) {
+            if is_octal_digit(input[i + 1]) {
                 let mut j = 2;
-                while j < 4 && i + j < input_len && is_octal_digit(input_bytes[i + j]) {
+                while j < 4 && i + j < input_len && is_octal_digit(input[i + j]) {
                     j += 1;
                 }
 
@@ -122,11 +121,11 @@ fn do_escape_seq_decode(input: &[u8], pos: usize) -> (Vec<u8>, bool) {
             }
 
             // Not a recognized escape, copy the character after backslash
-            result.push(input_bytes[i + 1]);
+            result.push(input[i + 1]);
             i += 2;
         } else {
             // Regular character
-            result.push(input_bytes[i]);
+            result.push(input[i]);
             i += 1;
         }
     }
@@ -193,34 +192,33 @@ pub fn js_decode(input: &[u8]) -> TransformationResult {
 }
 
 fn do_js_decode(input: &[u8], pos: usize) -> (Vec<u8>, bool) {
-    let input_bytes = input;
-    let input_len = input_bytes.len();
+    let input_len = input.len();
     let mut result = Vec::with_capacity(input_len);
     let mut changed = false;
 
     // Copy bytes before first backslash
-    result.extend_from_slice(&input_bytes[..pos]);
+    result.extend_from_slice(&input[..pos]);
     let mut i = pos;
 
     while i < input_len {
-        if input_bytes[i] == b'\\' && i + 1 < input_len {
+        if input[i] == b'\\' && i + 1 < input_len {
             let mut matched = false;
 
             // Check for Unicode escape: \uHHHH
             if i + 5 < input_len
-                && input_bytes[i + 1] == b'u'
-                && input_bytes[i + 2].is_ascii_hexdigit()
-                && input_bytes[i + 3].is_ascii_hexdigit()
-                && input_bytes[i + 4].is_ascii_hexdigit()
-                && input_bytes[i + 5].is_ascii_hexdigit()
+                && input[i + 1] == b'u'
+                && input[i + 2].is_ascii_hexdigit()
+                && input[i + 3].is_ascii_hexdigit()
+                && input[i + 4].is_ascii_hexdigit()
+                && input[i + 5].is_ascii_hexdigit()
             {
                 // Use only the lower byte (last 2 hex digits)
                 let mut byte = x2c(&input[i + 4..i + 6]);
 
                 // Full-width ASCII (ff01 - ff5e) needs 0x20 added
                 // Check if upper 2 hex digits are 'ff' or 'FF'
-                if (input_bytes[i + 2] == b'f' || input_bytes[i + 2] == b'F')
-                    && (input_bytes[i + 3] == b'f' || input_bytes[i + 3] == b'F')
+                if (input[i + 2] == b'f' || input[i + 2] == b'F')
+                    && (input[i + 3] == b'f' || input[i + 3] == b'F')
                     && byte > 0x00
                     && byte < 0x5f
                 {
@@ -236,9 +234,9 @@ fn do_js_decode(input: &[u8], pos: usize) -> (Vec<u8>, bool) {
             // Check for hex escape: \xHH
             if !matched
                 && i + 3 < input_len
-                && input_bytes[i + 1] == b'x'
-                && input_bytes[i + 2].is_ascii_hexdigit()
-                && input_bytes[i + 3].is_ascii_hexdigit()
+                && input[i + 1] == b'x'
+                && input[i + 2].is_ascii_hexdigit()
+                && input[i + 3].is_ascii_hexdigit()
             {
                 let byte = x2c(&input[i + 2..i + 4]);
                 result.push(byte);
@@ -248,14 +246,14 @@ fn do_js_decode(input: &[u8], pos: usize) -> (Vec<u8>, bool) {
             }
 
             // Check for octal escape: \OOO
-            if !matched && is_octal_digit(input_bytes[i + 1]) {
+            if !matched && is_octal_digit(input[i + 1]) {
                 let mut j = 1;
-                while j < 4 && i + j < input_len && is_octal_digit(input_bytes[i + j]) {
+                while j < 4 && i + j < input_len && is_octal_digit(input[i + j]) {
                     j += 1;
                 }
 
                 // If we have 3 digits and first digit > 3, only use 2 digits to stay ≤ 255
-                let octal_len = if j == 4 && input_bytes[i + 1] > b'3' {
+                let octal_len = if j == 4 && input[i + 1] > b'3' {
                     3 // Use only 2 octal digits (positions i+1 and i+2)
                 } else {
                     j
@@ -270,7 +268,7 @@ fn do_js_decode(input: &[u8], pos: usize) -> (Vec<u8>, bool) {
 
             // Simple C-style escapes
             if !matched {
-                let c = match input_bytes[i + 1] {
+                let c = match input[i + 1] {
                     b'a' => b'\x07', // Alert (bell)
                     b'b' => b'\x08', // Backspace
                     b'f' => b'\x0C', // Form feed
@@ -288,7 +286,7 @@ fn do_js_decode(input: &[u8], pos: usize) -> (Vec<u8>, bool) {
             }
         } else {
             // Regular character
-            result.push(input_bytes[i]);
+            result.push(input[i]);
             i += 1;
         }
     }

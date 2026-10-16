@@ -546,8 +546,7 @@ pub fn remove_comments_char(input: &[u8]) -> TransformationResult {
 /// assert!(!changed);
 /// ```
 pub fn replace_comments(input: &[u8]) -> TransformationResult {
-    let input_bytes = input;
-    let input_len = input_bytes.len();
+    let input_len = input.len();
     let mut result = Vec::with_capacity(input_len);
 
     let mut i = 0;
@@ -556,19 +555,19 @@ pub fn replace_comments(input: &[u8]) -> TransformationResult {
 
     while i < input_len {
         if !in_comment {
-            if i + 1 < input_len && input_bytes[i] == b'/' && input_bytes[i + 1] == b'*' {
+            if i + 1 < input_len && input[i] == b'/' && input[i + 1] == b'*' {
                 // Start of C-style comment /*
                 in_comment = true;
                 changed = true;
                 i += 2;
             } else {
                 // Regular character
-                result.push(input_bytes[i]);
+                result.push(input[i]);
                 i += 1;
             }
         } else {
             // Inside a comment
-            if i + 1 < input_len && input_bytes[i] == b'*' && input_bytes[i + 1] == b'/' {
+            if i + 1 < input_len && input[i] == b'*' && input[i + 1] == b'/' {
                 // End of C-style comment */
                 in_comment = false;
                 i += 2;

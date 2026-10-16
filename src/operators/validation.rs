@@ -282,20 +282,19 @@ impl Operator for ValidateUrlEncoding {
             return false; // Empty input is valid
         }
 
-        let bytes = input;
-        let len = bytes.len();
+        let len = input.len();
         let mut i = 0;
 
         while i < len {
-            if bytes[i] == b'%' {
+            if input[i] == b'%' {
                 // Check if there are at least 2 more characters
                 if i + 2 >= len {
                     return true; // Incomplete sequence (violation)
                 }
 
                 // Check if next two characters are hex digits
-                let c1 = bytes[i + 1];
-                let c2 = bytes[i + 2];
+                let c1 = input[i + 1];
+                let c2 = input[i + 2];
 
                 if !c1.is_ascii_hexdigit() || !c2.is_ascii_hexdigit() {
                     return true; // Non-hexadecimal characters (violation)

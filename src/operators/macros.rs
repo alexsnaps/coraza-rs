@@ -139,15 +139,14 @@ impl Macro {
         let mut tokens = Vec::new();
         let mut current = String::new();
         let mut in_macro = false;
-        let bytes = input.as_bytes();
-        let len = bytes.len();
+        let len = input.len();
         let mut i = 0;
 
         while i < len {
-            let c = bytes[i];
+            let c = input.as_bytes()[i];
 
             // Check for macro start: %{
-            if c == b'%' && i + 1 < len && bytes[i + 1] == b'{' {
+            if c == b'%' && i + 1 < len && input.as_bytes()[i + 1] == b'{' {
                 // Save any pending text
                 if !current.is_empty() {
                     tokens.push(MacroToken {
