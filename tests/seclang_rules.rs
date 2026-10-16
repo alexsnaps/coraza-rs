@@ -1509,6 +1509,62 @@ fn multipart_part_names_and_filenames_are_variables() {
     assert_eq!(interruption.map(|i| i.rule_id), Some(2));
 }
 
+/// A transaction of `waf` that uploaded the file `a.txt`, holding `hello`, through phase 2.
+fn upload(waf: &Waf) -> Transaction {
+    let body = "--b\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"a.txt\"\r\n\r\nhello\r\n--b--\r\n";
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
+    tx.process_request_headers();
+    tx.process_request_body(body.as_bytes());
+    tx
+}
+
+/// The contents of the files in `dir`.
+fn files_in(dir: &std::path::Path) -> Vec<Vec<u8>> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| std::fs::read(entry.unwrap().path()).unwrap())
+        .collect()
+}
+
+#[test]
+fn uploaded_files_are_stored_in_the_upload_dir_and_listed_in_files_tmpnames() {
+    let dir = tempfile::tempdir().unwrap();
+    let waf = waf(&format!(
+        r#"
+        SecRequestBodyAccess On
+        SecUploadDir {}
+        SecRule FILES_TMPNAMES "@rx ." "id:1,phase:2,deny,status:403"
+        "#,
+        dir.path().display()
+    ));
+
+    let tx = upload(&waf);
+
+    assert_eq!(tx.interruption().map(|i| i.rule_id), Some(1));
+    assert_eq!(files_in(dir.path()), [b"hello"]);
+}
+
+#[test]
+fn uploaded_files_are_removed_when_the_transaction_ends_unless_kept() {
+    // As Go's Transaction.Close does
+    for (keep_files, kept) in [("Off", 0), ("On", 1)] {
+        let dir = tempfile::tempdir().unwrap();
+        let waf = waf(&format!(
+            r#"
+            SecRequestBodyAccess On
+            SecUploadDir {}
+            SecUploadKeepFiles {keep_files}
+            "#,
+            dir.path().display()
+        ));
+
+        drop(upload(&waf));
+
+        assert_eq!(files_in(dir.path()).len(), kept, "{keep_files}");
+    }
+}
+
 #[test]
 fn request_bodies_reaching_the_limit_are_rejected_or_cut() {
     for (action, interrupted, seen) in [

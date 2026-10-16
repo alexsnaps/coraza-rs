@@ -1745,6 +1745,7 @@ impl Transaction {
             let options = BodyProcessorOptions {
                 mime: content_type.to_string(),
                 json_depth_limit: self.config.request_body_json_depth_limit,
+                upload_dir: self.config.upload_dir.clone(),
                 ..Default::default()
             };
 
@@ -2123,6 +2124,20 @@ impl Transaction {
             parts: self.audit_log_parts.clone(),
             transaction,
             messages,
+        }
+    }
+}
+
+impl Drop for Transaction {
+    /// Removes the files the transaction's uploads were stored in (FILES_TMPNAMES), unless
+    /// `SecUploadKeepFiles` keeps them, as Go's `Transaction.Close` does.
+    fn drop(&mut self) {
+        if self.config.upload_keep_files {
+            return;
+        }
+        for (_, path) in self.files_tmp_names.iter() {
+            // Nothing to report a file that is already gone to
+            let _ = std::fs::remove_file(&*String::from_utf8_lossy(path));
         }
     }
 }
