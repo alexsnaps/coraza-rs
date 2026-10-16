@@ -31,7 +31,7 @@
 //! assert_eq!(result, b"hello world");
 //! ```
 
-use crate::transformations::{Transformation, TransformationError, text_from_bytes};
+use crate::transformations::{Transformation, TransformationError};
 
 /// A transformation in the chain with its name for identification.
 #[derive(Debug, Clone)]
@@ -201,7 +201,7 @@ impl TransformationChain {
             value = transformed;
         }
 
-        (for_operator(value), errors)
+        (value, errors)
     }
 
     /// Apply all transformations in multi-match mode.
@@ -253,19 +253,13 @@ impl TransformationChain {
 
             // Only collect values that changed
             if changed {
-                values.push(for_operator(transformed.clone()));
+                values.push(transformed.clone());
                 value = transformed;
             }
         }
 
         (values, errors)
     }
-}
-
-/// A transformed value as the operator gets it: for now, with invalid UTF-8 replaced with
-/// U+FFFD, as when values were text.
-fn for_operator(value: Vec<u8>) -> Vec<u8> {
-    text_from_bytes(value).into_bytes()
 }
 
 impl Default for TransformationChain {
@@ -474,14 +468,10 @@ mod tests {
         chain.add("urlDecode", url_decode).unwrap();
         chain.add("hexEncode", hex_encode).unwrap();
         assert_eq!(chain.apply(b"%ff").0, b"ff");
-        // The operator gets text
+        // The operator gets each value's bytes, UTF-8 or not, as in Go Coraza
         assert_eq!(
             chain.apply_multimatch(b"%ff").0,
-            vec![
-                b"%ff".to_vec(),
-                "\u{FFFD}".as_bytes().to_vec(),
-                b"ff".to_vec()
-            ]
+            vec![b"%ff".to_vec(), vec![0xff], b"ff".to_vec()]
         );
     }
 }

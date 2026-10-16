@@ -57,8 +57,8 @@ pub(crate) fn parse_query(query: &str) -> impl Iterator<Item = (String, Vec<u8>)
         .map(|pair| {
             let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
             let key = text_from_bytes(url_decode(key.as_bytes()).0);
-            // For now, as when values were text, invalid UTF-8 is replaced with U+FFFD
-            let value = text_from_bytes(url_decode(value.as_bytes()).0).into_bytes();
+            // As in Go Coraza, a value keeps the bytes it decodes to, UTF-8 or not
+            let value = url_decode(value.as_bytes()).0;
             (key, value)
         })
 }

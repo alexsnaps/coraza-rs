@@ -363,20 +363,9 @@ pub fn validate_url_encoding() -> ValidateUrlEncoding {
 pub struct ValidateUtf8Encoding;
 
 impl Operator for ValidateUtf8Encoding {
-    fn evaluate(&self, _tx: &Transaction, _input: &[u8], _out: &mut Outputs) -> bool {
-        // In Rust, &str is guaranteed to be valid UTF-8, so this always returns false
-        // However, if we receive input from C FFI or unsafe code, we should check
-        // For now, since our input is &str, it's always valid UTF-8
-        // If we need to validate raw bytes, we'd accept &[u8] instead
-
-        // Note: In the Go implementation, this checks if the string is valid UTF-8
-        // In Rust, &str is ALWAYS valid UTF-8 by construction
-        // If we received invalid UTF-8, it would fail to parse to &str in the first place
-
-        // For compatibility with the Go implementation's semantics:
-        // Return true if INVALID UTF-8 (violation), false if valid
-        // Since Rust &str is always valid UTF-8, we always return false
-        false
+    fn evaluate(&self, _tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
+        // As in Go Coraza, a match is a value that isn't UTF-8
+        std::str::from_utf8(input).is_err()
     }
 }
 

@@ -57,7 +57,7 @@ struct KeyValue {
     /// Original key (with original casing)
     key: String,
     /// Value
-    value: String,
+    value: Vec<u8>,
 }
 
 impl KeyValue {
@@ -69,12 +69,12 @@ impl KeyValue {
     }
 
     /// How `value` is stored.
-    fn stored(value: &[u8]) -> String {
-        text_of(value).into_owned()
+    fn stored(value: &[u8]) -> Vec<u8> {
+        value.to_vec()
     }
 
     fn value(&self) -> &[u8] {
-        self.value.as_bytes()
+        &self.value
     }
 
     /// The value as text, invalid UTF-8 replaced with U+FFFD.
@@ -87,7 +87,7 @@ impl KeyValue {
         self.key.clear();
         self.key.push_str(key);
         self.value.clear();
-        self.value.push_str(&text_of(value));
+        self.value.extend_from_slice(value);
     }
 }
 

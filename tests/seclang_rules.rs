@@ -247,6 +247,16 @@ fn a_negated_operator_matches_what_the_operator_rejects() {
 }
 
 #[test]
+fn argument_values_keep_the_bytes_the_request_sent() {
+    let waf = waf(r#"SecRule ARGS "@validateUtf8Encoding" "id:1,phase:1,deny,status:403""#);
+
+    // As in Go Coraza, `%c0%af` decodes to the bytes C0 AF, which aren't UTF-8 (CRS 920250-1)
+    let mut tx = get_request(&waf, "/?param=%c0%af");
+
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+}
+
+#[test]
 fn allow_skips_the_rest_of_the_transaction() {
     let waf = waf(r#"
         SecAction "id:1,phase:1,allow"
