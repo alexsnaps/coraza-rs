@@ -2261,3 +2261,96 @@ fn ctl_removes_a_target_from_every_rule_in_an_id_range() {
     assert_eq!(tx_var(&tx, "fifteen"), None);
     assert_eq!(tx_var(&tx, "twenty").as_deref(), Some("1"));
 }
+
+/// A WAF with `directives`, and the ids of the rules its error log is handed, in order.
+fn waf_with_error_log(directives: &str) -> (Waf, std::sync::Arc<std::sync::Mutex<Vec<i32>>>) {
+    let ids = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let error_log = std::sync::Arc::clone(&ids);
+    let mut parser = Parser::new();
+    parser.on_error_log(move |matched| error_log.lock().unwrap().push(matched.rule.id()));
+    parser.from_string(directives).expect("rules should parse");
+    (parser.into_waf().expect("config should be valid"), ids)
+}
+
+#[test]
+fn the_error_log_gets_each_matched_rule_with_log_as_it_matches() {
+    for engine in ["On", "DetectionOnly"] {
+        let (waf, ids) = waf_with_error_log(&format!(
+            r#"
+            SecRuleEngine {engine}
+            SecRule ARGS:a "@streq x" "id:1,phase:1,pass,log"
+            SecRule ARGS:a "@streq x" "id:2,phase:1,pass,nolog"
+            SecRule ARGS:a "@streq y" "id:3,phase:1,pass,log"
+            SecRule ARGS:a "@streq x" "id:4,phase:1,deny,status:403,log"
+            "#
+        ));
+
+        let mut tx = request_with_arg(&waf, "a", "x");
+        tx.process_request_headers();
+
+        // Before the transaction ends, as in Go Coraza
+        assert_eq!(*ids.lock().unwrap(), [1, 4], "{engine}");
+    }
+}
+
+/// A WAF writing a JSON audit log entry, one line, for every transaction in `audit_log`,
+/// with a logging phase rule that logs.
+fn waf_logging_to(
+    audit_log: &std::path::Path,
+) -> (Waf, std::sync::Arc<std::sync::Mutex<Vec<i32>>>) {
+    waf_with_error_log(&format!(
+        r#"
+        SecAuditEngine On
+        SecAuditLog {}
+        SecAuditLogFormat JSON
+        SecAction "id:5,phase:5,pass,log"
+        "#,
+        audit_log.display()
+    ))
+}
+
+#[test]
+fn a_transaction_dropped_without_logging_runs_its_logging_phase() {
+    let dir = tempfile::tempdir().unwrap();
+    let audit_log = dir.path().join("audit.log");
+    let (waf, ids) = waf_logging_to(&audit_log);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+    drop(tx);
+
+    assert_eq!(*ids.lock().unwrap(), [5]);
+    let entries = std::fs::read_to_string(&audit_log).unwrap();
+    assert_eq!(entries.lines().count(), 1);
+}
+
+#[test]
+fn the_logging_phase_runs_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let audit_log = dir.path().join("audit.log");
+    let (waf, ids) = waf_logging_to(&audit_log);
+
+    let mut tx = waf.new_transaction();
+    tx.process_logging().unwrap();
+    tx.process_logging().unwrap();
+    drop(tx);
+
+    assert_eq!(*ids.lock().unwrap(), [5]);
+    let entries = std::fs::read_to_string(&audit_log).unwrap();
+    assert_eq!(entries.lines().count(), 1);
+}
+
+#[test]
+fn a_transaction_dropped_while_panicking_runs_no_rule() {
+    let dir = tempfile::tempdir().unwrap();
+    let audit_log = dir.path().join("audit.log");
+    let (waf, ids) = waf_logging_to(&audit_log);
+
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _tx = waf.new_transaction();
+        panic!("a connector's bug, while the transaction is alive");
+    }));
+
+    assert!(unwound.is_err());
+    assert!(ids.lock().unwrap().is_empty());
+}

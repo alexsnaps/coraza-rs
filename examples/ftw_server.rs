@@ -25,8 +25,12 @@ use std::sync::{Arc, Mutex};
 
 use coraza::config::WafConfig;
 use coraza::seclang::Parser;
+use coraza::transaction::{Interruption, Transaction};
 use coraza::types::RuleEngineStatus;
 use coraza::waf::Waf;
+
+/// The log FTW reads: request markers and Go Coraza's error log lines.
+type Logfile = Arc<Mutex<std::fs::File>>;
 
 // Note: We'll use a simple HTTP server for now
 // In production, we'd use hyper/axum/tokio
@@ -49,6 +53,14 @@ fn main() {
     }
     println!();
 
+    let logfile: Logfile = Arc::new(Mutex::new(
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&logfile)
+            .expect("Failed to open logfile"),
+    ));
+
     // Base configuration; directives in the rules file override it
     let mut parser = Parser::new();
     *parser.config_mut() = WafConfig {
@@ -61,6 +73,7 @@ fn main() {
     };
     // Keep loading past directives this engine doesn't support yet, so a full CRS still loads
     parser.skip_failed_directives();
+    log_errors_to(&mut parser, &logfile);
 
     // Load rules if specified
     if let Some(rules_path) = &rules_file {
@@ -83,13 +96,6 @@ fn main() {
 
     // Create shared state
     let waf = Arc::new(waf);
-    let logfile = Arc::new(Mutex::new(
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&logfile)
-            .expect("Failed to open logfile"),
-    ));
 
     // Start HTTP server
     let addr: SocketAddr = format!("127.0.0.1:{}", port)
@@ -108,7 +114,7 @@ fn main() {
 }
 
 /// Simple HTTP server (placeholder - needs async runtime in real implementation)
-fn simple_http_server(addr: SocketAddr, waf: Arc<Waf>, logfile: Arc<Mutex<std::fs::File>>) {
+fn simple_http_server(addr: SocketAddr, waf: Arc<Waf>, logfile: Logfile) {
     use std::net::TcpListener;
 
     let listener = TcpListener::bind(addr).expect("Failed to bind");
@@ -137,7 +143,7 @@ fn simple_http_server(addr: SocketAddr, waf: Arc<Waf>, logfile: Arc<Mutex<std::f
 fn handle_request(
     stream: &mut std::net::TcpStream,
     waf: Arc<Waf>,
-    logfile: Arc<Mutex<std::fs::File>>,
+    logfile: Logfile,
 ) -> std::io::Result<()> {
     use std::io::{BufRead, BufReader, Read};
 
@@ -194,56 +200,51 @@ fn handle_request(
         }
     }
 
-    // Phase 1: Request Headers
-    if let Some(interruption) = tx.process_request_headers() {
-        write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref())?;
-        tx.process_logging()?;
-        return send_blocking_response(stream, &interruption);
+    // Before the request's own error log lines, which FTW looks for after it
+    if let Some(marker) = &marker_header {
+        write_marker(&logfile, marker)?;
     }
 
-    // Read request body if present
-    let mut body = Vec::new();
-    if content_length > 0 {
-        let mut limited_reader = BufReader::new(stream.try_clone()?).take(content_length as u64);
-        limited_reader.read_to_end(&mut body)?;
-    }
+    let interruption = run_transaction(&mut tx, || {
+        let mut body = Vec::new();
+        if content_length > 0 {
+            let mut limited_reader =
+                BufReader::new(stream.try_clone()?).take(content_length as u64);
+            limited_reader.read_to_end(&mut body)?;
+        }
+        Ok(body)
+    })?;
 
-    // Phase 2: Request Body, which runs with or without a body
-    if let Some(interruption) = tx.process_request_body(&body) {
-        write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref())?;
-        tx.process_logging()?;
-        return send_blocking_response(stream, &interruption);
-    }
-
-    // Simulate response
-    tx.add_response_header("Content-Type", "text/plain");
-
-    // Phase 3: Response Headers
-    if let Some(interruption) = tx.process_response_headers(200, "HTTP/1.1") {
-        write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref())?;
-        tx.process_logging()?;
-        return send_blocking_response(stream, &interruption);
-    }
-
-    let response_body = b"OK";
-
-    // Phase 4: Response Body
-    if let Some(interruption) = tx.process_response_body(response_body) {
-        write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref())?;
-        tx.process_logging()?;
-        return send_blocking_response(stream, &interruption);
-    }
-
-    // Phase 5: Logging
+    // As Go Coraza's HTTP middleware does, whether or not the transaction was interrupted
     tx.process_logging()?;
 
-    // Write audit log for successful requests (FTW needs this for correlation)
-    if let Some(marker_value) = marker_header.as_deref() {
-        write_request_log(&logfile, &tx, marker_value)?;
+    match interruption {
+        Some(interruption) => send_blocking_response(stream, &interruption),
+        None => send_response(stream, 200, "OK"),
+    }
+}
+
+/// Runs `tx`'s phases, with the request body `read_body` reads once its headers passed,
+/// and a simulated `200 OK` response; the interruption, if one stops them.
+fn run_transaction(
+    tx: &mut Transaction,
+    read_body: impl FnOnce() -> std::io::Result<Vec<u8>>,
+) -> std::io::Result<Option<Interruption>> {
+    if let Some(interruption) = tx.process_request_headers() {
+        return Ok(Some(interruption));
     }
 
-    // Send successful response
-    send_response(stream, 200, "OK")
+    // Phase 2 runs with or without a body
+    let body = read_body()?;
+    if let Some(interruption) = tx.process_request_body(&body) {
+        return Ok(Some(interruption));
+    }
+
+    tx.add_response_header("Content-Type", "text/plain");
+    if let Some(interruption) = tx.process_response_headers(200, "HTTP/1.1") {
+        return Ok(Some(interruption));
+    }
+    Ok(tx.process_response_body(b"OK"))
 }
 
 /// Send HTTP response
@@ -271,7 +272,7 @@ fn send_response(stream: &mut std::net::TcpStream, status: u16, body: &str) -> s
 /// Send blocking response when WAF interrupts
 fn send_blocking_response(
     stream: &mut std::net::TcpStream,
-    interruption: &coraza::transaction::Interruption,
+    interruption: &Interruption,
 ) -> std::io::Result<()> {
     println!(
         "🚫 Blocked by rule {}: {}",
@@ -288,57 +289,25 @@ fn get_arg(args: &[String], name: &str) -> Option<String> {
         .cloned()
 }
 
-/// Write ModSecurity-compatible audit log for rule triggers
-fn write_audit_log(
-    logfile: &Arc<Mutex<std::fs::File>>,
-    tx: &coraza::transaction::Transaction,
-    interruption: &coraza::transaction::Interruption,
-    marker: Option<&str>,
-) -> std::io::Result<()> {
-    let mut file = logfile.lock().unwrap();
-
-    // Format: [timestamp] [rule_id] [msg "message"]
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
-    // Write FTW marker header if present (for test correlation)
-    if let Some(marker_value) = marker {
-        writeln!(file, "[{}] [X-CRS-Test \"{}\"]", timestamp, marker_value)?;
-    }
-
-    writeln!(
-        file,
-        "[{}] [id \"{}\"] [msg \"Rule triggered\"] [data \"{}\"] [severity \"CRITICAL\"]",
-        timestamp, interruption.rule_id, interruption.data
-    )?;
-
-    // Also write request details for debugging
-    writeln!(file, "[{}] [tx_id \"{}\"]", timestamp, tx.id(),)?;
-
-    file.flush()
+/// Has the WAF write Go Coraza's error log line to `logfile` for each matched rule with
+/// `log`, as its CRS test harness reads it.
+fn log_errors_to(parser: &mut Parser, logfile: &Logfile) {
+    let logfile = Arc::clone(logfile);
+    parser.on_error_log(move |matched| {
+        let mut file = logfile.lock().unwrap();
+        // A line FTW can't read fails the test that looks for it
+        let _ = writeln!(file, "{}", matched.error_log());
+    });
 }
 
-/// Write audit log for successful requests (no rule triggers)
-/// FTW needs this for test correlation even when no rules match
-fn write_request_log(
-    logfile: &Arc<Mutex<std::fs::File>>,
-    tx: &coraza::transaction::Transaction,
-    marker: &str,
-) -> std::io::Result<()> {
+/// Writes the FTW marker of a request, by which FTW finds the request's lines.
+fn write_marker(logfile: &Logfile, marker: &str) -> std::io::Result<()> {
     let mut file = logfile.lock().unwrap();
-
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-
-    // Write marker so FTW can correlate this request
-    writeln!(file, "[{}] [X-CRS-Test \"{}\"]", timestamp, marker)?;
-    writeln!(file, "[{}] [tx_id \"{}\"]", timestamp, tx.id())?;
-
-    file.flush()
+    writeln!(file, "[{}] [X-CRS-Test \"{}\"]", timestamp, marker)
 }
 
 #[cfg(test)]
@@ -356,12 +325,20 @@ mod tests {
 
     /// The response the server sends for `request`.
     fn respond(waf: Waf, request: &str) -> String {
+        respond_logging_to(
+            waf,
+            request,
+            Arc::new(Mutex::new(tempfile::tempfile().unwrap())),
+        )
+    }
+
+    /// The response the server sends for `request`, writing FTW's log to `logfile`.
+    fn respond_logging_to(waf: Waf, request: &str, logfile: Logfile) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
         client.write_all(request.as_bytes()).unwrap();
         let (mut server, _) = listener.accept().unwrap();
 
-        let logfile = Arc::new(Mutex::new(tempfile::tempfile().unwrap()));
         handle_request(&mut server, Arc::new(waf), logfile).unwrap();
         drop(server);
 
@@ -399,5 +376,29 @@ mod tests {
         // The logging phase writes the audit log
         let audit = std::fs::read_to_string(&audit_log).unwrap_or_default();
         assert!(!audit.is_empty(), "no audit log entry");
+    }
+
+    #[test]
+    fn the_marker_comes_before_the_error_log_lines_of_its_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ftw.log");
+        let logfile: Logfile = Arc::new(Mutex::new(std::fs::File::create(&path).unwrap()));
+        let mut parser = Parser::new();
+        log_errors_to(&mut parser, &logfile);
+        parser
+            .from_string(
+                r#"SecRule REQUEST_METHOD "@streq GET" "id:1,phase:1,deny,status:403,log""#,
+            )
+            .unwrap();
+        let waf = parser.into_waf().unwrap();
+
+        let request = "GET / HTTP/1.1\r\nHost: localhost\r\nX-CRS-Test: abc\r\n\r\n";
+        respond_logging_to(waf, request, logfile);
+
+        let log = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = log.lines().collect();
+        assert_eq!(lines.len(), 2, "{log}");
+        assert!(lines[0].ends_with(r#"[X-CRS-Test "abc"]"#), "{log}");
+        assert!(lines[1].contains(r#"[id "1"]"#), "{log}");
     }
 }

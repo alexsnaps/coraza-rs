@@ -391,6 +391,27 @@ macro_rules! variable_storage {
     }};
 }
 
+/// Where a WAF hands each [`MatchedRule`] with `log` as it matches: the connector's error
+/// log, set with [`crate::seclang::Parser::on_error_log`].
+#[derive(Clone)]
+pub(crate) struct ErrorLog(Arc<dyn Fn(&MatchedRule) + Send + Sync>);
+
+impl ErrorLog {
+    pub(crate) fn new(log: impl Fn(&MatchedRule) + Send + Sync + 'static) -> Self {
+        Self(Arc::new(log))
+    }
+
+    fn write(&self, matched: &MatchedRule) {
+        (self.0)(matched)
+    }
+}
+
+impl std::fmt::Debug for ErrorLog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ErrorLog")
+    }
+}
+
 /// A transaction represents a single HTTP request/response being processed.
 ///
 /// Transactions store all request and response data in collections that
@@ -400,6 +421,10 @@ macro_rules! variable_storage {
 /// and feeds it only through its input methods ([`Transaction::process_uri`],
 /// [`Transaction::add_request_header`], ...), which also fill the variables derived from
 /// what they are given, such as ARGS from ARGS_GET.
+///
+/// Dropping a transaction runs its logging phase if [`Transaction::process_logging`]
+/// wasn't called (but not while the thread panics), then removes the files its uploads
+/// were stored in, unless `SecUploadKeepFiles` keeps them.
 ///
 /// # Examples
 ///
@@ -613,6 +638,9 @@ pub struct Transaction {
 
     /// Where the transaction's audit log entry goes; none outside a WAF
     audit_logger: Option<Arc<AuditLogger>>,
+
+    /// Where each matched rule with `log` goes; none if the WAF has no error log
+    error_log: Option<ErrorLog>,
 
     /// URLENCODED_ERROR, FULL_REQUEST_LENGTH, DURATION, MULTIPART_DATA_AFTER - "0", as Go
     /// Coraza sets them and never changes them
@@ -903,6 +931,7 @@ impl Transaction {
                     .map_or(0, |since| since.as_secs()),
             ),
             audit_logger: None,
+            error_log: None,
             urlencoded_error: flag(RuleVariable::UrlencodedError),
             full_request_length: flag(RuleVariable::FullRequestLength),
             duration: flag(RuleVariable::Duration),
@@ -953,6 +982,11 @@ impl Transaction {
     /// Makes the transaction write its audit log entry with `logger`.
     pub(crate) fn set_audit_logger(&mut self, logger: Arc<AuditLogger>) {
         self.audit_logger = Some(logger);
+    }
+
+    /// Makes the transaction hand each matched rule with `log` to `log`.
+    pub(crate) fn set_error_log(&mut self, log: ErrorLog) {
+        self.error_log = Some(log);
     }
 
     /// Makes the transaction use the settings of its WAF, starting with its own copy of
@@ -1007,6 +1041,10 @@ impl Transaction {
             uri: self.request_uri.get().to_string(),
             transaction_id: self.unique_id.get().to_string(),
         };
+        // As in Go Coraza, as the rule matches
+        if let Some(error_log) = self.error_log.as_ref().filter(|_| matched.rule.log) {
+            error_log.write(&matched);
+        }
         self.matched_rules.push(matched);
     }
 
@@ -1575,6 +1613,9 @@ impl Transaction {
     /// [`Transaction::process_request_headers`], and not once the transaction is
     /// interrupted. Returns the transaction's interruption, if any.
     ///
+    /// Call it for a request without a body too, with an empty one: as in Go Coraza, no
+    /// other call runs phase 2, where CRS blocks on the anomaly score.
+    ///
     /// # Example
     ///
     /// ```
@@ -1746,6 +1787,9 @@ impl Transaction {
     /// `SecAuditLogRelevantStatus`: the interruption's, the would-be interruption's in
     /// `DetectionOnly` mode, or the response's.
     ///
+    /// It runs once: a later call does nothing, and dropping a transaction runs it if it
+    /// wasn't called.
+    ///
     /// # Errors
     ///
     /// If the audit log entry can't be written.
@@ -1760,7 +1804,9 @@ impl Transaction {
     /// tx.process_logging().unwrap();
     /// ```
     pub fn process_logging(&mut self) -> std::io::Result<()> {
-        // Update phase
+        if self.last_phase == Some(RulePhase::Logging) {
+            return Ok(());
+        }
         self.last_phase = Some(RulePhase::Logging);
 
         // Evaluate rules for Phase 5 (Logging), even if the transaction was interrupted
@@ -1933,9 +1979,15 @@ impl Transaction {
 }
 
 impl Drop for Transaction {
-    /// Removes the files the transaction's uploads were stored in (FILES_TMPNAMES), unless
-    /// `SecUploadKeepFiles` keeps them, as Go's `Transaction.Close` does.
+    /// Runs the logging phase if it hasn't run, then removes the files the transaction's
+    /// uploads were stored in (FILES_TMPNAMES), unless `SecUploadKeepFiles` keeps them,
+    /// as Go's `Transaction.Close` does.
     fn drop(&mut self) {
+        // No rule runs while unwinding a panic. An audit log entry that can't be written
+        // here is lost: a connector that wants the error calls process_logging itself
+        if !std::thread::panicking() {
+            let _ = self.process_logging();
+        }
         if self.config.upload_keep_files {
             return;
         }
