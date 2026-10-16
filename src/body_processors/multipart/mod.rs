@@ -119,7 +119,9 @@ fn parts(content_type: &str, body: &[u8]) -> Result<Vec<parser::Part>, BodyProce
         .map_err(|e| malformed(e.to_string()))
 }
 
-/// Save file data to temporary directory
+/// Stores an uploaded file's `data` in a new file of `upload_dir`, named `crzmp` and 16
+/// random characters, as Go Coraza does with `os.CreateTemp`: readable and writable by its
+/// owner only, and never replacing an existing file. Returns the file's path.
 fn save_to_temp(upload_dir: &str, data: &[u8]) -> Result<String, BodyProcessorError> {
     use std::fs;
     use std::path::PathBuf;
@@ -127,13 +129,15 @@ fn save_to_temp(upload_dir: &str, data: &[u8]) -> Result<String, BodyProcessorEr
     // Create upload directory if it doesn't exist
     fs::create_dir_all(upload_dir)?;
 
-    // Generate unique temp filename
     let temp_name = format!("crzmp{}", crate::utils::strings::random_string(16));
     let mut temp_path = PathBuf::from(upload_dir);
     temp_path.push(temp_name);
 
-    // Write file
-    let mut file = fs::File::create(&temp_path)?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(&temp_path)?;
     file.write_all(data)?;
 
     Ok(temp_path.to_string_lossy().to_string())

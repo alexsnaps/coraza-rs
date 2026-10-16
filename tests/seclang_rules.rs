@@ -1592,6 +1592,31 @@ fn uploaded_files_are_stored_in_the_upload_dir_and_listed_in_files_tmpnames() {
     assert_eq!(files_in(dir.path()), [b"hello"]);
 }
 
+#[cfg(unix)]
+#[test]
+fn uploaded_files_are_readable_by_their_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // As Go's os.CreateTemp creates them
+    let dir = tempfile::tempdir().unwrap();
+    let waf = waf(&format!(
+        r#"
+        SecRequestBodyAccess On
+        SecUploadDir {}
+        "#,
+        dir.path().display()
+    ));
+
+    // Kept until the end: the transaction removes its uploads when dropped
+    let _tx = upload(&waf);
+
+    let modes: Vec<u32> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().metadata().unwrap().permissions().mode() & 0o777)
+        .collect();
+    assert_eq!(modes, [0o600]);
+}
+
 #[test]
 fn uploaded_files_are_removed_when_the_transaction_ends_unless_kept() {
     // As Go's Transaction.Close does
