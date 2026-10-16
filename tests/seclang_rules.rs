@@ -2181,7 +2181,8 @@ fn extended_multipart_filenames_are_decoded_with_their_charset_and_language() {
     assert_eq!(sorted(MultipartFilename), ["plain.txt", "€.php"]);
     assert_eq!(sorted(MultipartFilenameCharset), ["UTF-8"]);
     assert_eq!(sorted(MultipartFilenameLanguage), ["en"]);
-    assert_eq!(values(&tx, Files, "f"), ["€.php"]);
+    // Both names, as in Go Coraza
+    assert_eq!(values(&tx, Files, ""), ["€.php", "plain.txt"]);
     assert_eq!(
         tx.get_variable(coraza::RuleVariable::MultipartStrictError, None)
             .as_deref(),
@@ -2353,4 +2354,187 @@ fn a_transaction_dropped_while_panicking_runs_no_rule() {
 
     assert!(unwound.is_err());
     assert!(ids.lock().unwrap().is_empty());
+}
+
+#[test]
+fn files_hold_both_names_of_a_file_named_twice() {
+    // As in Go Coraza (TestMultipartFilenameStar): a backend may store the file under
+    // either name, so rules see both
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule FILES "@rx \.php$" "id:1,phase:2,deny,status:403"
+    "#);
+    let body = "--b\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"evil.php\"; filename*=UTF-8''benign.txt\r\n\r\nx\r\n--b--\r\n";
+
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
+    tx.process_request_headers();
+
+    assert_eq!(
+        tx.process_request_body(body.as_bytes()).map(|i| i.rule_id),
+        Some(1)
+    );
+    for name in ["benign.txt", "evil.php"] {
+        let size = tx.get_variable(RuleVariable::FilesSizes, Some(name));
+        assert_eq!(size.as_deref(), Some("1"), "{name}");
+    }
+}
+
+#[test]
+fn files_are_listed_without_keys() {
+    // As in Go Coraza, FILES, FILES_NAMES and FILES_TMPNAMES hold their values under the
+    // key "": a match is named by the variable alone
+    let dir = tempfile::tempdir().unwrap();
+    let waf = waf(&format!(
+        r#"
+        SecRequestBodyAccess On
+        SecUploadDir {}
+        SecRule FILES "@rx \.txt$" "id:1,phase:2,pass,nolog,setvar:tx.files=%{{MATCHED_VAR_NAME}}"
+        SecRule FILES_NAMES "@streq upload" "id:2,phase:2,pass,nolog,setvar:tx.names=%{{MATCHED_VAR_NAME}}"
+        SecRule FILES_TMPNAMES "@rx ." "id:3,phase:2,pass,nolog,setvar:tx.tmpnames=%{{MATCHED_VAR_NAME}}"
+        SecRule FILES:upload "@rx ." "id:4,phase:2,pass,nolog,setvar:tx.by_field=1"
+        "#,
+        dir.path().display()
+    ));
+
+    let tx = upload(&waf);
+
+    assert_eq!(tx_var(&tx, "files").as_deref(), Some("FILES"));
+    assert_eq!(tx_var(&tx, "names").as_deref(), Some("FILES_NAMES"));
+    assert_eq!(tx_var(&tx, "tmpnames").as_deref(), Some("FILES_TMPNAMES"));
+    assert_eq!(tx_var(&tx, "by_field"), None);
+}
+
+#[test]
+fn an_upload_dir_that_is_gone_fails_the_body() {
+    // As in Go Coraza, which doesn't make it again
+    let dir = tempfile::tempdir().unwrap();
+    let upload_dir = dir.path().join("uploads");
+    std::fs::create_dir(&upload_dir).unwrap();
+    let waf = waf(&format!(
+        r#"
+        SecRequestBodyAccess On
+        SecUploadDir {}
+        "#,
+        upload_dir.display()
+    ));
+    std::fs::remove_dir(&upload_dir).unwrap();
+
+    let tx = upload(&waf);
+
+    assert!(!upload_dir.exists());
+    for variable in [
+        RuleVariable::ReqbodyError,
+        RuleVariable::MultipartStrictError,
+    ] {
+        let flag = tx.get_variable(variable, None);
+        assert_eq!(flag.as_deref(), Some("1"), "{variable:?}");
+    }
+}
+
+#[test]
+fn uploads_are_stored_in_the_temp_dir_without_an_upload_dir() {
+    // As in Go Coraza, and removed when the transaction ends
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule FILES_TMPNAMES "@rx ." "id:1,phase:2,pass,nolog,setvar:tx.stored=%{MATCHED_VAR}"
+    "#);
+
+    let tx = upload(&waf);
+
+    let stored = tx_var(&tx, "stored").expect("the upload is stored");
+    let stored = std::path::Path::new(&stored);
+    assert_eq!(stored.parent(), Some(std::env::temp_dir().as_path()));
+    assert_eq!(std::fs::read(stored).unwrap(), b"hello");
+    drop(tx);
+    assert!(!stored.exists());
+}
+
+/// A transaction whose request body `body` the XML processor read.
+fn xml_request(body: &[u8]) -> Transaction {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule REQUEST_HEADERS:Content-Type "^application/xml" "id:200000,phase:1,pass,nolog,ctl:requestBodyProcessor=XML"
+    "#);
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "application/xml");
+    tx.process_request_headers();
+    tx.process_request_body(body);
+    tx
+}
+
+/// REQUEST_XML's attribute values and text: its `//@*` and `/*`.
+fn request_xml(tx: &Transaction) -> (Vec<String>, Vec<String>) {
+    (
+        values(tx, RuleVariable::RequestXML, "//@*"),
+        values(tx, RuleVariable::RequestXML, "/*"),
+    )
+}
+
+#[test]
+fn xml_bodies_go_rejects_are_body_errors() {
+    // As Go Coraza's encoding/xml decoder, even with Strict off
+    let bodies: [&[u8]; 4] = [
+        b"<a>bad utf8 \xff here</a>",
+        b"<a>nul \x00 here</a>",
+        b"<a></b>",
+        b"<a><1bad>name</1bad></a>",
+    ];
+    for body in bodies {
+        let tx = xml_request(body);
+        let error = tx.get_variable(RuleVariable::ReqbodyError, None);
+        assert_eq!(error.as_deref(), Some("1"), "{body:?}");
+        assert_eq!(request_xml(&tx), (vec![], vec![]), "{body:?}");
+    }
+}
+
+#[test]
+fn xml_attributes_are_read_as_go_reads_them() {
+    // Unquoted, without a value (its name then) and repeated, as Go Coraza's decoder
+    let tx = xml_request(br#"<a attr=unquoted checked b="1" b="2">text</a>"#);
+    assert_eq!(request_xml(&tx).0, ["unquoted", "checked", "1", "2"]);
+}
+
+#[test]
+fn xml_text_with_an_unknown_entity_is_kept_as_written() {
+    let tx = xml_request(b"<a>&unknown; entity</a>");
+    assert_eq!(request_xml(&tx).1, ["&unknown; entity"]);
+}
+
+#[test]
+fn xml_names_are_those_go_reads() {
+    // Characters Go's name tables give as ranges of a stride other than 1
+    let tx = xml_request("<\u{0AE0}\u{3005}>x</\u{0AE0}\u{3005}>".as_bytes());
+    let error = tx.get_variable(RuleVariable::ReqbodyError, None);
+    assert_eq!(error.as_deref(), Some("0"));
+    assert_eq!(request_xml(&tx).1, ["x"]);
+}
+
+#[test]
+fn xml_html_elements_that_are_always_empty_close_where_they_open() {
+    // As Go's decoder, with HTMLAutoClose: an end tag after their text closes nothing,
+    // whatever its case, the Kelvin sign for k included
+    let tx = xml_request(b"<p>one<br>two</p>");
+    assert_eq!(request_xml(&tx).1, ["one", "two"]);
+    for body in [
+        "<br>text</br>",
+        "<BR>text</br>",
+        "<lin\u{212A}>text</lin\u{212A}>",
+    ] {
+        let tx = xml_request(body.as_bytes());
+        let error = tx.get_variable(RuleVariable::ReqbodyError, None);
+        assert_eq!(error.as_deref(), Some("1"), "{body}");
+    }
+}
+
+#[test]
+fn xml_bodies_have_html_4_entities_replaced() {
+    // As Go Coraza's decoder, with Go's HTMLEntity: in attribute values too, and HTML5's
+    // (&check;) kept as written
+    let tx = xml_request(r#"<a t="&nbsp;x">&copy; &eacute;&euro; &check; &#65;</a>"#.as_bytes());
+    let expected = (
+        vec!["\u{A0}x".to_string()],
+        vec!["© é€ &check; A".to_string()],
+    );
+    assert_eq!(request_xml(&tx), expected);
 }

@@ -16,8 +16,8 @@ use std::io::Write;
 
 /// Parses a request body, with the boundary its `Content-Type` gives, into ARGS_POST (and
 /// ARGS), FILES*, FILES_COMBINED_SIZE and the MULTIPART_* variables, storing uploaded
-/// files in `SecUploadDir` if set. MULTIPART_STRICT_ERROR is set if the body can't be
-/// parsed, or any part is malformed.
+/// files in `SecUploadDir`, or the system's temporary directory. MULTIPART_STRICT_ERROR is set if the body can't be
+/// parsed, a part is malformed, or a file can't be stored.
 ///
 /// # Errors
 ///
@@ -28,7 +28,11 @@ pub(super) fn process_request(body: &[u8], tx: &mut Transaction) -> Result<(), B
         .unwrap_or_default()
         .into_owned();
     let parts = parts(&content_type, body).inspect_err(|_| tx.multipart_strict_error.set("1"))?;
-    let upload_dir = tx.config().upload_dir.clone();
+    // As in Go Coraza, uploads go to the system's temporary directory without SecUploadDir
+    let upload_dir = match tx.config().upload_dir.as_str() {
+        "" => std::env::temp_dir(),
+        dir => std::path::PathBuf::from(dir),
+    };
 
     let mut total_size: u64 = 0;
 
@@ -71,16 +75,22 @@ pub(super) fn process_request(body: &[u8], tx: &mut Transaction) -> Result<(), B
             let size = part.data.len() as u64;
             total_size += size;
 
-            // Save to temporary file if upload_dir is set
-            if !upload_dir.is_empty() {
-                let temp_file = save_to_temp(&upload_dir, &part.data)?;
-                tx.files_tmp_names.add(&part.name, &temp_file);
-            }
+            // As in Go Coraza, FILES, FILES_NAMES and FILES_TMPNAMES list their values
+            // without keys; FILES_SIZES is keyed by file name
+            // As in Go Coraza, a file that can't be stored fails the body
+            let temp_file = save_to_temp(&upload_dir, &part.data)
+                .inspect_err(|_| tx.multipart_strict_error.set("1"))?;
+            tx.files_tmp_names.add("", &temp_file);
 
-            // Populate FILES collections (keyed by field name)
-            tx.files.add(&part.name, filename);
+            tx.files.add("", filename);
             tx.files_sizes.set_index(filename, 0, size.to_string());
-            tx.files_names.add(&part.name, &part.name);
+            // And under the name a backend reading `filename` rather than `filename*`
+            // stores it, as Go Coraza does
+            if let Some(alt_filename) = &part.alt_filename {
+                tx.files.add("", alt_filename);
+                tx.files_sizes.set_index(alt_filename, 0, size.to_string());
+            }
+            tx.files_names.add("", &part.name);
         } else {
             // Regular form field, whose value keeps its bytes, as in Go Coraza
             total_size += part.data.len() as u64;
@@ -122,16 +132,11 @@ fn parts(content_type: &str, body: &[u8]) -> Result<Vec<parser::Part>, BodyProce
 /// Stores an uploaded file's `data` in a new file of `upload_dir`, named `crzmp` and 16
 /// random characters, as Go Coraza does with `os.CreateTemp`: readable and writable by its
 /// owner only, and never replacing an existing file. Returns the file's path.
-fn save_to_temp(upload_dir: &str, data: &[u8]) -> Result<String, BodyProcessorError> {
+fn save_to_temp(upload_dir: &std::path::Path, data: &[u8]) -> Result<String, BodyProcessorError> {
     use std::fs;
-    use std::path::PathBuf;
-
-    // Create upload directory if it doesn't exist
-    fs::create_dir_all(upload_dir)?;
 
     let temp_name = format!("crzmp{}", crate::utils::strings::random_string(16));
-    let mut temp_path = PathBuf::from(upload_dir);
-    temp_path.push(temp_name);
+    let temp_path = upload_dir.join(temp_name);
 
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);

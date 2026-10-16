@@ -454,6 +454,48 @@ fn test_sec_upload_dir() {
 }
 
 #[test]
+fn keeping_uploads_needs_an_upload_dir() {
+    // As in Go Coraza: kept files would pile up in the system's temporary directory
+    let mut parser = Parser::new();
+    parser.from_string("SecUploadKeepFiles On").unwrap();
+    let error = parser.into_waf().unwrap_err();
+    assert!(
+        error.to_string().contains("SecUploadDir is required"),
+        "{error}"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut parser = Parser::new();
+    let directives = format!(
+        "SecUploadKeepFiles On\nSecUploadDir {}",
+        dir.path().display()
+    );
+    parser.from_string(&directives).unwrap();
+    assert!(parser.into_waf().is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn sec_upload_dir_must_be_writable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // As in Go Coraza, which checks by writing a file in it
+    let dir = tempfile::tempdir().unwrap();
+    let set_mode =
+        |mode| std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(mode));
+    set_mode(0o555).unwrap();
+    // Root writes anywhere: nothing to check then
+    let writable = std::fs::File::create(dir.path().join("probe")).is_ok();
+
+    let result = Parser::new().from_string(&format!("SecUploadDir {}", dir.path().display()));
+
+    set_mode(0o755).unwrap();
+    if !writable {
+        assert!(result.is_err(), "a read-only upload dir should fail");
+    }
+}
+
+#[test]
 fn test_sec_upload_file_limit() {
     let mut parser = Parser::new();
 
