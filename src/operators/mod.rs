@@ -144,10 +144,7 @@ pub(crate) fn evaluate_in(
 
 /// Whether `needle` occurs in `haystack`; an empty `needle` occurs in every haystack.
 pub(crate) fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
-    needle.is_empty()
-        || haystack
-            .windows(needle.len())
-            .any(|window| window == needle)
+    memchr::memmem::find(haystack, needle).is_some()
 }
 
 /// Named lists of items (`SecDataset`), for `@pmFromDataset` and `@ipMatchFromDataset`.
