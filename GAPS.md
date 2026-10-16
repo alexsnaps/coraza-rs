@@ -354,12 +354,21 @@ None of these is used by CRS v4.30.0.
       `>` or `"`, for instance), and rewrites 920100-16's absolute-form `http://localhost` with a path.
     - 8 are the engine's: 920250-1 to 4, 941310-1, 12 and 13, 944200-1, all bytes that aren't UTF-8 in arguments or
       bodies, the next item.
-- [ ] **Collection values are text.** Left from the bytes item above, and the FTW tests' last 8 failures of the
+- [x] **Collection values are text.** Left from the bytes item above, and the FTW tests' last 8 failures of the
   engine: `?param=%c0%af` puts U+FFFD in `ARGS:param`, so `@validateUtf8Encoding` (920250) sees valid UTF-8, and a
   body's `\xbc` (941310) or Java's `\xac\xed` (944200) never reach the operators as bytes. Go's values are bytes.
   A fix would keep values as bytes in the collections, and give operators bytes (transformations already have
   them), turning them into text only for macros and logs. It touches the collections, the 32 operators, macros,
   `setvar` and the body processors.
+  - Done: collections store their values as bytes (`Map` lends them out; its `get` and `entries` give text), a
+    rule's chain hands its bytes to the operator unchanged, and operators take `&[u8]`. Those that read text do so
+    through `transformations::text_of`, which replaces invalid sequences with U+FFFD only when there are some.
+    Argument values from the query string, urlencoded and multipart bodies keep the bytes they decode to, and
+    `@validateUtf8Encoding` checks them (it always returned false).
+  - FTW at `4447016`: **5,193 of 5,231 passed (99.3%)**, 38 failed. The 8 above now pass; no other test changed.
+  - Left: argument names are text (`?%ff=1` puts U+FFFD in `ARGS_NAMES`). Single-value variables are text, so
+    `REQUEST_BODY` and `MATCHED_VAR` replace bytes that aren't UTF-8. A JSON body becomes text before it is parsed,
+    so its values do too (whether Go's gjson keeps such bytes is unverified).
 - [ ] **The FTW server's HTTP library rejects request lines Go's accepts.** 29 FTW tests never reach the WAF (above).
   Go's harness uses `net/http`. A server reading requests with `httparse`, already in the dependency tree through
   hyper, rather than hyper's strict `Uri`, would let them through; it would be an optional dependency of the
