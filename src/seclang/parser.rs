@@ -121,15 +121,15 @@ struct DirectiveOptions<'a> {
 
 /// Parser configuration and state
 #[derive(Debug, Clone, Default)]
-pub struct ParserState {
+struct ParserState {
     /// Current line number
-    pub current_line: usize,
+    current_line: usize,
 
     /// Current file being parsed
-    pub current_file: String,
+    current_file: String,
 
     /// Current directory (for resolving relative includes)
-    pub current_dir: String,
+    current_dir: String,
 }
 
 /// SecLang parser

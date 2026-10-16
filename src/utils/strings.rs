@@ -18,16 +18,6 @@ static RNG: Mutex<Option<fastrand::Rng>> = Mutex::new(None);
 /// Returns a pseudorandom alphanumeric string of length n.
 ///
 /// This function is thread-safe and can be called concurrently.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::utils::strings::random_string;
-///
-/// let id = random_string(16);
-/// assert_eq!(id.len(), 16);
-/// assert!(id.chars().all(|c| c.is_ascii_alphabetic()));
-/// ```
 pub fn random_string(n: usize) -> String {
     let mut rng = RNG.lock().unwrap();
     let rng = rng.get_or_insert_with(fastrand::Rng::new);
@@ -41,17 +31,6 @@ pub fn random_string(n: usize) -> String {
 }
 
 /// Value (0-15) of an ASCII hex digit (`0-9`, `a-f`, `A-F`); `None` for any other byte.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::utils::strings::hex_value;
-///
-/// assert_eq!(hex_value(b'7'), Some(7));
-/// assert_eq!(hex_value(b'b'), Some(11));
-/// assert_eq!(hex_value(b'F'), Some(15));
-/// assert_eq!(hex_value(b'g'), None);
-/// ```
 pub fn hex_value(digit: u8) -> Option<u8> {
     char::from(digit).to_digit(16).map(|value| value as u8)
 }
@@ -59,17 +38,6 @@ pub fn hex_value(digit: u8) -> Option<u8> {
 /// The byte two hex digits encode, e.g. `b"41"` for `A`.
 ///
 /// Check digits with [`u8::is_ascii_hexdigit`] first.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::utils::strings::x2c;
-///
-/// assert_eq!(x2c(b"41"), b'A');  // 0x41 = 65 = 'A'
-/// assert_eq!(x2c(b"0a"), 10);
-/// assert_eq!(x2c(b"FF"), 255);
-/// assert_eq!(x2c(b"00"), 0);
-/// ```
 ///
 /// # Panics
 ///
@@ -86,19 +54,6 @@ pub fn x2c(what: &[u8]) -> u8 {
 ///
 /// Removes quotes only if the string both starts and ends with the same quote
 /// character (either `"` or `'`). Otherwise returns the string unchanged.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::utils::strings::maybe_remove_quotes;
-///
-/// assert_eq!(maybe_remove_quotes(r#""hello""#), "hello");
-/// assert_eq!(maybe_remove_quotes("'world'"), "world");
-/// assert_eq!(maybe_remove_quotes(r#""mismatched'"#), r#""mismatched'"#);
-/// assert_eq!(maybe_remove_quotes(r#""incomplete"#), r#""incomplete"#);
-/// assert_eq!(maybe_remove_quotes(""), "");
-/// assert_eq!(maybe_remove_quotes(r#"""#), r#"""#);
-/// ```
 pub fn maybe_remove_quotes(s: &str) -> &str {
     if s.len() < 2 {
         return s;
@@ -113,49 +68,6 @@ pub fn maybe_remove_quotes(s: &str) -> &str {
     } else {
         s
     }
-}
-
-/// Unescapes `\"` sequences to `"` in SecLang quoted strings.
-///
-/// This is the ONLY escape sequence recognized by the SecLang quoted string
-/// parser. Backslashes before any other character (including other backslashes)
-/// are left as-is so that operator arguments like regex patterns are passed
-/// through unchanged.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::utils::strings::unescape_quoted_string;
-///
-/// assert_eq!(unescape_quoted_string(r#"hello \"world\""#), r#"hello "world""#);
-/// assert_eq!(unescape_quoted_string(r#"\""#), r#"""#);
-/// assert_eq!(unescape_quoted_string(r#"\\"#), r#"\\"#);  // Backslash NOT escaped
-/// assert_eq!(unescape_quoted_string(r#"\n"#), r#"\n"#);  // Other escapes NOT processed
-/// assert_eq!(unescape_quoted_string(r#"@rx C:\\"#), r#"@rx C:\\"#);
-/// assert_eq!(unescape_quoted_string("no escapes"), "no escapes");
-/// ```
-pub fn unescape_quoted_string(s: &str) -> String {
-    // Fast path: if no backslashes, return unchanged
-    if !s.contains('\\') {
-        return s.to_string();
-    }
-
-    let mut result = String::with_capacity(s.len());
-    let bytes = s.as_bytes();
-    let mut i = 0;
-
-    while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() && bytes[i + 1] == b'"' {
-            // Unescape \" -> "
-            result.push('"');
-            i += 2; // Skip both the backslash and quote
-        } else {
-            result.push(bytes[i] as char);
-            i += 1;
-        }
-    }
-
-    result
 }
 
 #[cfg(test)]
@@ -280,30 +192,48 @@ mod tests {
         assert_eq!(maybe_remove_quotes("\"\\s\\x5c.*\""), "\\s\\x5c.*");
     }
 
+    /// The doc example of `utils::strings::random_string`, before it became internal.
     #[test]
-    fn test_unescape_quoted_string() {
-        // Empty and simple strings
-        assert_eq!(unescape_quoted_string(""), "");
-        assert_eq!(unescape_quoted_string("hello"), "hello");
+    fn doc_random_string() {
+        use crate::utils::strings::random_string;
 
-        // Escaped quotes
-        assert_eq!(unescape_quoted_string("\\\""), "\"");
-        assert_eq!(
-            unescape_quoted_string("hello \\\"world\\\""),
-            "hello \"world\""
-        );
-        assert_eq!(unescape_quoted_string("@contains \\\""), "@contains \"");
+        let id = random_string(16);
+        assert_eq!(id.len(), 16);
+        assert!(id.chars().all(|c| c.is_ascii_alphabetic()));
+    }
 
-        // Backslashes NOT escaped
-        assert_eq!(unescape_quoted_string("\\\\"), "\\\\");
-        assert_eq!(unescape_quoted_string("@rx C:\\\\"), "@rx C:\\\\");
+    /// The doc example of `utils::strings::hex_value`, before it became internal.
+    #[test]
+    fn doc_hex_value() {
+        use crate::utils::strings::hex_value;
 
-        // Other escapes NOT processed
-        assert_eq!(unescape_quoted_string("\\n"), "\\n");
-        assert_eq!(unescape_quoted_string("\\t"), "\\t");
-        assert_eq!(unescape_quoted_string("\\r"), "\\r");
+        assert_eq!(hex_value(b'7'), Some(7));
+        assert_eq!(hex_value(b'b'), Some(11));
+        assert_eq!(hex_value(b'F'), Some(15));
+        assert_eq!(hex_value(b'g'), None);
+    }
 
-        // No escapes
-        assert_eq!(unescape_quoted_string("no escapes here"), "no escapes here");
+    /// The doc example of `utils::strings::x2c`, before it became internal.
+    #[test]
+    fn doc_x2c() {
+        use crate::utils::strings::x2c;
+
+        assert_eq!(x2c(b"41"), b'A'); // 0x41 = 65 = 'A'
+        assert_eq!(x2c(b"0a"), 10);
+        assert_eq!(x2c(b"FF"), 255);
+        assert_eq!(x2c(b"00"), 0);
+    }
+
+    /// The doc example of `utils::strings::maybe_remove_quotes`, before it became internal.
+    #[test]
+    fn doc_maybe_remove_quotes() {
+        use crate::utils::strings::maybe_remove_quotes;
+
+        assert_eq!(maybe_remove_quotes(r#""hello""#), "hello");
+        assert_eq!(maybe_remove_quotes("'world'"), "world");
+        assert_eq!(maybe_remove_quotes(r#""mismatched'"#), r#""mismatched'"#);
+        assert_eq!(maybe_remove_quotes(r#""incomplete"#), r#""incomplete"#);
+        assert_eq!(maybe_remove_quotes(""), "");
+        assert_eq!(maybe_remove_quotes(r#"""#), r#"""#);
     }
 }

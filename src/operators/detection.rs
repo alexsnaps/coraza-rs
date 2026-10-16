@@ -19,24 +19,6 @@ use crate::transaction::Transaction;
 /// # Returns
 ///
 /// `true` if SQL injection detected, `false` otherwise.
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::operators::detection::detect_sqli;
-/// # use coraza::operators::Operator;
-/// let op = detect_sqli();
-///
-/// // SQL injection patterns
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "1' OR '1'='1".as_bytes(), &mut out));
-/// assert!(op.evaluate(&tx, "admin'--".as_bytes(), &mut out));
-/// assert!(op.evaluate(&tx, "1 UNION SELECT".as_bytes(), &mut out));
-///
-/// // Normal input
-/// assert!(!op.evaluate(&tx, "hello world".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct DetectSQLi;
 
@@ -51,17 +33,6 @@ impl Operator for DetectSQLi {
 }
 
 /// Creates a new `detectSQLi` operator.
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::operators::detection::detect_sqli;
-/// # use coraza::operators::Operator;
-/// let op = detect_sqli();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "1' OR '1'='1".as_bytes(), &mut out));
-/// ```
 pub fn detect_sqli() -> DetectSQLi {
     DetectSQLi
 }
@@ -78,24 +49,6 @@ pub fn detect_sqli() -> DetectSQLi {
 /// # Returns
 ///
 /// `true` if XSS detected, `false` otherwise.
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::operators::detection::detect_xss;
-/// # use coraza::operators::Operator;
-/// let op = detect_xss();
-///
-/// // XSS patterns
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "<script>alert(1)</script>".as_bytes(), &mut out));
-/// assert!(op.evaluate(&tx, "<a href=\"javascript:alert(1)\">".as_bytes(), &mut out));
-/// assert!(op.evaluate(&tx, "<img src=x onerror=alert(1)>".as_bytes(), &mut out));
-///
-/// // Normal input
-/// assert!(!op.evaluate(&tx, "hello world".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct DetectXSS;
 
@@ -106,17 +59,6 @@ impl Operator for DetectXSS {
 }
 
 /// Creates a new `detectXSS` operator.
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::operators::detection::detect_xss;
-/// # use coraza::operators::Operator;
-/// let op = detect_xss();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "<script>alert(1)</script>".as_bytes(), &mut out));
-/// ```
 pub fn detect_xss() -> DetectXSS {
     DetectXSS
 }
@@ -189,5 +131,63 @@ mod tests {
         // Not XSS
         assert!(!op.matches("test"));
         assert!(!op.matches("a < b && c > d"));
+    }
+
+    /// The doc example of `operators::detection::DetectSQLi`, before it became internal.
+    #[test]
+    fn doc_detect_sqli_type() {
+        use crate::operators::Operator;
+        use crate::operators::detection::detect_sqli;
+        let op = detect_sqli();
+
+        // SQL injection patterns
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "1' OR '1'='1".as_bytes(), &mut out));
+        assert!(op.evaluate(&tx, "admin'--".as_bytes(), &mut out));
+        assert!(op.evaluate(&tx, "1 UNION SELECT".as_bytes(), &mut out));
+
+        // Normal input
+        assert!(!op.evaluate(&tx, "hello world".as_bytes(), &mut out));
+    }
+
+    /// The doc example of `operators::detection::detect_sqli`, before it became internal.
+    #[test]
+    fn doc_detect_sqli() {
+        use crate::operators::Operator;
+        use crate::operators::detection::detect_sqli;
+        let op = detect_sqli();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "1' OR '1'='1".as_bytes(), &mut out));
+    }
+
+    /// The doc example of `operators::detection::DetectXSS`, before it became internal.
+    #[test]
+    fn doc_detect_xss_type() {
+        use crate::operators::Operator;
+        use crate::operators::detection::detect_xss;
+        let op = detect_xss();
+
+        // XSS patterns
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "<script>alert(1)</script>".as_bytes(), &mut out));
+        assert!(op.evaluate(&tx, "<a href=\"javascript:alert(1)\">".as_bytes(), &mut out));
+        assert!(op.evaluate(&tx, "<img src=x onerror=alert(1)>".as_bytes(), &mut out));
+
+        // Normal input
+        assert!(!op.evaluate(&tx, "hello world".as_bytes(), &mut out));
+    }
+
+    /// The doc example of `operators::detection::detect_xss`, before it became internal.
+    #[test]
+    fn doc_detect_xss() {
+        use crate::operators::Operator;
+        use crate::operators::detection::detect_xss;
+        let op = detect_xss();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "<script>alert(1)</script>".as_bytes(), &mut out));
     }
 }

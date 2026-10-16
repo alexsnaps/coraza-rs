@@ -23,23 +23,6 @@ use crate::utils::strings::{hex_value, x2c};
 /// Returns `(output, changed)` where:
 /// - `output` is the decoded string
 /// - `changed` is `true` if any escapes were decoded, `false` otherwise
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::transformations::escape::escape_seq_decode;
-/// let (result, changed, _) = escape_seq_decode(b"\\n\\t\\r");
-/// assert_eq!(result, b"\n\t\r");
-/// assert!(changed);
-///
-/// let (result, changed, _) = escape_seq_decode(b"\\x41\\x42\\x43");
-/// assert_eq!(result, b"ABC");
-/// assert!(changed);
-///
-/// let (result, changed, _) = escape_seq_decode(b"\\101\\102\\103");
-/// assert_eq!(result, b"ABC");
-/// assert!(changed);
-/// ```
 pub fn escape_seq_decode(input: &[u8]) -> TransformationResult {
     if let Some(pos) = input.iter().position(|&b| b == b'\\') {
         let (output, changed) = do_escape_seq_decode(input, pos);
@@ -164,24 +147,6 @@ fn octal_value(digits: &[u8]) -> u16 {
 /// Returns `(output, changed)` where:
 /// - `output` is the decoded string
 /// - `changed` is `true` if any escapes were decoded, `false` otherwise
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::transformations::escape::js_decode;
-/// let (result, changed, _) = js_decode(b"\\u0048\\u0065\\u006c\\u006c\\u006f");
-/// assert_eq!(result, b"Hello");
-/// assert!(changed);
-///
-/// let (result, changed, _) = js_decode(b"\\x48\\x65\\x6c\\x6c\\x6f");
-/// assert_eq!(result, b"Hello");
-/// assert!(changed);
-///
-/// // Full-width ASCII conversion (U+FF41 'ａ' -> 'a')
-/// let (result, changed, _) = js_decode(b"\\uff41");
-/// assert_eq!(result, b"a");
-/// assert!(changed);
-/// ```
 pub fn js_decode(input: &[u8]) -> TransformationResult {
     if let Some(pos) = input.iter().position(|&b| b == b'\\') {
         let (output, changed) = do_js_decode(input, pos);
@@ -314,24 +279,6 @@ fn do_js_decode(input: &[u8], pos: usize) -> (Vec<u8>, bool) {
 /// Returns `(output, changed)` where:
 /// - `output` is the decoded string
 /// - `changed` is `true` if any escapes were decoded, `false` otherwise
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::transformations::escape::css_decode;
-/// let (result, changed, _) = css_decode(b"\\48\\65\\6c\\6c\\6f");
-/// assert_eq!(result, b"Hello");
-/// assert!(changed);
-///
-/// let (result, changed, _) = css_decode(b"\\000048");  // 6 hex digits
-/// assert_eq!(result, b"H");
-/// assert!(changed);
-///
-/// // Whitespace after hex escape is ignored
-/// let (result, changed, _) = css_decode(b"\\48 ello");
-/// assert_eq!(result, b"Hello");
-/// assert!(changed);
-/// ```
 pub fn css_decode(input: &[u8]) -> TransformationResult {
     if let Some(pos) = input.iter().position(|&b| b == b'\\') {
         (do_css_decode(input, pos), true, None)
@@ -428,24 +375,6 @@ fn is_css_whitespace(c: u8) -> bool {
 /// Returns `(output, changed)` where:
 /// - `output` is the decoded string
 /// - `changed` is `true` if anything was decoded; invalid escapes are kept as they are
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::transformations::escape::url_decode_uni;
-/// let (result, changed, _) = url_decode_uni(b"Hello%20World");
-/// assert_eq!(result, b"Hello World");
-/// assert!(changed);
-///
-/// let (result, changed, _) = url_decode_uni(b"Hello+World");
-/// assert_eq!(result, b"Hello World");
-/// assert!(changed);
-///
-/// // IIS Unicode encoding
-/// let (result, changed, _) = url_decode_uni(b"%u0048%u0065%u006c%u006c%u006f");
-/// assert_eq!(result, b"Hello");
-/// assert!(changed);
-/// ```
 pub fn url_decode_uni(input: &[u8]) -> TransformationResult {
     // Most values have nothing to decode, and `contains` searches a byte much faster
     // than the scan below, which was a tenth of a CRS transaction with a 10 KB argument
@@ -535,23 +464,6 @@ fn do_url_decode_uni(input: &[u8], pos: usize) -> (Vec<u8>, bool) {
 /// Returns `(output, changed)` where:
 /// - `output` is the encoded string with non-ASCII as %uHHHH
 /// - `changed` is `true` if any encoding occurred, `false` otherwise
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::transformations::escape::utf8_to_unicode;
-/// let (result, changed, _) = utf8_to_unicode("café".as_bytes());
-/// assert_eq!(result, b"caf%u00e9");
-/// assert!(changed);
-///
-/// let (result, changed, _) = utf8_to_unicode(b"Hello");
-/// assert_eq!(result, b"Hello");
-/// assert!(!changed);
-///
-/// let (result, changed, _) = utf8_to_unicode("中文".as_bytes());
-/// assert!(result.starts_with(b"%u"));
-/// assert!(changed);
-/// ```
 pub fn utf8_to_unicode(input: &[u8]) -> TransformationResult {
     if input.is_ascii() {
         return (input.to_vec(), false, None);
@@ -1015,5 +927,93 @@ mod tests {
         assert_eq!(on_text(css_decode, "\\ff01\\00ff5e").0, "!~");
         // A surrogate is U+FFFD
         assert_eq!(on_text(css_decode, "\\d800").0, "\u{FFFD}");
+    }
+
+    /// The doc example of `transformations::escape::escape_seq_decode`, before it became internal.
+    #[test]
+    fn doc_escape_seq_decode() {
+        use crate::transformations::escape::escape_seq_decode;
+        let (result, changed, _) = escape_seq_decode(b"\\n\\t\\r");
+        assert_eq!(result, b"\n\t\r");
+        assert!(changed);
+
+        let (result, changed, _) = escape_seq_decode(b"\\x41\\x42\\x43");
+        assert_eq!(result, b"ABC");
+        assert!(changed);
+
+        let (result, changed, _) = escape_seq_decode(b"\\101\\102\\103");
+        assert_eq!(result, b"ABC");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::escape::js_decode`, before it became internal.
+    #[test]
+    fn doc_js_decode() {
+        use crate::transformations::escape::js_decode;
+        let (result, changed, _) = js_decode(b"\\u0048\\u0065\\u006c\\u006c\\u006f");
+        assert_eq!(result, b"Hello");
+        assert!(changed);
+
+        let (result, changed, _) = js_decode(b"\\x48\\x65\\x6c\\x6c\\x6f");
+        assert_eq!(result, b"Hello");
+        assert!(changed);
+
+        // Full-width ASCII conversion (U+FF41 'ａ' -> 'a')
+        let (result, changed, _) = js_decode(b"\\uff41");
+        assert_eq!(result, b"a");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::escape::css_decode`, before it became internal.
+    #[test]
+    fn doc_css_decode() {
+        use crate::transformations::escape::css_decode;
+        let (result, changed, _) = css_decode(b"\\48\\65\\6c\\6c\\6f");
+        assert_eq!(result, b"Hello");
+        assert!(changed);
+
+        let (result, changed, _) = css_decode(b"\\000048"); // 6 hex digits
+        assert_eq!(result, b"H");
+        assert!(changed);
+
+        // Whitespace after hex escape is ignored
+        let (result, changed, _) = css_decode(b"\\48 ello");
+        assert_eq!(result, b"Hello");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::escape::url_decode_uni`, before it became internal.
+    #[test]
+    fn doc_url_decode_uni() {
+        use crate::transformations::escape::url_decode_uni;
+        let (result, changed, _) = url_decode_uni(b"Hello%20World");
+        assert_eq!(result, b"Hello World");
+        assert!(changed);
+
+        let (result, changed, _) = url_decode_uni(b"Hello+World");
+        assert_eq!(result, b"Hello World");
+        assert!(changed);
+
+        // IIS Unicode encoding
+        let (result, changed, _) = url_decode_uni(b"%u0048%u0065%u006c%u006c%u006f");
+        assert_eq!(result, b"Hello");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::escape::utf8_to_unicode`, before it became internal.
+    #[test]
+    fn doc_utf8_to_unicode() {
+        use crate::transformations::escape::utf8_to_unicode;
+        let (result, changed, _) = utf8_to_unicode("café".as_bytes());
+        assert_eq!(result, b"caf%u00e9");
+        assert!(changed);
+
+        let (result, changed, _) = utf8_to_unicode(b"Hello");
+        assert_eq!(result, b"Hello");
+        assert!(!changed);
+
+        let (result, changed, _) = utf8_to_unicode("中文".as_bytes());
+        assert!(result.starts_with(b"%u"));
+        assert!(changed);
     }
 }

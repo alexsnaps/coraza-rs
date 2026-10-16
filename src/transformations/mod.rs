@@ -94,6 +94,7 @@ impl TransformationError {
     }
 
     /// Returns the error message.
+    #[cfg(test)]
     pub fn message(&self) -> &str {
         &self.message
     }

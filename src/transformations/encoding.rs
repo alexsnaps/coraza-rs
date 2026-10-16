@@ -12,20 +12,6 @@ use md5::{Digest, Md5};
 use sha1::Sha1;
 
 /// Returns the length of the input, in bytes, as a decimal number.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::length;
-///
-/// let (result, changed, _) = length(b"hello");
-/// assert_eq!(result, b"5");
-/// assert!(changed);
-///
-/// let (result, changed, _) = length(b"");
-/// assert_eq!(result, b"0");
-/// assert!(changed);
-/// ```
 pub fn length(input: &[u8]) -> TransformationResult {
     // Always returns changed=true because the transformation conceptually
     // always changes the data (except edge case where input is its own length)
@@ -35,35 +21,11 @@ pub fn length(input: &[u8]) -> TransformationResult {
 /// Returns input unchanged (identity transformation).
 ///
 /// This is a special case used in SecLang parsing.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::none;
-///
-/// let (result, changed, _) = none(b"hello");
-/// assert_eq!(result, b"hello");
-/// assert!(!changed);
-/// ```
 pub fn none(input: &[u8]) -> TransformationResult {
     (input.to_vec(), false, None)
 }
 
 /// Removes all NUL bytes (\x00) from input.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::remove_nulls;
-///
-/// let (result, changed, _) = remove_nulls(b"hello\x00world");
-/// assert_eq!(result, b"helloworld");
-/// assert!(changed);
-///
-/// let (result, changed, _) = remove_nulls(b"no nulls");
-/// assert_eq!(result, b"no nulls");
-/// assert!(!changed);
-/// ```
 pub fn remove_nulls(input: &[u8]) -> TransformationResult {
     // Spares the values without NUL, nearly all, the byte-by-byte copy
     if !input.contains(&0) {
@@ -74,20 +36,6 @@ pub fn remove_nulls(input: &[u8]) -> TransformationResult {
 }
 
 /// Replaces all NUL bytes (\x00) with spaces.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::replace_nulls;
-///
-/// let (result, changed, _) = replace_nulls(b"hello\x00world");
-/// assert_eq!(result, b"hello world");
-/// assert!(changed);
-///
-/// let (result, changed, _) = replace_nulls(b"no nulls");
-/// assert_eq!(result, b"no nulls");
-/// assert!(!changed);
-/// ```
 pub fn replace_nulls(input: &[u8]) -> TransformationResult {
     let changed = input.contains(&0);
     let transformed = input
@@ -98,20 +46,6 @@ pub fn replace_nulls(input: &[u8]) -> TransformationResult {
 }
 
 /// Encodes input as hexadecimal (lowercase).
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::hex_encode;
-///
-/// let (result, changed, _) = hex_encode(b"Hello");
-/// assert_eq!(result, b"48656c6c6f");
-/// assert!(changed);
-///
-/// let (result, changed, _) = hex_encode(b"");
-/// assert_eq!(result, b"");
-/// assert!(changed);
-/// ```
 pub fn hex_encode(input: &[u8]) -> TransformationResult {
     let encoded = input
         .iter()
@@ -123,22 +57,6 @@ pub fn hex_encode(input: &[u8]) -> TransformationResult {
 /// Decodes hexadecimal input to bytes.
 ///
 /// Returns an error if the input contains invalid hex characters or has odd length.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::hex_decode;
-///
-/// let (result, changed, err) = hex_decode(b"48656c6c6f");
-/// assert_eq!(result, b"Hello");
-/// assert!(changed);
-/// assert!(err.is_none());
-///
-/// let (result, changed, err) = hex_decode(b"invalid");
-/// assert_eq!(result, b"");
-/// assert!(!changed);
-/// assert!(err.is_some());
-/// ```
 pub fn hex_decode(input: &[u8]) -> TransformationResult {
     match hex_decode_bytes(input) {
         Ok(bytes) => (bytes, true, None),
@@ -170,24 +88,6 @@ fn hex_decode_bytes(bytes: &[u8]) -> Result<Vec<u8>, TransformationError> {
 ///
 /// Encodes all characters except alphanumerics and asterisk (*).
 /// Spaces are encoded as '+'.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::url_encode;
-///
-/// let (result, changed, _) = url_encode(b"hello world");
-/// assert_eq!(result, b"hello+world");
-/// assert!(changed);
-///
-/// let (result, changed, _) = url_encode(b"https://www.coraza.io");
-/// assert_eq!(result, b"https%3a%2f%2fwww%2ecoraza%2eio");
-/// assert!(changed);
-///
-/// let (result, changed, _) = url_encode(b"helloWorld");
-/// assert_eq!(result, b"helloWorld");
-/// assert!(!changed);
-/// ```
 pub fn url_encode(input: &[u8]) -> TransformationResult {
     let mut result = Vec::with_capacity(input.len() * 3);
     let mut changed = false;
@@ -214,20 +114,6 @@ pub fn url_encode(input: &[u8]) -> TransformationResult {
 }
 
 /// Base64 encodes the input using standard encoding.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::base64_encode;
-///
-/// let (result, changed, _) = base64_encode(b"Hello");
-/// assert_eq!(result, b"SGVsbG8=");
-/// assert!(changed);
-///
-/// let (result, changed, _) = base64_encode(b"");
-/// assert_eq!(result, b"");
-/// assert!(changed);
-/// ```
 pub fn base64_encode(input: &[u8]) -> TransformationResult {
     // Using a simple custom base64 encoder to avoid dependencies
     let encoded = base64_encode_string(input);
@@ -283,16 +169,6 @@ fn base64_encode_string(input: &[u8]) -> String {
 
 /// Computes the MD5 digest of the input, as raw bytes rather than hex: follow it with
 /// `t:hexEncode` for hex.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::{hex_encode, md5_hash};
-///
-/// let (digest, changed, _) = md5_hash(b"hello");
-/// assert_eq!(hex_encode(&digest).0, b"5d41402abc4b2a76b9719d911017c592");
-/// assert!(changed);
-/// ```
 pub fn md5_hash(input: &[u8]) -> TransformationResult {
     // Hash transformations are almost always a change (invariant is extremely unlikely)
     (Md5::digest(input).to_vec(), true, None)
@@ -300,16 +176,6 @@ pub fn md5_hash(input: &[u8]) -> TransformationResult {
 
 /// Computes the SHA1 digest of the input, as raw bytes rather than hex: follow it with
 /// `t:hexEncode` for hex.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::{hex_encode, sha1_hash};
-///
-/// let (digest, changed, _) = sha1_hash(b"hello");
-/// assert_eq!(hex_encode(&digest).0, b"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
-/// assert!(changed);
-/// ```
 pub fn sha1_hash(input: &[u8]) -> TransformationResult {
     // Hash transformations are almost always a change (invariant is extremely unlikely)
     (Sha1::digest(input).to_vec(), true, None)
@@ -321,26 +187,6 @@ pub fn sha1_hash(input: &[u8]) -> TransformationResult {
 /// successfully decoded bytes up to that point. Newlines (\r, \n) are ignored.
 ///
 /// This matches ModSecurity behavior for lenient base64 decoding.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::base64_decode;
-///
-/// let (result, changed, _) = base64_decode(b"SGVsbG8=");
-/// assert_eq!(result, b"Hello");
-/// assert!(changed);
-///
-/// // Partial decoding - stops at space (invalid)
-/// let (result, changed, _) = base64_decode(b"PFR FU1Q+");
-/// assert_eq!(result, b"<T");
-/// assert!(changed);
-///
-/// // Without padding
-/// let (result, changed, _) = base64_decode(b"VGVzdENhc2U");
-/// assert_eq!(result, b"TestCase");
-/// assert!(changed);
-/// ```
 pub fn base64_decode(input: &[u8]) -> TransformationResult {
     let result = do_base64_decode(input, false);
     (result, true, None)
@@ -349,21 +195,6 @@ pub fn base64_decode(input: &[u8]) -> TransformationResult {
 /// Base64 decodes with lenient handling of whitespace and dots.
 ///
 /// Like base64_decode but also ignores whitespace and '.' characters.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::base64_decode_ext;
-///
-/// // Ignores dots and whitespace
-/// let (result, changed, _) = base64_decode_ext(b"P.HNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==");
-/// assert_eq!(result, b"<script>alert(1)</script>");
-/// assert!(changed);
-///
-/// let (result, changed, _) = base64_decode_ext(b"PFR FU1Q+");
-/// assert_eq!(result, b"<TEST>");
-/// assert!(changed);
-/// ```
 pub fn base64_decode_ext(input: &[u8]) -> TransformationResult {
     let result = do_base64_decode(input, true);
     (result, true, None)
@@ -730,5 +561,177 @@ mod tests {
             assert_eq!(got, want, "input: {:?}", input);
             assert!(changed, "input: {:?}", input);
         }
+    }
+
+    /// The doc example of `transformations::encoding::length`, before it became internal.
+    #[test]
+    fn doc_length() {
+        use crate::transformations::length;
+
+        let (result, changed, _) = length(b"hello");
+        assert_eq!(result, b"5");
+        assert!(changed);
+
+        let (result, changed, _) = length(b"");
+        assert_eq!(result, b"0");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::encoding::none`, before it became internal.
+    #[test]
+    fn doc_none() {
+        use crate::transformations::none;
+
+        let (result, changed, _) = none(b"hello");
+        assert_eq!(result, b"hello");
+        assert!(!changed);
+    }
+
+    /// The doc example of `transformations::encoding::remove_nulls`, before it became internal.
+    #[test]
+    fn doc_remove_nulls() {
+        use crate::transformations::remove_nulls;
+
+        let (result, changed, _) = remove_nulls(b"hello\x00world");
+        assert_eq!(result, b"helloworld");
+        assert!(changed);
+
+        let (result, changed, _) = remove_nulls(b"no nulls");
+        assert_eq!(result, b"no nulls");
+        assert!(!changed);
+    }
+
+    /// The doc example of `transformations::encoding::replace_nulls`, before it became internal.
+    #[test]
+    fn doc_replace_nulls() {
+        use crate::transformations::replace_nulls;
+
+        let (result, changed, _) = replace_nulls(b"hello\x00world");
+        assert_eq!(result, b"hello world");
+        assert!(changed);
+
+        let (result, changed, _) = replace_nulls(b"no nulls");
+        assert_eq!(result, b"no nulls");
+        assert!(!changed);
+    }
+
+    /// The doc example of `transformations::encoding::hex_encode`, before it became internal.
+    #[test]
+    fn doc_hex_encode() {
+        use crate::transformations::hex_encode;
+
+        let (result, changed, _) = hex_encode(b"Hello");
+        assert_eq!(result, b"48656c6c6f");
+        assert!(changed);
+
+        let (result, changed, _) = hex_encode(b"");
+        assert_eq!(result, b"");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::encoding::hex_decode`, before it became internal.
+    #[test]
+    fn doc_hex_decode() {
+        use crate::transformations::hex_decode;
+
+        let (result, changed, err) = hex_decode(b"48656c6c6f");
+        assert_eq!(result, b"Hello");
+        assert!(changed);
+        assert!(err.is_none());
+
+        let (result, changed, err) = hex_decode(b"invalid");
+        assert_eq!(result, b"");
+        assert!(!changed);
+        assert!(err.is_some());
+    }
+
+    /// The doc example of `transformations::encoding::url_encode`, before it became internal.
+    #[test]
+    fn doc_url_encode() {
+        use crate::transformations::url_encode;
+
+        let (result, changed, _) = url_encode(b"hello world");
+        assert_eq!(result, b"hello+world");
+        assert!(changed);
+
+        let (result, changed, _) = url_encode(b"https://www.coraza.io");
+        assert_eq!(result, b"https%3a%2f%2fwww%2ecoraza%2eio");
+        assert!(changed);
+
+        let (result, changed, _) = url_encode(b"helloWorld");
+        assert_eq!(result, b"helloWorld");
+        assert!(!changed);
+    }
+
+    /// The doc example of `transformations::encoding::base64_encode`, before it became internal.
+    #[test]
+    fn doc_base64_encode() {
+        use crate::transformations::base64_encode;
+
+        let (result, changed, _) = base64_encode(b"Hello");
+        assert_eq!(result, b"SGVsbG8=");
+        assert!(changed);
+
+        let (result, changed, _) = base64_encode(b"");
+        assert_eq!(result, b"");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::encoding::md5_hash`, before it became internal.
+    #[test]
+    fn doc_md5_hash() {
+        use crate::transformations::{hex_encode, md5_hash};
+
+        let (digest, changed, _) = md5_hash(b"hello");
+        assert_eq!(hex_encode(&digest).0, b"5d41402abc4b2a76b9719d911017c592");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::encoding::sha1_hash`, before it became internal.
+    #[test]
+    fn doc_sha1_hash() {
+        use crate::transformations::{hex_encode, sha1_hash};
+
+        let (digest, changed, _) = sha1_hash(b"hello");
+        assert_eq!(
+            hex_encode(&digest).0,
+            b"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
+        );
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::encoding::base64_decode`, before it became internal.
+    #[test]
+    fn doc_base64_decode() {
+        use crate::transformations::base64_decode;
+
+        let (result, changed, _) = base64_decode(b"SGVsbG8=");
+        assert_eq!(result, b"Hello");
+        assert!(changed);
+
+        // Partial decoding - stops at space (invalid)
+        let (result, changed, _) = base64_decode(b"PFR FU1Q+");
+        assert_eq!(result, b"<T");
+        assert!(changed);
+
+        // Without padding
+        let (result, changed, _) = base64_decode(b"VGVzdENhc2U");
+        assert_eq!(result, b"TestCase");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::encoding::base64_decode_ext`, before it became internal.
+    #[test]
+    fn doc_base64_decode_ext() {
+        use crate::transformations::base64_decode_ext;
+
+        // Ignores dots and whitespace
+        let (result, changed, _) = base64_decode_ext(b"P.HNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==");
+        assert_eq!(result, b"<script>alert(1)</script>");
+        assert!(changed);
+
+        let (result, changed, _) = base64_decode_ext(b"PFR FU1Q+");
+        assert_eq!(result, b"<TEST>");
+        assert!(changed);
     }
 }

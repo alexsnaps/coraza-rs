@@ -32,14 +32,14 @@
 
 mod action_parser;
 mod operator_parser;
-pub mod parser;
+mod parser;
 mod rule_compiler;
 mod variable_parser;
 
 use crate::actions::ActionError;
 
 pub(crate) use action_parser::parse_actions;
-pub use parser::Parser;
+pub use parser::{ParseError, Parser};
 /// For tests that compile rules from SecLang, as the parser does but without its context
 #[cfg(test)]
 pub(crate) use rule_compiler::{compile_sec_action, compile_sec_marker, compile_sec_rule};
@@ -48,8 +48,8 @@ pub(crate) use variable_parser::parse_variables;
 /// Why a directive's argument could not be compiled (variables, operator, actions or
 /// marker); [`crate::seclang::parser::ParseError`] adds where it occurred.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompileError {
-    pub message: String,
+pub(crate) struct CompileError {
+    pub(crate) message: String,
 }
 
 impl std::fmt::Display for CompileError {

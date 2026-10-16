@@ -47,6 +47,8 @@ hyper-util = { version = "0.1", features = ["tokio"], optional = true }
 [dev-dependencies]
 tempfile = "3.27.0"
 divan = { version = "0.1.21", default-features = false }
+# Decodes the FTW backend's `encodedBody` in the ftw_server_async example
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 
 [features]
 default = []

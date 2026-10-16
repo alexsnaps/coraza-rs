@@ -29,22 +29,6 @@ use regex::Regex;
 /// Supports macro expansion for pattern values. With `capture`, the match and its
 /// first 9 groups are stored in `TX.0` to `TX.9`, a group that didn't take part as
 /// empty.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::{transaction::Transaction, Operator, rx};
-///
-/// let op = rx("som(.*)ta").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "somedata".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "notdata".as_bytes(), &mut out));
-///
-/// // Unicode support
-/// let op = rx("ハロー").unwrap();
-/// assert!(op.evaluate(&tx, "ハローワールド".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone)]
 pub struct Rx {
     macro_param: Macro,
@@ -235,19 +219,6 @@ pub fn rx(pattern: &str) -> Result<Rx, Box<dyn std::error::Error>> {
 /// All patterns are matched case-insensitively.
 ///
 /// Supports macro expansion for pattern values.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::{transaction::Transaction, Operator, pm};
-///
-/// let op = pm("WebZIP WebCopier Webster").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0".as_bytes(), &mut out));
-/// assert!(op.evaluate(&tx, "WEBZIP is here".as_bytes(), &mut out)); // Case-insensitive
-/// assert!(!op.evaluate(&tx, "Mozilla/5.0".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone)]
 pub struct Pm {
     macro_param: Macro,
@@ -339,17 +310,6 @@ pub fn pm(patterns: &str) -> Result<Pm, MacroError> {
 /// WebCopier
 /// Webster
 /// WebStripper
-/// ```
-///
-/// # Examples
-///
-/// ```no_run
-/// # use coraza::operators::pm_from_file;
-/// # use coraza::operators::Operator;
-/// let op = pm_from_file("/etc/coraza/bad-user-agents.txt").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct PmFromFile {
@@ -477,13 +437,6 @@ pub fn pm_from_dataset(name: &str, datasets: &Datasets) -> Result<PmFromDataset,
 ///
 /// * `file_path` - Path to file containing patterns (one per line); a relative path
 ///   is relative to the working directory
-///
-/// # Examples
-///
-/// ```no_run
-/// # use coraza::operators::pm_from_file;
-/// let op = pm_from_file("/etc/coraza/bad-user-agents.txt").unwrap();
-/// ```
 pub fn pm_from_file(file_path: impl AsRef<Path>) -> Result<PmFromFile, String> {
     PmFromFile::new(file_path)
 }
@@ -495,25 +448,6 @@ pub fn pm_from_file(file_path: impl AsRef<Path>) -> Result<PmFromFile, String> {
 /// the input is contained in the parameter string.
 ///
 /// Supports macro expansion for parameter values.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::{transaction::Transaction, Operator, within};
-///
-/// // Check if input is within allowed values
-/// let op = within("GET,POST,HEAD").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "GET".as_bytes(), &mut out));
-/// assert!(op.evaluate(&tx, "POST".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "DELETE".as_bytes(), &mut out));
-///
-/// // Works with any haystack
-/// let op = within("abcdefghij").unwrap();
-/// assert!(op.evaluate(&tx, "def".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "xyz".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone)]
 pub struct Within {
     macro_param: Macro,
@@ -543,18 +477,6 @@ pub fn within(haystack: &str) -> Result<Within, MacroError> {
 /// `contains` operator, provided for ModSecurity compatibility.
 ///
 /// Supports macro expansion for parameter values.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::{transaction::Transaction, Operator, strmatch};
-///
-/// let op = strmatch("WebZIP").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "User-Agent: webzip".as_bytes(), &mut out)); // Case-sensitive
-/// ```
 #[derive(Debug, Clone)]
 pub struct StrMatch {
     macro_param: Macro,
@@ -1108,5 +1030,65 @@ mod tests {
         let result = pm_from_file("/nonexistent/file.txt");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to read file"));
+    }
+
+    /// The doc example of `operators::pattern::Rx`, before it became internal.
+    #[test]
+    fn doc_rx_type() {
+        use crate::{operators::Operator, operators::rx};
+
+        let op = rx("som(.*)ta").unwrap();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "somedata".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "notdata".as_bytes(), &mut out));
+
+        // Unicode support
+        let op = rx("ハロー").unwrap();
+        assert!(op.evaluate(&tx, "ハローワールド".as_bytes(), &mut out));
+    }
+
+    /// The doc example of `operators::pattern::Pm`, before it became internal.
+    #[test]
+    fn doc_pm_type() {
+        use crate::{operators::Operator, operators::pm};
+
+        let op = pm("WebZIP WebCopier Webster").unwrap();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0".as_bytes(), &mut out));
+        assert!(op.evaluate(&tx, "WEBZIP is here".as_bytes(), &mut out)); // Case-insensitive
+        assert!(!op.evaluate(&tx, "Mozilla/5.0".as_bytes(), &mut out));
+    }
+
+    /// The doc example of `operators::pattern::Within`, before it became internal.
+    #[test]
+    fn doc_within_type() {
+        use crate::{operators::Operator, operators::within};
+
+        // Check if input is within allowed values
+        let op = within("GET,POST,HEAD").unwrap();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "GET".as_bytes(), &mut out));
+        assert!(op.evaluate(&tx, "POST".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "DELETE".as_bytes(), &mut out));
+
+        // Works with any haystack
+        let op = within("abcdefghij").unwrap();
+        assert!(op.evaluate(&tx, "def".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "xyz".as_bytes(), &mut out));
+    }
+
+    /// The doc example of `operators::pattern::StrMatch`, before it became internal.
+    #[test]
+    fn doc_str_match_type() {
+        use crate::{operators::Operator, operators::strmatch};
+
+        let op = strmatch("WebZIP").unwrap();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "User-Agent: webzip".as_bytes(), &mut out)); // Case-sensitive
     }
 }

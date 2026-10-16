@@ -24,19 +24,6 @@ fn as_int(input: &[u8]) -> i32 {
 /// Invalid integers are treated as 0.
 ///
 /// Supports macro expansion for parameter values.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::{transaction::Transaction, Operator, eq};
-///
-/// let op = eq("15").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "15".as_bytes(), &mut out));
-/// assert!(op.evaluate(&tx, "015".as_bytes(), &mut out)); // Leading zeros ignored
-/// assert!(!op.evaluate(&tx, "16".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone)]
 pub struct Eq {
     macro_param: Macro,
@@ -68,19 +55,6 @@ pub fn eq(parameter: &str) -> Result<Eq, MacroError> {
 /// Both values are converted to integers before comparison.
 ///
 /// Supports macro expansion for parameter values.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::{transaction::Transaction, Operator, gt};
-///
-/// let op = gt("10").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "15".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "10".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "5".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone)]
 pub struct Gt {
     macro_param: Macro,
@@ -111,19 +85,6 @@ pub fn gt(parameter: &str) -> Result<Gt, MacroError> {
 /// Returns true if the input value is greater than or equal to the parameter.
 ///
 /// Supports macro expansion for parameter values.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::{transaction::Transaction, Operator, ge};
-///
-/// let op = ge("10").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "15".as_bytes(), &mut out));
-/// assert!(op.evaluate(&tx, "10".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "5".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone)]
 pub struct Ge {
     macro_param: Macro,
@@ -154,19 +115,6 @@ pub fn ge(parameter: &str) -> Result<Ge, MacroError> {
 /// Returns true if the input value is less than the parameter.
 ///
 /// Supports macro expansion for parameter values.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::{transaction::Transaction, Operator, lt};
-///
-/// let op = lt("10").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "5".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "10".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "15".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone)]
 pub struct Lt {
     macro_param: Macro,
@@ -197,19 +145,6 @@ pub fn lt(parameter: &str) -> Result<Lt, MacroError> {
 /// Returns true if the input value is less than or equal to the parameter.
 ///
 /// Supports macro expansion for parameter values.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::{transaction::Transaction, Operator, le};
-///
-/// let op = le("10").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "5".as_bytes(), &mut out));
-/// assert!(op.evaluate(&tx, "10".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "15".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone)]
 pub struct Le {
     macro_param: Macro,
@@ -241,19 +176,6 @@ pub fn le(parameter: &str) -> Result<Le, MacroError> {
 /// equals the parameter exactly.
 ///
 /// Supports macro expansion for parameter values.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::{transaction::Transaction, Operator, streq};
-///
-/// let op = streq("POST").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "POST".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "post".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "GET".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone)]
 pub struct StrEq {
     macro_param: Macro,
@@ -282,19 +204,6 @@ pub fn streq(parameter: &str) -> Result<StrEq, MacroError> {
 /// Returns true if the parameter string is found anywhere in the input.
 ///
 /// Supports macro expansion for parameter values.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::{transaction::Transaction, Operator, contains};
-///
-/// let op = contains(".php").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "/index.php".as_bytes(), &mut out));
-/// assert!(op.evaluate(&tx, "test.php?id=1".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "/index.html".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone)]
 pub struct Contains {
     macro_param: Macro,
@@ -323,18 +232,6 @@ pub fn contains(parameter: &str) -> Result<Contains, MacroError> {
 /// Returns true if the input starts with the parameter string.
 ///
 /// Supports macro expansion for parameter values.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::{transaction::Transaction, Operator, begins_with};
-///
-/// let op = begins_with("GET").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "GET /index.html HTTP/1.1".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "POST /index.html HTTP/1.1".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone)]
 pub struct BeginsWith {
     macro_param: Macro,
@@ -363,19 +260,6 @@ pub fn begins_with(parameter: &str) -> Result<BeginsWith, MacroError> {
 /// Returns true if the input ends with the parameter string.
 ///
 /// Supports macro expansion for parameter values.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::{transaction::Transaction, Operator, ends_with};
-///
-/// let op = ends_with(".exe").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "malware.exe".as_bytes(), &mut out));
-/// assert!(op.evaluate(&tx, "C:\\Windows\\system32\\cmd.exe".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "document.pdf".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone)]
 pub struct EndsWith {
     macro_param: Macro,
@@ -640,5 +524,121 @@ mod tests {
         assert!(eq("%{TX.").is_err());
         assert!(eq("%{").is_err());
         assert!(streq("%{unknown_var}").is_err());
+    }
+
+    /// The doc example of `operators::simple::Eq`, before it became internal.
+    #[test]
+    fn doc_eq_type() {
+        use crate::{operators::Operator, operators::eq};
+
+        let op = eq("15").unwrap();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "15".as_bytes(), &mut out));
+        assert!(op.evaluate(&tx, "015".as_bytes(), &mut out)); // Leading zeros ignored
+        assert!(!op.evaluate(&tx, "16".as_bytes(), &mut out));
+    }
+
+    /// The doc example of `operators::simple::Gt`, before it became internal.
+    #[test]
+    fn doc_gt_type() {
+        use crate::{operators::Operator, operators::gt};
+
+        let op = gt("10").unwrap();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "15".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "10".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "5".as_bytes(), &mut out));
+    }
+
+    /// The doc example of `operators::simple::Ge`, before it became internal.
+    #[test]
+    fn doc_ge_type() {
+        use crate::{operators::Operator, operators::ge};
+
+        let op = ge("10").unwrap();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "15".as_bytes(), &mut out));
+        assert!(op.evaluate(&tx, "10".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "5".as_bytes(), &mut out));
+    }
+
+    /// The doc example of `operators::simple::Lt`, before it became internal.
+    #[test]
+    fn doc_lt_type() {
+        use crate::{operators::Operator, operators::lt};
+
+        let op = lt("10").unwrap();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "5".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "10".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "15".as_bytes(), &mut out));
+    }
+
+    /// The doc example of `operators::simple::Le`, before it became internal.
+    #[test]
+    fn doc_le_type() {
+        use crate::{operators::Operator, operators::le};
+
+        let op = le("10").unwrap();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "5".as_bytes(), &mut out));
+        assert!(op.evaluate(&tx, "10".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "15".as_bytes(), &mut out));
+    }
+
+    /// The doc example of `operators::simple::StrEq`, before it became internal.
+    #[test]
+    fn doc_str_eq_type() {
+        use crate::{operators::Operator, operators::streq};
+
+        let op = streq("POST").unwrap();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "POST".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "post".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "GET".as_bytes(), &mut out));
+    }
+
+    /// The doc example of `operators::simple::Contains`, before it became internal.
+    #[test]
+    fn doc_contains_type() {
+        use crate::{operators::Operator, operators::contains};
+
+        let op = contains(".php").unwrap();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "/index.php".as_bytes(), &mut out));
+        assert!(op.evaluate(&tx, "test.php?id=1".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "/index.html".as_bytes(), &mut out));
+    }
+
+    /// The doc example of `operators::simple::BeginsWith`, before it became internal.
+    #[test]
+    fn doc_begins_with_type() {
+        use crate::{operators::Operator, operators::begins_with};
+
+        let op = begins_with("GET").unwrap();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "GET /index.html HTTP/1.1".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "POST /index.html HTTP/1.1".as_bytes(), &mut out));
+    }
+
+    /// The doc example of `operators::simple::EndsWith`, before it became internal.
+    #[test]
+    fn doc_ends_with_type() {
+        use crate::{operators::Operator, operators::ends_with};
+
+        let op = ends_with(".exe").unwrap();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "malware.exe".as_bytes(), &mut out));
+        assert!(op.evaluate(&tx, "C:\\Windows\\system32\\cmd.exe".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "document.pdf".as_bytes(), &mut out));
     }
 }

@@ -21,27 +21,6 @@ use super::TransformationResult;
 /// Returns `(output, changed)` where:
 /// - `output` is the decoded string
 /// - `changed` is `true` if the output's length differs, as Go Coraza reports it
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::transformations::complex::html_entity_decode;
-/// let (result, changed, _) = html_entity_decode(b"&lt;script&gt;");
-/// assert_eq!(result, b"<script>");
-/// assert!(changed);
-///
-/// let (result, changed, _) = html_entity_decode(b"no entities here");
-/// assert_eq!(result, b"no entities here");
-/// assert!(!changed);
-///
-/// let (result, changed, _) = html_entity_decode(b"&#60;&#x3E;");
-/// assert_eq!(result, b"<>");
-/// assert!(changed);
-///
-/// let (result, changed, _) = html_entity_decode(b"&lcub;&gt");
-/// assert_eq!(result, b"{>");
-/// assert!(changed);
-/// ```
 pub fn html_entity_decode(input: &[u8]) -> TransformationResult {
     let decoded = super::html_entities::unescape(input);
     let changed = decoded.len() != input.len();
@@ -66,28 +45,6 @@ pub fn html_entity_decode(input: &[u8]) -> TransformationResult {
 /// Returns `(output, changed)` where:
 /// - `output` is the normalized path
 /// - `changed` is `true` if the path was modified, `false` otherwise
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::transformations::complex::normalise_path;
-/// let (result, changed, _) = normalise_path(b"/foo//bar");
-/// assert_eq!(result, b"/foo/bar");
-/// assert!(changed);
-///
-/// let (result, changed, _) = normalise_path(b"dir/../foo");
-/// assert_eq!(result, b"foo");
-/// assert!(changed);
-///
-/// let (result, changed, _) = normalise_path(b"/foo/bar/");
-/// assert_eq!(result, b"/foo/bar/");
-/// assert!(!changed);
-///
-/// // Special case: "." becomes empty string
-/// let (result, changed, _) = normalise_path(b".");
-/// assert_eq!(result, b"");
-/// assert!(changed);
-/// ```
 pub fn normalise_path(input: &[u8]) -> TransformationResult {
     if input.is_empty() {
         return (Vec::new(), false, None);
@@ -171,27 +128,6 @@ fn clean_path(path: &[u8]) -> Vec<u8> {
 /// Returns `(output, changed)` where:
 /// - `output` is the normalized path with forward slashes
 /// - `changed` is `true` if the path was modified, `false` otherwise
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::transformations::complex::normalise_path_win;
-/// let (result, changed, _) = normalise_path_win(b"\\foo\\bar\\baz");
-/// assert_eq!(result, b"/foo/bar/baz");
-/// assert!(changed);
-///
-/// let (result, changed, _) = normalise_path_win(b"dir\\..\\foo");
-/// assert_eq!(result, b"foo");
-/// assert!(changed);
-///
-/// let (result, changed, _) = normalise_path_win(b"dir\\\\foo\\\\bar");
-/// assert_eq!(result, b"dir/foo/bar");
-/// assert!(changed);
-///
-/// let (result, changed, _) = normalise_path_win(b"C:\\inetpub\\web.config::$DATA");
-/// assert_eq!(result, b"C:/inetpub/web.config");
-/// assert!(changed);
-/// ```
 pub fn normalise_path_win(input: &[u8]) -> TransformationResult {
     if input.is_empty() {
         return (Vec::new(), false, None);
@@ -283,19 +219,6 @@ fn strip_trailing_dots_and_spaces(path: &[u8]) -> Vec<u8> {
 /// Returns `(output, changed)` where:
 /// - `output` is the normalized string
 /// - `changed` is `true` if a byte was removed or changed, `false` otherwise
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::transformations::complex::cmd_line;
-/// let (result, changed, _) = cmd_line(b"cmd.exe /c \"whoami\"");
-/// assert_eq!(result, b"cmd.exe/c whoami");
-/// assert!(changed);
-///
-/// let (result, changed, _) = cmd_line(b"SELECT * FROM users WHERE id=1;");
-/// assert_eq!(result, b"select * from users where id=1 ");
-/// assert!(changed);
-/// ```
 pub fn cmd_line(input: &[u8]) -> TransformationResult {
     // Check if transformation is needed
     let Some(pos) = input.iter().copied().position(needs_cmd_transform) else {
@@ -382,19 +305,6 @@ fn needs_cmd_transform(c: u8) -> bool {
 /// Returns `(output, changed)` where:
 /// - `output` is the string with comments removed
 /// - `changed` is `true` if any comments were found, `false` otherwise
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::transformations::complex::remove_comments;
-/// let (result, changed, _) = remove_comments(b"SELECT * FROM users /* comment */ WHERE id=1");
-/// assert_eq!(result, b"SELECT * FROM users  WHERE id=1");
-/// assert!(changed);
-///
-/// let (result, changed, _) = remove_comments(b"<!-- HTML comment --> <div>content</div>");
-/// assert_eq!(result, b" <div>content</div>");
-/// assert!(changed);
-/// ```
 pub fn remove_comments(input: &[u8]) -> TransformationResult {
     // Add null byte padding to match ModSecurity behavior
     let mut input_with_padding = input.to_vec();
@@ -489,15 +399,6 @@ pub fn remove_comments(input: &[u8]) -> TransformationResult {
 ///
 /// Unlike [`remove_comments`], the text between markers stays, so
 /// `SELECT/**/1` becomes `SELECT1`, and a lone marker is removed too.
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::transformations::complex::remove_comments_char;
-/// let (result, changed, _) = remove_comments_char(b"Before/* TestCase */After");
-/// assert_eq!(result, b"Before TestCase After");
-/// assert!(changed);
-/// ```
 pub fn remove_comments_char(input: &[u8]) -> TransformationResult {
     const MARKERS: [&[u8]; 6] = [b"/*", b"*/", b"<!--", b"-->", b"--", b"#"];
 
@@ -532,19 +433,6 @@ pub fn remove_comments_char(input: &[u8]) -> TransformationResult {
 /// Returns `(output, changed)` where:
 /// - `output` is the string with comments replaced by spaces
 /// - `changed` is `true` if any comments were found, `false` otherwise
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::transformations::complex::replace_comments;
-/// let (result, changed, _) = replace_comments(b"SELECT * FROM users /* comment */ WHERE id=1");
-/// assert_eq!(result, b"SELECT * FROM users   WHERE id=1");
-/// assert!(changed);
-///
-/// let (result, changed, _) = replace_comments(b"no comments here");
-/// assert_eq!(result, b"no comments here");
-/// assert!(!changed);
-/// ```
 pub fn replace_comments(input: &[u8]) -> TransformationResult {
     let input_len = input.len();
     let mut result = Vec::with_capacity(input_len);
@@ -1500,5 +1388,118 @@ mod tests {
         for input in ["cmd  arg", "cmd,arg", "cmd /c", "Cmd", "c^md"] {
             assert!(on_text(cmd_line, input).1, "{input:?}");
         }
+    }
+
+    /// The doc example of `transformations::complex::html_entity_decode`, before it became internal.
+    #[test]
+    fn doc_html_entity_decode() {
+        use crate::transformations::complex::html_entity_decode;
+        let (result, changed, _) = html_entity_decode(b"&lt;script&gt;");
+        assert_eq!(result, b"<script>");
+        assert!(changed);
+
+        let (result, changed, _) = html_entity_decode(b"no entities here");
+        assert_eq!(result, b"no entities here");
+        assert!(!changed);
+
+        let (result, changed, _) = html_entity_decode(b"&#60;&#x3E;");
+        assert_eq!(result, b"<>");
+        assert!(changed);
+
+        let (result, changed, _) = html_entity_decode(b"&lcub;&gt");
+        assert_eq!(result, b"{>");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::complex::normalise_path`, before it became internal.
+    #[test]
+    fn doc_normalise_path() {
+        use crate::transformations::complex::normalise_path;
+        let (result, changed, _) = normalise_path(b"/foo//bar");
+        assert_eq!(result, b"/foo/bar");
+        assert!(changed);
+
+        let (result, changed, _) = normalise_path(b"dir/../foo");
+        assert_eq!(result, b"foo");
+        assert!(changed);
+
+        let (result, changed, _) = normalise_path(b"/foo/bar/");
+        assert_eq!(result, b"/foo/bar/");
+        assert!(!changed);
+
+        // Special case: "." becomes empty string
+        let (result, changed, _) = normalise_path(b".");
+        assert_eq!(result, b"");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::complex::normalise_path_win`, before it became internal.
+    #[test]
+    fn doc_normalise_path_win() {
+        use crate::transformations::complex::normalise_path_win;
+        let (result, changed, _) = normalise_path_win(b"\\foo\\bar\\baz");
+        assert_eq!(result, b"/foo/bar/baz");
+        assert!(changed);
+
+        let (result, changed, _) = normalise_path_win(b"dir\\..\\foo");
+        assert_eq!(result, b"foo");
+        assert!(changed);
+
+        let (result, changed, _) = normalise_path_win(b"dir\\\\foo\\\\bar");
+        assert_eq!(result, b"dir/foo/bar");
+        assert!(changed);
+
+        let (result, changed, _) = normalise_path_win(b"C:\\inetpub\\web.config::$DATA");
+        assert_eq!(result, b"C:/inetpub/web.config");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::complex::cmd_line`, before it became internal.
+    #[test]
+    fn doc_cmd_line() {
+        use crate::transformations::complex::cmd_line;
+        let (result, changed, _) = cmd_line(b"cmd.exe /c \"whoami\"");
+        assert_eq!(result, b"cmd.exe/c whoami");
+        assert!(changed);
+
+        let (result, changed, _) = cmd_line(b"SELECT * FROM users WHERE id=1;");
+        assert_eq!(result, b"select * from users where id=1 ");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::complex::remove_comments`, before it became internal.
+    #[test]
+    fn doc_remove_comments() {
+        use crate::transformations::complex::remove_comments;
+        let (result, changed, _) = remove_comments(b"SELECT * FROM users /* comment */ WHERE id=1");
+        assert_eq!(result, b"SELECT * FROM users  WHERE id=1");
+        assert!(changed);
+
+        let (result, changed, _) = remove_comments(b"<!-- HTML comment --> <div>content</div>");
+        assert_eq!(result, b" <div>content</div>");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::complex::remove_comments_char`, before it became internal.
+    #[test]
+    fn doc_remove_comments_char() {
+        use crate::transformations::complex::remove_comments_char;
+        let (result, changed, _) = remove_comments_char(b"Before/* TestCase */After");
+        assert_eq!(result, b"Before TestCase After");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::complex::replace_comments`, before it became internal.
+    #[test]
+    fn doc_replace_comments() {
+        use crate::transformations::complex::replace_comments;
+        let (result, changed, _) =
+            replace_comments(b"SELECT * FROM users /* comment */ WHERE id=1");
+        assert_eq!(result, b"SELECT * FROM users   WHERE id=1");
+        assert!(changed);
+
+        let (result, changed, _) = replace_comments(b"no comments here");
+        assert_eq!(result, b"no comments here");
+        assert!(!changed);
     }
 }

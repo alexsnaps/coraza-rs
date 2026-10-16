@@ -197,6 +197,7 @@ macro_rules! operators {
             ///
             /// Returns a message if the name is unknown or the argument is invalid for
             /// that operator.
+            #[cfg(test)]
             pub fn new(name: &str, argument: &str) -> Result<Self, String> {
                 Self::with_context(name, argument, &OperatorContext::default())
             }

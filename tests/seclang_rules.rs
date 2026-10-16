@@ -1031,7 +1031,7 @@ fn repeated_multipart_part_headers_are_flagged() {
 
 #[test]
 fn audit_log_and_body_directives_set_the_config() {
-    use coraza::types::{AuditLogFormat, AuditLogType, parse_audit_log_parts};
+    use coraza::types::{AuditLogFormat, AuditLogPart, AuditLogType};
 
     let mut parser = Parser::new();
     parser
@@ -1051,9 +1051,20 @@ fn audit_log_and_body_directives_set_the_config() {
 
     let config = parser.config();
     assert_eq!(config.audit_log_format, AuditLogFormat::Json);
+    use AuditLogPart::*;
     assert_eq!(
         config.audit_log_parts,
-        parse_audit_log_parts("ABIJDEFHZ").unwrap()
+        [
+            Header,
+            RequestHeaders,
+            RequestBodyAlternative,
+            UploadedFiles,
+            IntermediaryResponseHeaders,
+            IntermediaryResponseBody,
+            ResponseHeaders,
+            Trailer,
+            EndMarker,
+        ]
     );
     assert_eq!(config.audit_log_type, AuditLogType::Concurrent);
     assert_eq!(config.audit_log_relevant_status, "^(?:(5|4)(0|1)[0-9])$");
