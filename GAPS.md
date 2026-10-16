@@ -379,3 +379,38 @@ None of these is used by CRS v4.30.0.
   Go's harness uses `net/http`. A server reading requests with `httparse`, already in the dependency tree through
   hyper, rather than hyper's strict `Uri`, would let them through; it would be an optional dependency of the
   `async-server` feature.
+
+## 7. Body processing
+
+Found at `ee1d995`, comparing with Go Coraza at `3fc3ae2`: by reading `internal/bodyprocessors` and
+`internal/corazawaf/transaction.go`, and by feeding the same inputs to Go's `readXML` (copied out of
+`internal/bodyprocessors/xml.go`) and to this crate through `Parser`.
+
+- [x] **`RESPONSE_XML` is never set.** Not a gap: Go declares it but never writes it either, and its XML processor's
+  `ProcessResponse` does nothing. As in Go, a response body with a processor (`ctl:responseBodyProcessor=XML`) is
+  not kept in `RESPONSE_BODY` either.
+- [ ] **The XML processor reads XML differently from Go's.** `parse_xml` (`src/body_processors/xml.rs`) stops at its
+  first error and never fails; Go's non-strict `encoding/xml` decoder fails on what it can't read, which sets
+  `REQBODY_ERROR`, and reads some input quick-xml drops. 7 of 14 probe inputs differ:
+  - Go fails where this crate keeps what it read before the error, without `REQBODY_ERROR`: invalid UTF-8, a NUL
+    character, an end tag closing nothing open (`<a></b>`), an invalid name (`<1bad>`). Go then sets neither key of
+    `REQUEST_XML`.
+  - Go keeps what this crate drops: the value of an unquoted attribute (`<a attr=unquoted>`), a text node with an
+    unknown entity (`&unknown; entity`, kept as written), every value of a repeated attribute (`b="1" b="2"`). A
+    payload in any of these never reaches rules on `REQUEST_XML` or `XML`.
+- [ ] **`FILES` holds one of a file's two names.** For a part with both `filename` and `filename*` naming different
+  files, Go adds both to `FILES` and `FILES_SIZES`, "so a rule catches whichever one a given backend actually
+  resolves" (`TestMultipartFilenameStar`); this crate adds the `filename*` one, and the other only to
+  `MULTIPART_FILENAME`. With `filename="evil.php"; filename*=UTF-8''benign.txt`, `FILES` holds `benign.txt`, so the
+  CRS rules on `FILES` (920120, 920121, 933110, 933111, 933220, 944140) never see `evil.php`, which a backend reading
+  `filename` stores.
+- [ ] **`FILES`, `FILES_NAMES` and `FILES_TMPNAMES` are keyed by the part's name.** Go adds each value under the key
+  `""` (`filesCol.Add("", filename)`). CRS reads them whole, so only `MATCHED_VAR_NAME` differs (`FILES:upload` here,
+  `FILES` in Go), and a rule selecting `FILES:upload` matches here but not in Go.
+- [ ] **Uploads are stored only with `SecUploadDir`, and checked differently.**
+  - Without it, Go stores each uploaded file in the system's temporary directory (`os.CreateTemp("", "crzmp*")`),
+    lists it in `FILES_TMPNAMES` and removes it when the transaction closes; this crate stores none, and
+    `FILES_TMPNAMES` stays empty.
+  - Go requires `SecUploadDir` to be writable (`IsDirWritable` creates a file in it); this crate, that it exists.
+  - If the directory is gone when a file is uploaded, Go fails the body (`MULTIPART_STRICT_ERROR`,
+    `REQBODY_ERROR`); this crate's `save_to_temp` creates it.
