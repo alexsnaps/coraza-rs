@@ -71,22 +71,22 @@ pub(super) fn process_request(body: &[u8], tx: &mut Transaction) -> Result<(), B
             let size = part.data.len() as u64;
             total_size += size;
 
-            // Save to temporary file if upload_dir is set
+            // As in Go Coraza, FILES, FILES_NAMES and FILES_TMPNAMES list their values
+            // without keys; FILES_SIZES is keyed by file name
             if !upload_dir.is_empty() {
                 let temp_file = save_to_temp(&upload_dir, &part.data)?;
-                tx.files_tmp_names.add(&part.name, &temp_file);
+                tx.files_tmp_names.add("", &temp_file);
             }
 
-            // Populate FILES collections (keyed by field name)
-            tx.files.add(&part.name, filename);
+            tx.files.add("", filename);
             tx.files_sizes.set_index(filename, 0, size.to_string());
             // And under the name a backend reading `filename` rather than `filename*`
             // stores it, as Go Coraza does
             if let Some(alt_filename) = &part.alt_filename {
-                tx.files.add(&part.name, alt_filename);
+                tx.files.add("", alt_filename);
                 tx.files_sizes.set_index(alt_filename, 0, size.to_string());
             }
-            tx.files_names.add(&part.name, &part.name);
+            tx.files_names.add("", &part.name);
         } else {
             // Regular form field, whose value keeps its bytes, as in Go Coraza
             total_size += part.data.len() as u64;

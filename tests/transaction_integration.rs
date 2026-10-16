@@ -367,8 +367,9 @@ fn test_multipart_file_upload_flow() {
     );
 
     // Verify file was captured
-    assert_eq!(values(&tx, RuleVariable::Files, "file"), ["test.txt"]);
-    assert_eq!(values(&tx, RuleVariable::FilesNames, "file"), ["file"]);
+    // Listed without keys, as in Go Coraza
+    assert_eq!(values(&tx, RuleVariable::Files, ""), ["test.txt"]);
+    assert_eq!(values(&tx, RuleVariable::FilesNames, ""), ["file"]);
 
     // Verify form field
     assert_eq!(

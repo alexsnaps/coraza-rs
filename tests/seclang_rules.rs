@@ -2182,7 +2182,7 @@ fn extended_multipart_filenames_are_decoded_with_their_charset_and_language() {
     assert_eq!(sorted(MultipartFilenameCharset), ["UTF-8"]);
     assert_eq!(sorted(MultipartFilenameLanguage), ["en"]);
     // Both names, as in Go Coraza
-    assert_eq!(values(&tx, Files, "f"), ["€.php", "plain.txt"]);
+    assert_eq!(values(&tx, Files, ""), ["€.php", "plain.txt"]);
     assert_eq!(
         tx.get_variable(coraza::RuleVariable::MultipartStrictError, None)
             .as_deref(),
@@ -2378,4 +2378,29 @@ fn files_hold_both_names_of_a_file_named_twice() {
         let size = tx.get_variable(RuleVariable::FilesSizes, Some(name));
         assert_eq!(size.as_deref(), Some("1"), "{name}");
     }
+}
+
+#[test]
+fn files_are_listed_without_keys() {
+    // As in Go Coraza, FILES, FILES_NAMES and FILES_TMPNAMES hold their values under the
+    // key "": a match is named by the variable alone
+    let dir = tempfile::tempdir().unwrap();
+    let waf = waf(&format!(
+        r#"
+        SecRequestBodyAccess On
+        SecUploadDir {}
+        SecRule FILES "@rx \.txt$" "id:1,phase:2,pass,nolog,setvar:tx.files=%{{MATCHED_VAR_NAME}}"
+        SecRule FILES_NAMES "@streq upload" "id:2,phase:2,pass,nolog,setvar:tx.names=%{{MATCHED_VAR_NAME}}"
+        SecRule FILES_TMPNAMES "@rx ." "id:3,phase:2,pass,nolog,setvar:tx.tmpnames=%{{MATCHED_VAR_NAME}}"
+        SecRule FILES:upload "@rx ." "id:4,phase:2,pass,nolog,setvar:tx.by_field=1"
+        "#,
+        dir.path().display()
+    ));
+
+    let tx = upload(&waf);
+
+    assert_eq!(tx_var(&tx, "files").as_deref(), Some("FILES"));
+    assert_eq!(tx_var(&tx, "names").as_deref(), Some("FILES_NAMES"));
+    assert_eq!(tx_var(&tx, "tmpnames").as_deref(), Some("FILES_TMPNAMES"));
+    assert_eq!(tx_var(&tx, "by_field"), None);
 }

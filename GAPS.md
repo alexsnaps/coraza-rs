@@ -405,9 +405,10 @@ Found at `ee1d995`, comparing with Go Coraza at `3fc3ae2`: by reading `internal/
   CRS rules on `FILES` (920120, 920121, 933110, 933111, 933220, 944140) never see `evil.php`, which a backend reading
   `filename` stores.
   - Done: as in Go, the other name joins `FILES` and `FILES_SIZES` too.
-- [ ] **`FILES`, `FILES_NAMES` and `FILES_TMPNAMES` are keyed by the part's name.** Go adds each value under the key
+- [x] **`FILES`, `FILES_NAMES` and `FILES_TMPNAMES` are keyed by the part's name.** Go adds each value under the key
   `""` (`filesCol.Add("", filename)`). CRS reads them whole, so only `MATCHED_VAR_NAME` differs (`FILES:upload` here,
   `FILES` in Go), and a rule selecting `FILES:upload` matches here but not in Go.
+  - Done: as in Go, each value is under the key `""`.
 - [ ] **Uploads are stored only with `SecUploadDir`, and checked differently.**
   - Without it, Go stores each uploaded file in the system's temporary directory (`os.CreateTemp("", "crzmp*")`),
     lists it in `FILES_TMPNAMES` and removes it when the transaction closes; this crate stores none, and
