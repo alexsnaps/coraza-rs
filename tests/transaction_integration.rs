@@ -11,91 +11,115 @@
 //! - Deferred actions (exec, expirevar, setenv, initcol)
 
 use coraza::RulePhase;
+use coraza::RuleVariable;
 use coraza::actions::{Action, ActionType, RuleMetadata};
-use coraza::body_processors::{BodyProcessorKind, BodyProcessorOptions};
 use coraza::seclang::Parser;
-use coraza::transaction::Transaction;
+use coraza::transaction::{Transaction, VariableCollection};
+use coraza::waf::Waf;
+
+fn waf(rules: &str) -> Waf {
+    let mut parser = Parser::new();
+    parser.from_string(rules).expect("rules should parse");
+    parser.into_waf().expect("config should be valid")
+}
+
+/// The values of `key` in `variable`, as rules read them; empty if none.
+fn values(tx: &Transaction, variable: RuleVariable, key: &str) -> Vec<String> {
+    match tx.collection(variable) {
+        Some(VariableCollection::Map(map)) => map.get(key),
+        _ => Vec::new(),
+    }
+}
+
+/// The value of a single-value variable such as REQUEST_URI.
+fn single(tx: &Transaction, variable: RuleVariable) -> String {
+    tx.get_variable(variable, None)
+        .expect("a variable this engine populates")
+}
+
+/// Rules that have request bodies read, JSON and XML ones too, as `coraza.conf-recommended`
+/// does.
+const BODY_RULES: &str = r#"
+    SecRequestBodyAccess On
+    SecRule REQUEST_HEADERS:Content-Type "^application/json" "id:200001,phase:1,t:none,t:lowercase,pass,nolog,ctl:requestBodyProcessor=JSON"
+    SecRule REQUEST_HEADERS:Content-Type "^application/xml" "id:200002,phase:1,t:none,t:lowercase,pass,nolog,ctl:requestBodyProcessor=XML"
+"#;
+
+/// A request of `content_type` with `body`, through its request body phase.
+fn request_with_body(content_type: &str, body: &[u8]) -> Transaction {
+    let mut tx = waf(BODY_RULES).new_transaction();
+    tx.add_request_header("Content-Type", content_type);
+    tx.process_request_headers();
+    assert!(tx.process_request_body(body).is_none());
+    tx
+}
 
 // ===== Body Processor Integration Tests =====
 
 #[test]
 fn test_urlencoded_body_processing() {
-    let mut tx = Transaction::new("urlencoded-test");
-
-    // Process URL-encoded body
-    let processor = BodyProcessorKind::UrlEncoded;
-    let body = b"username=admin&password=secret123&remember=true";
-
-    processor
-        .process_request(body, &mut tx, &BodyProcessorOptions::default())
-        .unwrap();
+    let tx = request_with_body(
+        "application/x-www-form-urlencoded",
+        b"username=admin&password=secret123&remember=true",
+    );
 
     // Verify ARGS_POST populated
-    assert_eq!(tx.args_post().get("username"), vec!["admin"]);
-    assert_eq!(tx.args_post().get("password"), vec!["secret123"]);
-    assert_eq!(tx.args_post().get("remember"), vec!["true"]);
+    assert_eq!(values(&tx, RuleVariable::ArgsPost, "username"), ["admin"]);
+    assert_eq!(
+        values(&tx, RuleVariable::ArgsPost, "password"),
+        ["secret123"]
+    );
+    assert_eq!(values(&tx, RuleVariable::ArgsPost, "remember"), ["true"]);
 
     // Verify REQUEST_BODY stored
     assert_eq!(
-        tx.request_body(),
+        single(&tx, RuleVariable::RequestBody),
         "username=admin&password=secret123&remember=true"
     );
 }
 
 #[test]
 fn test_json_body_processing() {
-    let mut tx = Transaction::new("json-test");
-
-    // Process JSON body
-    let processor = BodyProcessorKind::Json;
-    let body = br#"{"user": {"name": "admin", "role": "super"}, "items": [1, 2, 3]}"#;
-
-    processor
-        .process_request(body, &mut tx, &BodyProcessorOptions::default())
-        .unwrap();
+    let tx = request_with_body(
+        "application/json",
+        br#"{"user": {"name": "admin", "role": "super"}, "items": [1, 2, 3]}"#,
+    );
 
     // Verify flattened JSON in ARGS_POST
-    assert_eq!(tx.args_post().get("json.user.name"), vec!["admin"]);
-    assert_eq!(tx.args_post().get("json.user.role"), vec!["super"]);
-    assert_eq!(tx.args_post().get("json.items"), vec!["3"]); // array length
-    assert_eq!(tx.args_post().get("json.items.0"), vec!["1"]);
+    let arg = |key| values(&tx, RuleVariable::ArgsPost, key);
+    assert_eq!(arg("json.user.name"), ["admin"]);
+    assert_eq!(arg("json.user.role"), ["super"]);
+    assert_eq!(arg("json.items"), ["3"]); // array length
+    assert_eq!(arg("json.items.0"), ["1"]);
 }
 
 #[test]
 fn test_xml_body_processing() {
-    let mut tx = Transaction::new("xml-test");
-
-    // Process XML body
-    let processor = BodyProcessorKind::Xml;
-    let body = br#"<user role="admin"><name>John</name></user>"#;
-
-    processor
-        .process_request(body, &mut tx, &BodyProcessorOptions::default())
-        .unwrap();
+    let tx = request_with_body(
+        "application/xml",
+        br#"<user role="admin"><name>John</name></user>"#,
+    );
 
     // Verify attributes and content extracted
-    let attrs = tx.request_xml().get("//@*");
-    assert_eq!(attrs, vec!["admin"]);
-
-    let content = tx.request_xml().get("/*");
-    assert_eq!(content, vec!["John"]);
+    assert_eq!(values(&tx, RuleVariable::RequestXML, "//@*"), ["admin"]);
+    assert_eq!(values(&tx, RuleVariable::RequestXML, "/*"), ["John"]);
 }
 
 // ===== Variable Population Integration Tests =====
 
 #[test]
 fn test_full_request_variable_population() {
-    let mut tx = Transaction::new("full-request-test");
+    let mut tx = Waf::default().new_transaction();
 
     // Phase 1: Connection variables
     tx.process_connection("192.168.1.100", 54321, "10.0.0.1", 443);
     tx.set_server_name("example.com");
 
-    assert_eq!(tx.remote_addr(), "192.168.1.100");
-    assert_eq!(tx.remote_port(), "54321");
-    assert_eq!(tx.server_addr(), "10.0.0.1");
-    assert_eq!(tx.server_port(), "443");
-    assert_eq!(tx.server_name(), "example.com");
+    assert_eq!(single(&tx, RuleVariable::RemoteAddr), "192.168.1.100");
+    assert_eq!(single(&tx, RuleVariable::RemotePort), "54321");
+    assert_eq!(single(&tx, RuleVariable::ServerAddr), "10.0.0.1");
+    assert_eq!(single(&tx, RuleVariable::ServerPort), "443");
+    assert_eq!(single(&tx, RuleVariable::ServerName), "example.com");
 
     // Phase 2: Request headers and URI
     tx.process_uri("/api/users?id=123", "POST", "HTTP/1.1");
@@ -103,24 +127,28 @@ fn test_full_request_variable_population() {
     tx.add_request_header("User-Agent", "Mozilla/5.0");
     tx.add_request_header("Cookie", "session=abc123; user=admin");
 
-    assert_eq!(tx.request_method(), "POST");
-    assert_eq!(tx.request_uri(), "/api/users?id=123");
-    assert_eq!(tx.request_protocol(), "HTTP/1.1");
-    assert_eq!(tx.query_string(), "id=123");
-    assert_eq!(tx.args_get().get("id"), vec!["123"]);
+    assert_eq!(single(&tx, RuleVariable::RequestMethod), "POST");
+    assert_eq!(single(&tx, RuleVariable::RequestURI), "/api/users?id=123");
+    assert_eq!(single(&tx, RuleVariable::RequestProtocol), "HTTP/1.1");
+    assert_eq!(single(&tx, RuleVariable::QueryString), "id=123");
+    assert_eq!(values(&tx, RuleVariable::ArgsGet, "id"), ["123"]);
 
     // Verify headers
-    assert_eq!(tx.request_headers().get("host"), vec!["example.com"]);
-    assert_eq!(tx.request_headers().get("user-agent"), vec!["Mozilla/5.0"]);
+    let header = |name| values(&tx, RuleVariable::RequestHeaders, name);
+    assert_eq!(header("host"), ["example.com"]);
+    assert_eq!(header("user-agent"), ["Mozilla/5.0"]);
 
     // Verify cookies parsed
-    assert_eq!(tx.request_cookies().get("session"), vec!["abc123"]);
-    assert_eq!(tx.request_cookies().get("user"), vec!["admin"]);
+    assert_eq!(
+        values(&tx, RuleVariable::RequestCookies, "session"),
+        ["abc123"]
+    );
+    assert_eq!(values(&tx, RuleVariable::RequestCookies, "user"), ["admin"]);
 }
 
 #[test]
 fn test_response_variable_population() {
-    let mut tx = Transaction::new("response-test");
+    let mut tx = Waf::default().new_transaction();
 
     // Populate response headers
     tx.add_response_header("Content-Type", "application/json; charset=utf-8");
@@ -131,12 +159,15 @@ fn test_response_variable_population() {
     assert!(interruption.is_none());
 
     // Verify response variables
-    assert_eq!(tx.response_status(), "200");
-    assert_eq!(tx.response_protocol(), "HTTP/1.1");
-    assert_eq!(tx.response_content_type(), "application/json");
+    assert_eq!(single(&tx, RuleVariable::ResponseStatus), "200");
+    assert_eq!(single(&tx, RuleVariable::ResponseProtocol), "HTTP/1.1");
     assert_eq!(
-        tx.response_headers().get("content-type"),
-        vec!["application/json; charset=utf-8"]
+        single(&tx, RuleVariable::ResponseContentType),
+        "application/json"
+    );
+    assert_eq!(
+        values(&tx, RuleVariable::ResponseHeaders, "content-type"),
+        ["application/json; charset=utf-8"]
     );
 }
 
@@ -144,7 +175,7 @@ fn test_response_variable_population() {
 
 #[test]
 fn test_phase_prevents_duplicate_processing() {
-    let mut tx = Transaction::new("phase-duplicate-test");
+    let mut tx = Waf::default().new_transaction();
 
     // Process connection
     tx.process_connection("127.0.0.1", 8080, "10.0.0.1", 80);
@@ -153,45 +184,60 @@ fn test_phase_prevents_duplicate_processing() {
     tx.process_connection("192.168.1.1", 9090, "10.0.0.2", 443);
 
     // First values should be preserved (duplicate processing prevented)
-    assert_eq!(tx.remote_addr(), "127.0.0.1");
-    assert_eq!(tx.remote_port(), "8080");
+    assert_eq!(single(&tx, RuleVariable::RemoteAddr), "127.0.0.1");
+    assert_eq!(single(&tx, RuleVariable::RemotePort), "8080");
 }
 
 // ===== CTL Action Integration Tests =====
 
-#[test]
-fn test_ctl_modifies_transaction_settings() {
-    use coraza::types::RuleEngineStatus;
-
-    let mut tx = Transaction::new("ctl-test");
-
-    // Default values, a default WAF's, as in Go
-    assert_eq!(tx.rule_engine(), RuleEngineStatus::On);
-    assert!(!tx.request_body_access());
-    assert_eq!(tx.request_body_limit(), 128 * 1024 * 1024); // 128 MiB
-
-    // Modify via CTL-like setters (simulating CTL action execution)
-    tx.set_request_body_access(true);
-    tx.set_request_body_limit(262144); // 256KB
-
-    // Verify changes
-    assert!(tx.request_body_access());
-    assert_eq!(tx.request_body_limit(), 262144);
+/// A urlencoded request for `uri` with `body`, through its request body phase.
+fn post(waf: &Waf, uri: &str, body: &[u8]) -> Transaction {
+    let mut tx = waf.new_transaction();
+    tx.process_uri(uri, "POST", "HTTP/1.1");
+    tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+    tx.process_request_headers();
+    tx.process_request_body(body);
+    tx
 }
 
 #[test]
-fn test_ctl_phase_restrictions() {
-    let mut tx = Transaction::new("ctl-phase-test");
+fn ctl_changes_request_body_settings_for_one_transaction() {
+    let waf = waf(r#"
+        SecRequestBodyAccess Off
+        SecRule REQUEST_FILENAME "@streq /upload" "id:1,phase:1,pass,nolog,ctl:requestBodyAccess=On,ctl:requestBodyLimit=8"
+    "#);
 
-    // Request body access can be changed before request body phase
-    tx.set_request_body_access(false);
+    // Other requests keep the WAF's settings: the body isn't read
+    let tx = post(&waf, "/other", b"a=1");
     assert!(!tx.request_body_access());
+    assert_eq!(tx.get_variable(RuleVariable::ArgsPost, Some("a")), None);
 
-    // Process request body phase
-    tx.process_request_headers();
-    let _ = tx.process_request_body(b"test=data");
+    // For /upload, the body is read, up to the limit `ctl` set
+    let tx = post(&waf, "/upload", b"a=1");
+    assert!(tx.request_body_access());
+    assert_eq!(values(&tx, RuleVariable::ArgsPost, "a"), ["1"]);
+    let tx = post(&waf, "/upload", b"a=12345678");
+    assert_eq!(tx.interruption().map(|i| i.status), Some(413));
 
-    // Now we're in/past request body phase - verify phase tracking
+    assert!(!waf.config().request_body_access);
+}
+
+#[test]
+fn ctl_changes_request_body_settings_only_before_the_request_body_phase() {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule ARGS_GET:skip "@streq 1" "id:1,phase:1,pass,nolog,ctl:requestBodyAccess=Off"
+        SecAction "id:2,phase:2,pass,nolog,ctl:requestBodyAccess=Off"
+    "#);
+
+    // In phase 1, the change keeps the body from being read
+    let tx = post(&waf, "/?skip=1", b"a=1");
+    assert_eq!(tx.get_variable(RuleVariable::ArgsPost, Some("a")), None);
+
+    // In phase 2, the body was read already, and the change doesn't apply
+    let tx = post(&waf, "/", b"a=1");
+    assert_eq!(values(&tx, RuleVariable::ArgsPost, "a"), ["1"]);
+    assert!(tx.request_body_access());
     assert_eq!(tx.last_phase(), Some(RulePhase::RequestBody));
 }
 
@@ -206,16 +252,12 @@ fn test_setenv_action_execution() {
     assert_eq!(action.action_type(), ActionType::Nondisruptive);
 
     // Sets ENV, not the process environment
-    let mut parser = Parser::new();
-    parser
-        .from_string(r#"SecAction "id:1,phase:1,pass,nolog,setenv:TEST_VAR=test_value""#)
-        .expect("rules should parse");
-    let waf = parser.into_waf().expect("config should be valid");
+    let waf = waf(r#"SecAction "id:1,phase:1,pass,nolog,setenv:TEST_VAR=test_value""#);
     let mut tx = waf.new_transaction();
     tx.process_request_headers();
 
     assert_eq!(
-        tx.get_variable(coraza::RuleVariable::Env, Some("TEST_VAR"))
+        tx.get_variable(RuleVariable::Env, Some("TEST_VAR"))
             .as_deref(),
         Some("test_value")
     );
@@ -234,7 +276,7 @@ fn test_exec_action_is_never_run() {
 
 #[test]
 fn test_complete_transaction_flow() {
-    let waf = coraza::waf::Waf::new(coraza::config::WafConfig {
+    let waf = Waf::new(coraza::config::WafConfig {
         request_body_access: true,
         response_body_access: true,
         response_body_mime_types: vec!["application/json".to_string()],
@@ -245,16 +287,22 @@ fn test_complete_transaction_flow() {
 
     // 1. Connection phase
     tx.process_connection("192.168.1.1", 12345, "10.0.0.1", 443);
-    assert_eq!(tx.remote_addr(), "192.168.1.1");
+    assert_eq!(single(&tx, RuleVariable::RemoteAddr), "192.168.1.1");
 
     // 2. Request headers phase
     tx.process_uri("/api/login?redirect=/dashboard", "POST", "HTTP/1.1");
     tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
     tx.add_request_header("User-Agent", "curl/7.68.0");
 
-    assert_eq!(tx.request_method(), "POST");
-    assert_eq!(tx.request_uri(), "/api/login?redirect=/dashboard");
-    assert_eq!(tx.args_get().get("redirect"), vec!["/dashboard"]);
+    assert_eq!(single(&tx, RuleVariable::RequestMethod), "POST");
+    assert_eq!(
+        single(&tx, RuleVariable::RequestURI),
+        "/api/login?redirect=/dashboard"
+    );
+    assert_eq!(
+        values(&tx, RuleVariable::ArgsGet, "redirect"),
+        ["/dashboard"]
+    );
 
     // 3. Request body phase with URL-encoded data
     let body = b"username=admin&password=P%40ssw0rd";
@@ -263,15 +311,18 @@ fn test_complete_transaction_flow() {
     assert!(result.is_none());
 
     // Verify body was processed
-    assert_eq!(tx.args_post().get("username"), vec!["admin"]);
-    assert_eq!(tx.args_post().get("password"), vec!["P@ssw0rd"]); // Decoded
+    assert_eq!(values(&tx, RuleVariable::ArgsPost, "username"), ["admin"]);
+    assert_eq!(
+        values(&tx, RuleVariable::ArgsPost, "password"),
+        ["P@ssw0rd"]
+    ); // Decoded
 
     // 4. Response headers phase
     tx.add_response_header("Content-Type", "application/json");
     let interruption = tx.process_response_headers(200, "HTTP/1.1");
     assert!(interruption.is_none()); // No interruption
 
-    assert_eq!(tx.response_status(), "200");
+    assert_eq!(single(&tx, RuleVariable::ResponseStatus), "200");
 
     // 5. Response body phase with JSON
     let response_body = br#"{"status": "success", "token": "abc123"}"#;
@@ -279,7 +330,7 @@ fn test_complete_transaction_flow() {
     assert!(interruption.is_none());
 
     // Verify response body stored
-    assert!(tx.response_body().contains("success"));
+    assert!(single(&tx, RuleVariable::ResponseBody).contains("success"));
 
     // 6. Logging phase
     tx.process_logging().unwrap();
@@ -290,9 +341,6 @@ fn test_complete_transaction_flow() {
 
 #[test]
 fn test_multipart_file_upload_flow() {
-    let mut tx = Transaction::new("upload-test");
-    tx.set_request_body_access(true);
-
     // Simulate multipart file upload
     let boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW";
     let multipart_body = "------WebKitFormBoundary7MA4YWxkTrZu0gW\r\n\
@@ -306,39 +354,35 @@ fn test_multipart_file_upload_flow() {
          Test file upload\r\n\
          ------WebKitFormBoundary7MA4YWxkTrZu0gW--\r\n";
 
-    // Add Content-Type header with boundary
-    tx.add_request_header(
-        "Content-Type",
+    // Process multipart body, with the boundary in the Content-Type header
+    let tx = request_with_body(
         &format!("multipart/form-data; boundary={}", boundary),
+        multipart_body.as_bytes(),
     );
 
-    // Process multipart body
-    tx.process_request_headers();
-    let result = tx.process_request_body(multipart_body.as_bytes());
-    assert!(result.is_none());
-
     // Verify file was captured
-    assert_eq!(tx.files().get("file"), vec!["test.txt"]);
-    assert_eq!(tx.files_names().get("file"), vec!["file"]);
+    assert_eq!(values(&tx, RuleVariable::Files, "file"), ["test.txt"]);
+    assert_eq!(values(&tx, RuleVariable::FilesNames, "file"), ["file"]);
 
     // Verify form field
-    assert_eq!(tx.args_post().get("description"), vec!["Test file upload"]);
+    assert_eq!(
+        values(&tx, RuleVariable::ArgsPost, "description"),
+        ["Test file upload"]
+    );
 
     // Verify combined size tracked
-    assert!(!tx.files_combined_size().is_empty());
+    assert!(!single(&tx, RuleVariable::FilesCombinedSize).is_empty());
 }
 
 #[test]
 fn test_json_api_request_with_nested_data() {
-    let mut tx = Transaction::new("json-api-test");
-    tx.set_request_body_access(true);
+    // As in Go, JSON bodies are parsed once a rule selects the JSON processor
+    let mut tx = waf(BODY_RULES).new_transaction();
 
     // JSON API request
     tx.process_uri("/api/v1/users", "POST", "HTTP/2");
     tx.add_request_header("Content-Type", "application/json");
     tx.add_request_header("Authorization", "Bearer token123");
-    // As in Go, JSON bodies are parsed once the JSON processor is selected
-    tx.set_request_body_processor(BodyProcessorKind::Json);
 
     let json_body = br#"{
         "user": {
@@ -356,18 +400,13 @@ fn test_json_api_request_with_nested_data() {
     assert!(result.is_none());
 
     // Verify nested JSON flattened correctly
-    assert_eq!(
-        tx.args_post().get("json.user.email"),
-        vec!["test@example.com"]
-    );
-    assert_eq!(
-        tx.args_post().get("json.user.profile.name"),
-        vec!["Test User"]
-    );
-    assert_eq!(tx.args_post().get("json.user.profile.age"), vec!["30"]);
+    let arg = |key| values(&tx, RuleVariable::ArgsPost, key);
+    assert_eq!(arg("json.user.email"), ["test@example.com"]);
+    assert_eq!(arg("json.user.profile.name"), ["Test User"]);
+    assert_eq!(arg("json.user.profile.age"), ["30"]);
 
     // Verify array handling
-    assert_eq!(tx.args_post().get("json.tags"), vec!["2"]); // array length
-    assert_eq!(tx.args_post().get("json.tags.0"), vec!["developer"]);
-    assert_eq!(tx.args_post().get("json.tags.1"), vec!["admin"]);
+    assert_eq!(arg("json.tags"), ["2"]); // array length
+    assert_eq!(arg("json.tags.0"), ["developer"]);
+    assert_eq!(arg("json.tags.1"), ["admin"]);
 }

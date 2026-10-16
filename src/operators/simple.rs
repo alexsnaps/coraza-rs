@@ -31,7 +31,7 @@ fn as_int(input: &[u8]) -> i32 {
 /// use coraza::{transaction::Transaction, Operator, eq};
 ///
 /// let op = eq("15").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "15".as_bytes(), &mut out));
 /// assert!(op.evaluate(&tx, "015".as_bytes(), &mut out)); // Leading zeros ignored
@@ -75,7 +75,7 @@ pub fn eq(parameter: &str) -> Result<Eq, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, gt};
 ///
 /// let op = gt("10").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "15".as_bytes(), &mut out));
 /// assert!(!op.evaluate(&tx, "10".as_bytes(), &mut out));
@@ -118,7 +118,7 @@ pub fn gt(parameter: &str) -> Result<Gt, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, ge};
 ///
 /// let op = ge("10").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "15".as_bytes(), &mut out));
 /// assert!(op.evaluate(&tx, "10".as_bytes(), &mut out));
@@ -161,7 +161,7 @@ pub fn ge(parameter: &str) -> Result<Ge, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, lt};
 ///
 /// let op = lt("10").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "5".as_bytes(), &mut out));
 /// assert!(!op.evaluate(&tx, "10".as_bytes(), &mut out));
@@ -204,7 +204,7 @@ pub fn lt(parameter: &str) -> Result<Lt, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, le};
 ///
 /// let op = le("10").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "5".as_bytes(), &mut out));
 /// assert!(op.evaluate(&tx, "10".as_bytes(), &mut out));
@@ -248,7 +248,7 @@ pub fn le(parameter: &str) -> Result<Le, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, streq};
 ///
 /// let op = streq("POST").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "POST".as_bytes(), &mut out));
 /// assert!(!op.evaluate(&tx, "post".as_bytes(), &mut out));
@@ -289,7 +289,7 @@ pub fn streq(parameter: &str) -> Result<StrEq, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, contains};
 ///
 /// let op = contains(".php").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "/index.php".as_bytes(), &mut out));
 /// assert!(op.evaluate(&tx, "test.php?id=1".as_bytes(), &mut out));
@@ -330,7 +330,7 @@ pub fn contains(parameter: &str) -> Result<Contains, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, begins_with};
 ///
 /// let op = begins_with("GET").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "GET /index.html HTTP/1.1".as_bytes(), &mut out));
 /// assert!(!op.evaluate(&tx, "POST /index.html HTTP/1.1".as_bytes(), &mut out));
@@ -370,7 +370,7 @@ pub fn begins_with(parameter: &str) -> Result<BeginsWith, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, ends_with};
 ///
 /// let op = ends_with(".exe").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "malware.exe".as_bytes(), &mut out));
 /// assert!(op.evaluate(&tx, "C:\\Windows\\system32\\cmd.exe".as_bytes(), &mut out));

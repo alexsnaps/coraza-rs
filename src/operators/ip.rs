@@ -31,7 +31,7 @@ use std::str::FromStr;
 /// # use coraza::operators::Operator;
 /// // Block specific IPs and ranges
 /// let op = ip_match("192.168.1.100,192.168.1.50,10.10.50.0/24").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "192.168.1.100".as_bytes(), &mut out));
 /// assert!(op.evaluate(&tx, "10.10.50.25".as_bytes(), &mut out));
@@ -141,7 +141,7 @@ impl Operator for IpMatch {
 /// # use coraza::operators::ip::ip_match;
 /// # use coraza::operators::Operator;
 /// let op = ip_match("192.168.1.0/24").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "192.168.1.100".as_bytes(), &mut out));
 /// ```
@@ -209,7 +209,7 @@ pub fn ip_match_from_dataset(
 /// # use coraza::operators::ip::ip_match_from_file;
 /// # use coraza::operators::Operator;
 /// let op = ip_match_from_file("/etc/coraza/blocked-ips.txt").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "10.0.0.1".as_bytes(), &mut out));
 /// ```

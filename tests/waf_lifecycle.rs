@@ -60,24 +60,6 @@ fn test_waf_config_inheritance_to_transactions() {
 }
 
 #[test]
-fn a_transaction_without_a_waf_has_the_settings_of_a_default_wafs() {
-    let settings = |tx: &coraza::transaction::Transaction| {
-        (
-            tx.rule_engine(),
-            tx.request_body_access(),
-            tx.request_body_limit(),
-            tx.response_body_access(),
-            tx.response_body_limit(),
-        )
-    };
-
-    let standalone = coraza::transaction::Transaction::new("standalone");
-    let of_a_default_waf = Waf::default().new_transaction();
-
-    assert_eq!(settings(&standalone), settings(&of_a_default_waf));
-}
-
-#[test]
 fn test_waf_invalid_config_rejected() {
     let config = WafConfig {
         request_body_limit: -1,
@@ -259,10 +241,10 @@ fn test_transaction_independence() {
     let tx2 = waf.new_transaction_with_id("tx2".to_string());
 
     // Modify tx1
-    tx1.args_get_mut().add("key", "value1");
+    tx1.add_get_argument("key", "value1");
 
     // tx2 should not be affected
-    assert_eq!(tx2.args_get().get("key"), Vec::<&str>::new());
+    assert_eq!(tx2.get_variable(RuleVariable::ArgsGet, Some("key")), None);
 }
 
 #[test]
@@ -344,18 +326,21 @@ fn test_transaction_variables_populated() {
     tx.process_uri("/search?q=test&page=1", "GET", "HTTP/1.1");
 
     // ARGS_GET should be populated
-    assert_eq!(tx.args_get().get("q"), vec!["test"]);
-    assert_eq!(tx.args_get().get("page"), vec!["1"]);
+    let arg = |key| tx.get_variable(RuleVariable::ArgsGet, Some(key));
+    assert_eq!(arg("q").as_deref(), Some("test"));
+    assert_eq!(arg("page").as_deref(), Some("1"));
 
     // Add headers
     tx.add_request_header("User-Agent", "TestBot/1.0");
     tx.add_request_header("Cookie", "session=abc123");
 
     // REQUEST_HEADERS should be populated
-    assert_eq!(tx.request_headers().get("user-agent"), vec!["TestBot/1.0"]);
+    let user_agent = tx.get_variable(RuleVariable::RequestHeaders, Some("user-agent"));
+    assert_eq!(user_agent.as_deref(), Some("TestBot/1.0"));
 
     // REQUEST_COOKIES should be populated
-    assert_eq!(tx.request_cookies().get("session"), vec!["abc123"]);
+    let session = tx.get_variable(RuleVariable::RequestCookies, Some("session"));
+    assert_eq!(session.as_deref(), Some("abc123"));
 }
 
 // ============================================================================
@@ -420,7 +405,7 @@ fn test_waf_rule_evaluation_basic() {
     // Create transaction
     let waf = builder.build().expect("Failed to build WAF");
     let mut tx = waf.new_transaction();
-    tx.args_mut().add("input", "attack");
+    tx.add_get_argument("input", "attack");
 
     // Evaluate rules (this happens during phase processing)
     // Note: Full evaluation integration requires Phase 2 processing
@@ -475,7 +460,7 @@ fn test_waf_handles_malformed_headers_gracefully() {
     tx.add_request_header("Empty-Value", "");
 
     // Should not crash
-    let _ = tx.request_headers().get("normal-header");
+    let _ = tx.get_variable(RuleVariable::RequestHeaders, Some("normal-header"));
 }
 
 // ============================================================================
@@ -489,7 +474,7 @@ fn test_waf_transaction_cleanup() {
     // Create and drop many transactions
     for i in 0..1000 {
         let mut tx = waf.new_transaction_with_id(format!("tx-{}", i));
-        tx.args_mut().add("test", "value");
+        tx.add_get_argument("test", "value");
         // Transaction dropped here
     }
 

@@ -10,16 +10,18 @@
 //! # Example
 //!
 //! ```
+//! use coraza::RuleVariable;
 //! use coraza::body_processors::{BodyProcessorKind, BodyProcessorOptions};
-//! use coraza::transaction::Transaction;
+//! use coraza::waf::Waf;
 //!
 //! let content_type = "application/x-www-form-urlencoded";
 //! let processor = BodyProcessorKind::for_content_type(content_type).unwrap();
 //!
-//! let mut tx = Transaction::new("tx-1");
+//! let mut tx = Waf::default().new_transaction();
 //! let options = BodyProcessorOptions { mime: content_type.to_string(), ..Default::default() };
 //! processor.process_request(b"username=admin", &mut tx, &options)?;
-//! assert_eq!(tx.args_post().get("username"), vec!["admin"]);
+//! let username = tx.get_variable(RuleVariable::ArgsPost, Some("username"));
+//! assert_eq!(username.as_deref(), Some("admin"));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 

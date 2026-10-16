@@ -404,16 +404,15 @@ mod tests {
         let mut tx = Transaction::new("test-tx");
 
         // Add request headers (case-insensitive)
-        tx.request_headers_mut().add("Host", "www.test.com:80");
-        tx.request_headers_mut().add("User-Agent", "Mozilla/5.0");
-        tx.request_headers_mut()
-            .add("Accept", "text/html,application/json");
-        tx.request_headers_mut().add("Accept-Encoding", "gzip");
-        tx.request_headers_mut().add("Cookie", "session=abc123");
+        tx.add_request_header("Host", "www.test.com:80");
+        tx.add_request_header("User-Agent", "Mozilla/5.0");
+        tx.add_request_header("Accept", "text/html,application/json");
+        tx.add_request_header("Accept-Encoding", "gzip");
+        tx.add_request_header("Cookie", "session=abc123");
 
         // Add GET parameters
-        tx.args_get_mut().add("id", "123");
-        tx.args_get_mut().add("name", "test");
+        tx.add_get_argument("id", "123");
+        tx.add_get_argument("name", "test");
 
         tx
     }

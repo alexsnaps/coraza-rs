@@ -553,9 +553,9 @@ mod tests {
 
         assert_eq!(tx.rule_engine(), RuleEngineStatus::DetectionOnly);
         assert!(tx.request_body_access());
-        assert_eq!(tx.request_body_limit(), 1048576);
+        assert_eq!(tx.request_body_limit, 1048576);
         assert!(tx.response_body_access());
-        assert_eq!(tx.response_body_limit(), 2097152);
+        assert_eq!(tx.response_body_limit, 2097152);
     }
 
     #[test]

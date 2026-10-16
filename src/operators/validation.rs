@@ -28,7 +28,7 @@ use crate::transformations::text_of;
 /// # use coraza::operators::Operator;
 /// // Always execute action
 /// let op = unconditional_match();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "any input".as_bytes(), &mut out));
 /// assert!(op.evaluate(&tx, "".as_bytes(), &mut out));
@@ -50,7 +50,7 @@ impl Operator for UnconditionalMatch {
 /// # use coraza::operators::validation::unconditional_match;
 /// # use coraza::operators::Operator;
 /// let op = unconditional_match();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "test".as_bytes(), &mut out));
 /// ```
@@ -79,7 +79,7 @@ pub fn unconditional_match() -> UnconditionalMatch {
 /// # use coraza::operators::Operator;
 /// // Never matches
 /// let op = no_match();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(!op.evaluate(&tx, "any input".as_bytes(), &mut out));
 /// assert!(!op.evaluate(&tx, "".as_bytes(), &mut out));
@@ -101,7 +101,7 @@ impl Operator for NoMatch {
 /// # use coraza::operators::validation::no_match;
 /// # use coraza::operators::Operator;
 /// let op = no_match();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(!op.evaluate(&tx, "test".as_bytes(), &mut out));
 /// ```
@@ -131,7 +131,7 @@ pub fn no_match() -> NoMatch {
 /// # use coraza::operators::Operator;
 /// // Allow only printable ASCII
 /// let op = validate_byte_range("32-126").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(!op.evaluate(&tx, "Hello World".as_bytes(), &mut out)); // Valid
 /// assert!(op.evaluate(&tx, "Hello\x00World".as_bytes(), &mut out)); // Invalid (null byte)
@@ -232,7 +232,7 @@ impl Operator for ValidateByteRange {
 /// # use coraza::operators::validation::validate_byte_range;
 /// # use coraza::operators::Operator;
 /// let op = validate_byte_range("32-126").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(!op.evaluate(&tx, "valid ASCII".as_bytes(), &mut out));
 /// ```
@@ -262,7 +262,7 @@ pub fn validate_byte_range(ranges: &str) -> Result<ValidateByteRange, String> {
 /// let op = validate_url_encoding();
 ///
 /// // Valid encodings
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(!op.evaluate(&tx, "/path".as_bytes(), &mut out));
 /// assert!(!op.evaluate(&tx, "/path%20with%20spaces".as_bytes(), &mut out));
@@ -318,7 +318,7 @@ impl Operator for ValidateUrlEncoding {
 /// # use coraza::operators::validation::validate_url_encoding;
 /// # use coraza::operators::Operator;
 /// let op = validate_url_encoding();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(!op.evaluate(&tx, "/valid%20path".as_bytes(), &mut out));
 /// assert!(op.evaluate(&tx, "/invalid%2".as_bytes(), &mut out));
@@ -349,7 +349,7 @@ pub fn validate_url_encoding() -> ValidateUrlEncoding {
 /// let op = validate_utf8_encoding();
 ///
 /// // Valid UTF-8 (Rust &str is always valid UTF-8)
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(!op.evaluate(&tx, "Hello".as_bytes(), &mut out));
 /// assert!(!op.evaluate(&tx, "Hello 世界".as_bytes(), &mut out));
@@ -376,7 +376,7 @@ impl Operator for ValidateUtf8Encoding {
 /// # use coraza::operators::validation::validate_utf8_encoding;
 /// # use coraza::operators::Operator;
 /// let op = validate_utf8_encoding();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(!op.evaluate(&tx, "valid UTF-8 ✓".as_bytes(), &mut out));
 /// ```

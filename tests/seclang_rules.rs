@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Behaviour of rules loaded from SecLang, evaluated against real transactions.
+use coraza::RuleVariable;
 use coraza::seclang::Parser;
-use coraza::transaction::Transaction;
+use coraza::transaction::{Transaction, VariableCollection};
 use coraza::waf::Waf;
 
 fn waf(rules: &str) -> Waf {
@@ -17,8 +18,16 @@ const JSON_PROCESSOR: &str = r#"SecRule REQUEST_HEADERS:Content-Type "^applicati
 
 fn request_with_arg(waf: &Waf, key: &str, value: &str) -> Transaction {
     let mut tx = waf.new_transaction();
-    tx.args_mut().add(key, value);
+    tx.add_get_argument(key, value);
     tx
+}
+
+/// The values of `key` in `variable`, as rules read them; empty if none.
+fn values(tx: &Transaction, variable: RuleVariable, key: &str) -> Vec<String> {
+    match tx.collection(variable) {
+        Some(VariableCollection::Map(map)) => map.get(key),
+        _ => Vec::new(),
+    }
 }
 
 #[test]
@@ -466,7 +475,7 @@ fn with_the_rule_engine_off_no_phase_runs() {
     assert_eq!(tx_var(&tx, "request_headers"), None);
     assert_eq!(tx_var(&tx, "request_body"), None);
     assert_eq!(tx_var(&tx, "logging"), None);
-    assert!(tx.args_post().get("a").is_empty());
+    assert_eq!(tx.get_variable(RuleVariable::ArgsPost, Some("a")), None);
 }
 
 #[test]
@@ -492,10 +501,11 @@ fn an_interrupted_transaction_is_not_inspected_further() {
 
     // As in Go Coraza, the body isn't read, nor the response status recorded
     assert_eq!(tx.process_request_body(b"a=1").map(|i| i.rule_id), Some(1));
-    assert!(tx.args_post().get("a").is_empty());
+    assert_eq!(tx.get_variable(RuleVariable::ArgsPost, Some("a")), None);
     let response = tx.process_response_headers(200, "HTTP/1.1");
     assert_eq!(response.map(|i| i.rule_id), Some(1));
-    assert_eq!(tx.response_status(), "");
+    let status = tx.get_variable(RuleVariable::ResponseStatus, None);
+    assert_eq!(status.as_deref(), Some(""));
 }
 
 #[test]
@@ -863,8 +873,8 @@ fn block_adds_to_the_anomaly_score_with_crs_defaults() {
     assert_eq!(tx_var(&tx, "score").as_deref(), Some("3"));
 
     let mut tx = waf.new_transaction();
-    tx.args_mut().add("a", "x");
-    tx.args_mut().add("b", "x");
+    tx.add_get_argument("a", "x");
+    tx.add_get_argument("b", "x");
     assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(2));
 }
 
@@ -937,7 +947,7 @@ fn arguments_over_the_limit_are_dropped_and_flagged() {
     let mut tx = waf.new_transaction();
     tx.process_uri("/?a=1&a=2&a=3", "GET", "HTTP/1.1");
     assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
-    assert_eq!(tx.args_get().get("a"), vec!["1", "2"]);
+    assert_eq!(values(&tx, RuleVariable::ArgsGet, "a"), ["1", "2"]);
 }
 
 #[test]
@@ -1194,24 +1204,39 @@ fn unknown_body_processors_are_parse_errors() {
 fn ctl_changes_audit_and_debug_settings_of_one_transaction() {
     use coraza::types::{AuditEngineStatus, AuditLogPart};
 
-    let waf = waf(r#"
+    let dir = tempfile::tempdir().unwrap();
+    let audit_log = dir.path().join("audit.log");
+    let waf = waf(&format!(
+        r#"
         SecAuditEngine RelevantOnly
+        SecAuditLog {}
         SecAuditLogParts ABZ
         SecDebugLogLevel 1
         SecRule ARGS:audit "@streq all" "id:1,phase:1,pass,nolog,ctl:auditEngine=On,ctl:auditLogParts=+E,ctl:debugLogLevel=9"
-    "#);
+        "#,
+        audit_log.display()
+    ));
+    let logged = || std::fs::read_to_string(&audit_log).unwrap_or_default();
+    let has_response_body = |tx: &Transaction| {
+        tx.audit_log()
+            .parts
+            .contains(&AuditLogPart::IntermediaryResponseBody)
+    };
 
-    let tx = request_with_arg(&waf, "audit", "none");
-    assert_eq!(tx.audit_engine(), AuditEngineStatus::RelevantOnly);
+    // Nothing relevant happened: no entry
+    let mut tx = request_with_arg(&waf, "audit", "none");
+    tx.process_request_headers();
+    tx.process_logging().unwrap();
+    assert!(logged().is_empty());
+    assert!(!has_response_body(&tx));
     assert_eq!(tx.debug_log_level(), 1);
 
+    // With `ctl:auditEngine=On`, this transaction's entry is written, with part E
     let mut tx = request_with_arg(&waf, "audit", "all");
     tx.process_request_headers();
-    assert_eq!(tx.audit_engine(), AuditEngineStatus::On);
-    assert!(
-        tx.audit_log_parts()
-            .contains(&AuditLogPart::IntermediaryResponseBody)
-    );
+    tx.process_logging().unwrap();
+    assert!(!logged().is_empty());
+    assert!(has_response_body(&tx));
     assert_eq!(tx.debug_log_level(), 9);
     assert_eq!(waf.config().audit_engine, AuditEngineStatus::RelevantOnly);
 }
@@ -2080,7 +2105,7 @@ fn inspect_file_runs_a_program_on_the_value() {
 #[test]
 fn extended_multipart_filenames_are_decoded_with_their_charset_and_language() {
     use coraza::RuleVariable::{
-        MultipartFilename, MultipartFilenameCharset, MultipartFilenameLanguage,
+        Files, MultipartFilename, MultipartFilenameCharset, MultipartFilenameLanguage,
     };
 
     let waf = waf("SecRequestBodyAccess On");
@@ -2090,18 +2115,15 @@ fn extended_multipart_filenames_are_decoded_with_their_charset_and_language() {
     tx.process_request_headers();
     tx.process_request_body(body.as_bytes());
 
-    let values = |variable| {
-        let mut values: Vec<String> = match tx.collection(variable) {
-            Some(coraza::transaction::VariableCollection::Map(map)) => map.get("f"),
-            _ => Vec::new(),
-        };
+    let sorted = |variable| {
+        let mut values = values(&tx, variable, "f");
         values.sort();
         values
     };
-    assert_eq!(values(MultipartFilename), ["plain.txt", "€.php"]);
-    assert_eq!(values(MultipartFilenameCharset), ["UTF-8"]);
-    assert_eq!(values(MultipartFilenameLanguage), ["en"]);
-    assert_eq!(tx.files().get("f"), ["€.php"]);
+    assert_eq!(sorted(MultipartFilename), ["plain.txt", "€.php"]);
+    assert_eq!(sorted(MultipartFilenameCharset), ["UTF-8"]);
+    assert_eq!(sorted(MultipartFilenameLanguage), ["en"]);
+    assert_eq!(values(&tx, Files, "f"), ["€.php"]);
     assert_eq!(
         tx.get_variable(coraza::RuleVariable::MultipartStrictError, None)
             .as_deref(),
@@ -2131,10 +2153,10 @@ fn transformations_producing_invalid_utf8_are_safe() {
     "#);
 
     let mut tx = waf.new_transaction();
-    tx.args_mut().add("a", "//4=");
-    tx.args_mut().add("b", "fffe");
-    tx.args_mut().add("c", "anything");
-    tx.args_mut().add("d", "%ff%fe");
+    tx.add_get_argument("a", "//4=");
+    tx.add_get_argument("b", "fffe");
+    tx.add_get_argument("c", "anything");
+    tx.add_get_argument("d", "%ff%fe");
     assert!(tx.process_request_headers().is_none());
 }
 

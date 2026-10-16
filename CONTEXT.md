@@ -82,6 +82,13 @@ _Avoid_: integration, server
 - Once a **Transaction** has an **Interruption**, no later **Phase** is evaluated but logging, and
   every **Phase** returns that **Interruption**.
 - **Flow state** belongs to one **Transaction**, never to the **Rule set**.
+- A **Connector** writes a **Transaction**'s variables only through its input calls
+  (`process_connection`, `process_uri`, `add_request_header`, `add_*_argument`,
+  `add_response_header`, the phase calls), which keep variables derived from others, such as
+  `ARGS`, consistent.
+- A **Transaction** starts with its WAF's settings (body access and limits, body processor,
+  audit engine and parts, debug log level); only a `ctl` action changes them, for that
+  **Transaction** alone.
 - An **Operator** hands its **Captures** (and `@restpath` its path arguments) back to its rule; the
   rule, not the **Operator**, writes them to the **Transaction**.
 - A **Disruptive action** gives an **Interruption** in `On` mode, a **Would-be interruption** in
