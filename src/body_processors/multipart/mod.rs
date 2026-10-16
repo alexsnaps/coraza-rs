@@ -17,7 +17,7 @@ use std::io::Write;
 /// Parses a request body, with the boundary its `Content-Type` gives, into ARGS_POST (and
 /// ARGS), FILES*, FILES_COMBINED_SIZE and the MULTIPART_* variables, storing uploaded
 /// files in `SecUploadDir` if set. MULTIPART_STRICT_ERROR is set if the body can't be
-/// parsed, or any part is malformed.
+/// parsed, a part is malformed, or a file can't be stored.
 ///
 /// # Errors
 ///
@@ -74,7 +74,9 @@ pub(super) fn process_request(body: &[u8], tx: &mut Transaction) -> Result<(), B
             // As in Go Coraza, FILES, FILES_NAMES and FILES_TMPNAMES list their values
             // without keys; FILES_SIZES is keyed by file name
             if !upload_dir.is_empty() {
-                let temp_file = save_to_temp(&upload_dir, &part.data)?;
+                // As in Go Coraza, a file that can't be stored fails the body
+                let temp_file = save_to_temp(&upload_dir, &part.data)
+                    .inspect_err(|_| tx.multipart_strict_error.set("1"))?;
                 tx.files_tmp_names.add("", &temp_file);
             }
 
@@ -131,9 +133,6 @@ fn parts(content_type: &str, body: &[u8]) -> Result<Vec<parser::Part>, BodyProce
 fn save_to_temp(upload_dir: &str, data: &[u8]) -> Result<String, BodyProcessorError> {
     use std::fs;
     use std::path::PathBuf;
-
-    // Create upload directory if it doesn't exist
-    fs::create_dir_all(upload_dir)?;
 
     let temp_name = format!("crzmp{}", crate::utils::strings::random_string(16));
     let mut temp_path = PathBuf::from(upload_dir);

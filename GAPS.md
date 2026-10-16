@@ -417,3 +417,4 @@ Found at `ee1d995`, comparing with Go Coraza at `3fc3ae2`: by reading `internal/
     - Done: as in Go, the directive checks by writing a file in it.
   - If the directory is gone when a file is uploaded, Go fails the body (`MULTIPART_STRICT_ERROR`,
     `REQBODY_ERROR`); this crate's `save_to_temp` creates it.
+    - Done: as in Go, a file that can't be stored fails the body, and the directory isn't made.

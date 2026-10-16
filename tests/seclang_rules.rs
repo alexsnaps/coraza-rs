@@ -2404,3 +2404,30 @@ fn files_are_listed_without_keys() {
     assert_eq!(tx_var(&tx, "tmpnames").as_deref(), Some("FILES_TMPNAMES"));
     assert_eq!(tx_var(&tx, "by_field"), None);
 }
+
+#[test]
+fn an_upload_dir_that_is_gone_fails_the_body() {
+    // As in Go Coraza, which doesn't make it again
+    let dir = tempfile::tempdir().unwrap();
+    let upload_dir = dir.path().join("uploads");
+    std::fs::create_dir(&upload_dir).unwrap();
+    let waf = waf(&format!(
+        r#"
+        SecRequestBodyAccess On
+        SecUploadDir {}
+        "#,
+        upload_dir.display()
+    ));
+    std::fs::remove_dir(&upload_dir).unwrap();
+
+    let tx = upload(&waf);
+
+    assert!(!upload_dir.exists());
+    for variable in [
+        RuleVariable::ReqbodyError,
+        RuleVariable::MultipartStrictError,
+    ] {
+        let flag = tx.get_variable(variable, None);
+        assert_eq!(flag.as_deref(), Some("1"), "{variable:?}");
+    }
+}
