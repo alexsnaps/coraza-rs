@@ -165,17 +165,17 @@ fn test_ctl_modifies_transaction_settings() {
 
     let mut tx = Transaction::new("ctl-test");
 
-    // Default values
+    // Default values, a default WAF's, as in Go
     assert_eq!(tx.rule_engine(), RuleEngineStatus::On);
-    assert!(tx.request_body_access());
-    assert_eq!(tx.request_body_limit(), 131072); // 128KB
+    assert!(!tx.request_body_access());
+    assert_eq!(tx.request_body_limit(), 128 * 1024 * 1024); // 128 MiB
 
     // Modify via CTL-like setters (simulating CTL action execution)
-    tx.set_request_body_access(false);
+    tx.set_request_body_access(true);
     tx.set_request_body_limit(262144); // 256KB
 
     // Verify changes
-    assert!(!tx.request_body_access());
+    assert!(tx.request_body_access());
     assert_eq!(tx.request_body_limit(), 262144);
 }
 
@@ -291,6 +291,7 @@ fn test_complete_transaction_flow() {
 #[test]
 fn test_multipart_file_upload_flow() {
     let mut tx = Transaction::new("upload-test");
+    tx.set_request_body_access(true);
 
     // Simulate multipart file upload
     let boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW";
@@ -330,6 +331,7 @@ fn test_multipart_file_upload_flow() {
 #[test]
 fn test_json_api_request_with_nested_data() {
     let mut tx = Transaction::new("json-api-test");
+    tx.set_request_body_access(true);
 
     // JSON API request
     tx.process_uri("/api/v1/users", "POST", "HTTP/2");

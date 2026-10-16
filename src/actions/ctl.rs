@@ -567,7 +567,7 @@ mod tests {
         let action = CtlAction::parse("requestBodyAccess=off").unwrap();
 
         let mut tx = Transaction::new("test-2");
-        assert!(tx.request_body_access()); // default is true
+        tx.set_request_body_access(true);
 
         action.evaluate(&mut tx);
         assert!(!tx.request_body_access());
@@ -580,7 +580,7 @@ mod tests {
         let action = CtlAction::parse("requestBodyLimit=256000").unwrap();
 
         let mut tx = Transaction::new("test-3");
-        assert_eq!(tx.request_body_limit(), 131072); // default is 128KB
+        assert_eq!(tx.request_body_limit(), 128 * 1024 * 1024); // the default, as in Go
 
         action.evaluate(&mut tx);
         assert_eq!(tx.request_body_limit(), 256000);
@@ -645,11 +645,12 @@ mod tests {
         let action = CtlAction::parse("requestBodyAccess=off").unwrap();
 
         let mut tx = Transaction::new("test-8");
+        tx.set_request_body_access(true);
         // Simulate being in request body phase
         tx.process_request_headers();
         tx.process_request_body(b"test");
 
-        assert!(tx.request_body_access()); // default is true
+        assert!(tx.request_body_access());
 
         // Try to change it - should be silently ignored
         action.evaluate(&mut tx);

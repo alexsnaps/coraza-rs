@@ -912,16 +912,17 @@ impl Transaction {
             matched_var: Single::new(RuleVariable::MatchedVar),
             matched_var_name: Single::new(RuleVariable::MatchedVarName),
             matched_vars: map(RuleVariable::MatchedVars),
-            rule_engine: RuleEngineStatus::On,
-            request_body_access: true,
-            request_body_limit: 131072, // 128KB default
+            // The settings `set_config` takes from a WAF's config, here from a default one
+            rule_engine: config.rule_engine,
+            request_body_access: config.request_body_access,
+            request_body_limit: config.request_body_limit,
+            response_body_access: config.response_body_access,
+            response_body_limit: config.response_body_limit,
             audit_engine: config.audit_engine,
             audit_log_parts: config.audit_log_parts.clone(),
             debug_log_level: config.debug_log_level,
             config: Arc::new(config),
             force_request_body_variable: false,
-            response_body_access: false,
-            response_body_limit: 524288, // 512KB default
             force_response_body_variable: false,
             last_phase: None,
             flow: FlowState::new(),
@@ -1777,6 +1778,7 @@ impl Transaction {
     /// use coraza::transaction::Transaction;
     ///
     /// let mut tx = Transaction::new("tx-1");
+    /// tx.set_request_body_access(true); // SecRequestBodyAccess On
     /// tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
     /// tx.process_request_headers();
     ///
@@ -2468,6 +2470,7 @@ mod tests {
     #[test]
     fn test_process_request_body_urlencoded() {
         let mut tx = Transaction::new("tx-020");
+        tx.set_request_body_access(true);
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
 
         let body = b"username=admin&password=secret&role=admin";
@@ -2495,6 +2498,7 @@ mod tests {
     #[test]
     fn test_process_request_body_json() {
         let mut tx = Transaction::new("tx-021");
+        tx.set_request_body_access(true);
         tx.add_request_header("Content-Type", "application/json");
         // As in Go, the content type alone selects no JSON or XML processor
         tx.set_request_body_processor(BodyProcessorKind::Json);
@@ -2513,6 +2517,7 @@ mod tests {
     #[test]
     fn test_process_request_body_xml() {
         let mut tx = Transaction::new("tx-022");
+        tx.set_request_body_access(true);
         tx.add_request_header("Content-Type", "application/xml");
         // As in Go, the content type alone selects no JSON or XML processor
         tx.set_request_body_processor(BodyProcessorKind::Xml);
@@ -2531,6 +2536,7 @@ mod tests {
     #[test]
     fn test_process_request_body_multipart() {
         let mut tx = Transaction::new("tx-023");
+        tx.set_request_body_access(true);
         tx.add_request_header(
             "Content-Type",
             "multipart/form-data; boundary=----WebKitFormBoundary",
@@ -2578,6 +2584,7 @@ value1\r\n\
             ("application/json", false, ""),
         ] {
             let mut tx = Transaction::new("tx");
+            tx.set_request_body_access(true);
             tx.add_request_header("Content-Type", content_type);
             tx.force_request_body_variable = forced;
             tx.process_request_headers();
@@ -2591,6 +2598,7 @@ value1\r\n\
     #[test]
     fn test_process_request_body_already_processed() {
         let mut tx = Transaction::new("tx-025");
+        tx.set_request_body_access(true);
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
 
         let body1 = b"key1=value1";
