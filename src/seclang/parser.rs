@@ -1039,13 +1039,20 @@ fn directive_sec_arguments_limit(options: &mut DirectiveOptions) -> Result<(), S
 
 /// SecUploadDir [directory]
 ///
-/// Sets the directory where uploaded files will be stored.
+/// Sets the directory where uploaded files will be stored, which must be writable: as Go
+/// Coraza does, it checks by writing a file in it.
 fn directive_sec_upload_dir(options: &mut DirectiveOptions) -> Result<(), String> {
-    // Validate directory exists
-    let dir_path = Path::new(&options.opts);
-    if !dir_path.is_dir() {
-        return Err(format!("upload directory does not exist: {}", options.opts));
-    }
+    let probe = Path::new(&options.opts).join(format!(
+        "checkfsfile{}",
+        crate::utils::strings::random_string(16)
+    ));
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map_err(|e| format!("upload directory {} is not writable: {e}", options.opts))?;
+    // A probe that can't be removed is only left behind
+    let _ = std::fs::remove_file(&probe);
 
     options.waf_config.upload_dir = options.opts.clone();
     Ok(())

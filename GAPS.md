@@ -414,5 +414,6 @@ Found at `ee1d995`, comparing with Go Coraza at `3fc3ae2`: by reading `internal/
     lists it in `FILES_TMPNAMES` and removes it when the transaction closes; this crate stores none, and
     `FILES_TMPNAMES` stays empty.
   - Go requires `SecUploadDir` to be writable (`IsDirWritable` creates a file in it); this crate, that it exists.
+    - Done: as in Go, the directive checks by writing a file in it.
   - If the directory is gone when a file is uploaded, Go fails the body (`MULTIPART_STRICT_ERROR`,
     `REQBODY_ERROR`); this crate's `save_to_temp` creates it.
