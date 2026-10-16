@@ -63,7 +63,7 @@ impl Transaction {
     /// once the transaction is interrupted, and in order: a body phase only right after
     /// its headers phase, the others once. A phase that runs becomes the last phase.
     pub(super) fn begin_phase(&mut self, phase: RulePhase) -> bool {
-        if self.rule_engine == RuleEngineStatus::Off || self.flow.interruption.is_some() {
+        if self.settings.rule_engine == RuleEngineStatus::Off || self.flow.interruption.is_some() {
             return false;
         }
         let in_order = match phase {
@@ -141,7 +141,7 @@ impl Transaction {
             status: status as u16,
             data: data.to_string(),
         };
-        match self.rule_engine {
+        match self.settings.rule_engine {
             RuleEngineStatus::On => self.flow.interruption = Some(interruption),
             RuleEngineStatus::DetectionOnly => {
                 self.flow.would_be_interruption.get_or_insert(interruption);
@@ -172,7 +172,7 @@ impl Transaction {
     /// Records an `allow` action, if the rule engine is `On`, as Go Coraza does; see
     /// [`AllowType`] for which rules it skips.
     pub(crate) fn allow(&mut self, allow: AllowType) {
-        if self.rule_engine == RuleEngineStatus::On {
+        if self.settings.rule_engine == RuleEngineStatus::On {
             self.flow.allow = allow;
         }
     }

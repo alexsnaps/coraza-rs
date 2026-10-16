@@ -665,40 +665,12 @@ pub struct Transaction {
     /// variable name; emptied before each rule
     matched_vars: Map,
 
-    // ===== CTL-Modifiable Settings =====
-    /// Rule engine status (controlled by ctl:ruleEngine)
-    pub(crate) rule_engine: RuleEngineStatus,
-
-    /// Request body access enabled (controlled by ctl:requestBodyAccess)
-    pub(crate) request_body_access: bool,
-
-    /// Request body size limit in bytes (controlled by ctl:requestBodyLimit)
-    pub(crate) request_body_limit: i64,
-
     /// Settings of the WAF the transaction belongs to; the defaults for one made with
     /// `Transaction::new`
     config: Arc<WafConfig>,
 
-    /// Audit logging mode (`SecAuditEngine`, controlled by ctl:auditEngine)
-    audit_engine: AuditEngineStatus,
-
-    /// Audit log parts (`SecAuditLogParts`, controlled by ctl:auditLogParts)
-    audit_log_parts: AuditLogParts,
-
-    /// Debug log verbosity, 0 to 9 (`SecDebugLogLevel`, controlled by ctl:debugLogLevel)
-    debug_log_level: u8,
-
-    /// Force REQUEST_BODY variable creation (controlled by ctl:forceRequestBodyVariable)
-    pub(crate) force_request_body_variable: bool,
-
-    /// Response body access enabled (controlled by ctl:responseBodyAccess)
-    pub(crate) response_body_access: bool,
-
-    /// Response body size limit in bytes (controlled by ctl:responseBodyLimit)
-    pub(crate) response_body_limit: i64,
-
-    /// Force RESPONSE_BODY variable creation (controlled by ctl:forceResponseBodyVariable)
-    pub(crate) force_response_body_variable: bool,
+    /// The transaction's own copy of the settings `ctl` changes, taken from `config`
+    pub(crate) settings: Settings,
 
     /// Last phase that was processed
     last_phase: Option<RulePhase>,
@@ -713,6 +685,61 @@ pub struct Transaction {
     /// Reference to WAF's rule group for CTL tag/msg-based exclusions
     /// Optional because transactions created via Transaction::new() don't have a WAF reference
     rules: Option<Arc<RuleGroup>>,
+}
+
+/// What a transaction takes from its WAF's config, which `ctl` changes for that transaction
+/// alone.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Settings {
+    /// Rule engine status (`SecRuleEngine`, controlled by ctl:ruleEngine)
+    pub(crate) rule_engine: RuleEngineStatus,
+
+    /// Request body access enabled (`SecRequestBodyAccess`, controlled by ctl:requestBodyAccess)
+    pub(crate) request_body_access: bool,
+
+    /// Request body size limit in bytes (`SecRequestBodyLimit`, controlled by ctl:requestBodyLimit)
+    pub(crate) request_body_limit: i64,
+
+    /// Force REQUEST_BODY variable creation (controlled by ctl:forceRequestBodyVariable)
+    pub(crate) force_request_body_variable: bool,
+
+    /// Response body access enabled (`SecResponseBodyAccess`, controlled by
+    /// ctl:responseBodyAccess)
+    pub(crate) response_body_access: bool,
+
+    /// Response body size limit in bytes (`SecResponseBodyLimit`, controlled by
+    /// ctl:responseBodyLimit)
+    pub(crate) response_body_limit: i64,
+
+    /// Force RESPONSE_BODY variable creation (controlled by ctl:forceResponseBodyVariable)
+    pub(crate) force_response_body_variable: bool,
+
+    /// Audit logging mode (`SecAuditEngine`, controlled by ctl:auditEngine)
+    audit_engine: AuditEngineStatus,
+
+    /// Audit log parts (`SecAuditLogParts`, controlled by ctl:auditLogParts)
+    audit_log_parts: AuditLogParts,
+
+    /// Debug log verbosity, 0 to 9 (`SecDebugLogLevel`, controlled by ctl:debugLogLevel)
+    debug_log_level: u8,
+}
+
+impl Settings {
+    /// `config`'s settings; no body variable is forced, as only `ctl` forces one.
+    fn of(config: &WafConfig) -> Self {
+        Self {
+            rule_engine: config.rule_engine,
+            request_body_access: config.request_body_access,
+            request_body_limit: config.request_body_limit,
+            force_request_body_variable: false,
+            response_body_access: config.response_body_access,
+            response_body_limit: config.response_body_limit,
+            force_response_body_variable: false,
+            audit_engine: config.audit_engine,
+            audit_log_parts: config.audit_log_parts.clone(),
+            debug_log_level: config.debug_log_level,
+        }
+    }
 }
 
 /// A `0`/`1` variable, starting at `0` as in Go Coraza.
@@ -838,9 +865,14 @@ fn decode_path(path: &str) -> String {
 }
 
 impl Transaction {
-    /// Create a new transaction with the given ID.
+    /// Create a new transaction with the given ID, with a default WAF's settings.
+    #[cfg(test)]
     pub(crate) fn new(id: impl Into<String>) -> Self {
-        let config = WafConfig::default();
+        Self::with_config(id, Arc::new(WafConfig::default()))
+    }
+
+    /// Create a new transaction with the given ID, with the settings of `config`.
+    pub(crate) fn with_config(id: impl Into<String>, config: Arc<WafConfig>) -> Self {
         let started = std::time::SystemTime::now();
         let map = |variable: RuleVariable| {
             if variable.has_case_sensitive_keys() {
@@ -941,18 +973,8 @@ impl Transaction {
             matched_var: Single::new(RuleVariable::MatchedVar),
             matched_var_name: Single::new(RuleVariable::MatchedVarName),
             matched_vars: map(RuleVariable::MatchedVars),
-            // The settings `set_config` takes from a WAF's config, here from a default one
-            rule_engine: config.rule_engine,
-            request_body_access: config.request_body_access,
-            request_body_limit: config.request_body_limit,
-            response_body_access: config.response_body_access,
-            response_body_limit: config.response_body_limit,
-            audit_engine: config.audit_engine,
-            audit_log_parts: config.audit_log_parts.clone(),
-            debug_log_level: config.debug_log_level,
-            config: Arc::new(config),
-            force_request_body_variable: false,
-            force_response_body_variable: false,
+            settings: Settings::of(&config),
+            config,
             last_phase: None,
             flow: FlowState::new(),
             matched_rules: Vec::new(),
@@ -989,20 +1011,6 @@ impl Transaction {
         self.error_log = Some(log);
     }
 
-    /// Makes the transaction use the settings of its WAF, starting with its own copy of
-    /// those a `ctl` action can change.
-    pub(crate) fn set_config(&mut self, config: Arc<WafConfig>) {
-        self.rule_engine = config.rule_engine;
-        self.request_body_access = config.request_body_access;
-        self.request_body_limit = config.request_body_limit;
-        self.response_body_access = config.response_body_access;
-        self.response_body_limit = config.response_body_limit;
-        self.audit_engine = config.audit_engine;
-        self.audit_log_parts.clone_from(&config.audit_log_parts);
-        self.debug_log_level = config.debug_log_level;
-        self.config = config;
-    }
-
     /// Get all rules that matched during this transaction.
     ///
     /// This is used for audit logging - all matched rules (not just blocking ones)
@@ -1035,7 +1043,8 @@ impl Transaction {
             rule,
             matches,
             disruptive_action,
-            disruptive: disruptive_action.is_some() && self.rule_engine == RuleEngineStatus::On,
+            disruptive: disruptive_action.is_some()
+                && self.settings.rule_engine == RuleEngineStatus::On,
             client_ip: self.remote_addr.get().to_string(),
             server_ip: self.server_addr.get().to_string(),
             uri: self.request_uri.get().to_string(),
@@ -1148,84 +1157,84 @@ impl Transaction {
 
     /// Set rule engine status (used by ctl:ruleEngine).
     pub(crate) fn set_rule_engine(&mut self, status: RuleEngineStatus) {
-        self.rule_engine = status;
+        self.settings.rule_engine = status;
     }
 
     /// The rule engine mode: the WAF's `SecRuleEngine`, unless a `ctl:ruleEngine`
     /// changed it.
     pub fn rule_engine(&self) -> RuleEngineStatus {
-        self.rule_engine
+        self.settings.rule_engine
     }
 
     /// Set request body access (used by ctl:requestBodyAccess).
     pub(crate) fn set_request_body_access(&mut self, enabled: bool) {
-        self.request_body_access = enabled;
+        self.settings.request_body_access = enabled;
     }
 
     /// Whether [`Transaction::process_request_body`] inspects the body: the WAF's
     /// `SecRequestBodyAccess`, unless a `ctl:requestBodyAccess` changed it. A connector
     /// can pass an empty body otherwise.
     pub fn request_body_access(&self) -> bool {
-        self.request_body_access
+        self.settings.request_body_access
     }
 
     /// Set request body limit (used by ctl:requestBodyLimit).
     pub(crate) fn set_request_body_limit(&mut self, limit: i64) {
-        self.request_body_limit = limit;
+        self.settings.request_body_limit = limit;
     }
 
     /// Set force request body variable (used by ctl:forceRequestBodyVariable).
     pub(crate) fn set_force_request_body_variable(&mut self, enabled: bool) {
-        self.force_request_body_variable = enabled;
+        self.settings.force_request_body_variable = enabled;
     }
 
     /// Set the audit logging mode (used by ctl:auditEngine).
     pub(crate) fn set_audit_engine(&mut self, status: AuditEngineStatus) {
-        self.audit_engine = status;
+        self.settings.audit_engine = status;
     }
 
     /// Audit log parts of this transaction, `A` and `Z` included.
     pub(crate) fn audit_log_parts(&self) -> &[AuditLogPart] {
-        &self.audit_log_parts
+        &self.settings.audit_log_parts
     }
 
     /// Set the audit log parts (used by ctl:auditLogParts).
     pub(crate) fn set_audit_log_parts(&mut self, parts: AuditLogParts) {
-        self.audit_log_parts = parts;
+        self.settings.audit_log_parts = parts;
     }
 
     /// Debug log verbosity of this transaction, 0 to 9: the WAF's `SecDebugLogLevel`,
     /// unless a `ctl:debugLogLevel` changed it. The library writes no debug log, so this
     /// is for the embedder.
     pub fn debug_log_level(&self) -> u8 {
-        self.debug_log_level
+        self.settings.debug_log_level
     }
 
     /// Set the debug log verbosity (used by ctl:debugLogLevel).
     pub(crate) fn set_debug_log_level(&mut self, level: u8) {
-        self.debug_log_level = level;
+        self.settings.debug_log_level = level;
     }
 
     /// Set response body access (used by ctl:responseBodyAccess).
     pub(crate) fn set_response_body_access(&mut self, enabled: bool) {
-        self.response_body_access = enabled;
+        self.settings.response_body_access = enabled;
     }
 
     /// Whether [`Transaction::process_response_body`] may inspect the body: the WAF's
     /// `SecResponseBodyAccess`, unless a `ctl:responseBodyAccess` changed it. See also
     /// [`Transaction::is_response_body_processable`].
     pub fn response_body_access(&self) -> bool {
-        self.response_body_access
+        self.settings.response_body_access
     }
 
     /// Set response body limit (used by ctl:responseBodyLimit).
     pub(crate) fn set_response_body_limit(&mut self, limit: i64) {
-        self.response_body_limit = limit;
+        self.settings.response_body_limit = limit;
     }
 
     /// Set force response body variable (used by ctl:forceResponseBodyVariable).
     pub(crate) fn set_force_response_body_variable(&mut self, enabled: bool) {
-        self.force_response_body_variable = enabled;
+        self.settings.force_response_body_variable = enabled;
     }
 
     /// Get last processed phase.
@@ -1583,7 +1592,7 @@ impl Transaction {
             .get()
             .parse::<BodyProcessorKind>()
             .ok();
-        if processor.is_none() && self.force_request_body_variable {
+        if processor.is_none() && self.settings.force_request_body_variable {
             self.set_request_body_processor(BodyProcessorKind::UrlEncoded);
             processor = Some(BodyProcessorKind::UrlEncoded);
         }
@@ -1643,8 +1652,8 @@ impl Transaction {
         }
 
         // As in Go Coraza, an empty body or one without access is left alone
-        if self.request_body_access && !body.is_empty() {
-            let limit = usize::try_from(self.request_body_limit).unwrap_or(0);
+        if self.settings.request_body_access && !body.is_empty() {
+            let limit = usize::try_from(self.settings.request_body_limit).unwrap_or(0);
             let mut body = body;
             // As in Go Coraza, reaching the limit counts
             if body.len() >= limit {
@@ -1708,7 +1717,7 @@ impl Transaction {
     ///
     /// A connector can use it to stream other responses rather than buffer them.
     pub fn is_response_body_processable(&self) -> bool {
-        self.force_response_body_variable
+        self.settings.force_response_body_variable
             || self
                 .config
                 .response_body_mime_types
@@ -1760,8 +1769,8 @@ impl Transaction {
             return self.interruption().cloned();
         }
 
-        if self.response_body_access && self.is_response_body_processable() {
-            let limit = usize::try_from(self.response_body_limit).unwrap_or(0);
+        if self.settings.response_body_access && self.is_response_body_processable() {
+            let limit = usize::try_from(self.settings.response_body_limit).unwrap_or(0);
             let mut body = body;
             // As in Go Coraza, reaching the limit counts
             if body.len() >= limit {
@@ -1810,14 +1819,14 @@ impl Transaction {
         self.last_phase = Some(RulePhase::Logging);
 
         // Evaluate rules for Phase 5 (Logging), even if the transaction was interrupted
-        if self.rule_engine != RuleEngineStatus::Off {
+        if self.settings.rule_engine != RuleEngineStatus::Off {
             self.evaluate_rules(RulePhase::Logging);
         }
 
         let Some(logger) = self.audit_logger.clone() else {
             return Ok(());
         };
-        let logged = match self.audit_engine {
+        let logged = match self.settings.audit_engine {
             AuditEngineStatus::Off => false,
             AuditEngineStatus::On => true,
             AuditEngineStatus::RelevantOnly => {
@@ -1872,7 +1881,7 @@ impl Transaction {
             ..AuditTransaction::default()
         };
 
-        let parts = &self.audit_log_parts;
+        let parts = &self.settings.audit_log_parts;
         let has = |part| parts.contains(&part);
         if has(AuditLogPart::RequestHeaders) {
             transaction.request.headers = Some(self.request_headers.entries());
@@ -1918,7 +1927,7 @@ impl Transaction {
                 .duration_since(self.started)
                 .map_or(0, |elapsed| elapsed.as_nanos());
             transaction.producer = Some(AuditProducer {
-                rule_engine: self.rule_engine.as_str().to_string(),
+                rule_engine: self.settings.rule_engine.as_str().to_string(),
                 stopwatch: format!(
                     "{started_ns} {elapsed}; combined=0, p1=0, p2=0, p3=0, p4=0, p5=0"
                 ),
@@ -1971,7 +1980,7 @@ impl Transaction {
         };
 
         AuditLog {
-            parts: self.audit_log_parts.clone(),
+            parts: self.settings.audit_log_parts.clone(),
             transaction,
             messages,
         }
@@ -2053,23 +2062,10 @@ mod tests {
 
     #[test]
     fn a_transaction_without_a_waf_has_the_settings_of_a_default_wafs() {
-        let settings = |tx: &Transaction| {
-            (
-                tx.rule_engine,
-                tx.request_body_access,
-                tx.request_body_limit,
-                tx.response_body_access,
-                tx.response_body_limit,
-                tx.audit_engine,
-                tx.audit_log_parts.clone(),
-                tx.debug_log_level,
-            )
-        };
-
         let standalone = Transaction::new("standalone");
         let of_a_default_waf = crate::waf::Waf::default().new_transaction();
 
-        assert_eq!(settings(&standalone), settings(&of_a_default_waf));
+        assert_eq!(standalone.settings, of_a_default_waf.settings);
     }
 
     #[test]
@@ -2467,7 +2463,7 @@ value1\r\n\
             let mut tx = Transaction::new("tx");
             tx.set_request_body_access(true);
             tx.add_request_header("Content-Type", content_type);
-            tx.force_request_body_variable = forced;
+            tx.settings.force_request_body_variable = forced;
             tx.process_request_headers();
             tx.process_request_body(body);
             assert_eq!(tx.request_body.get(), request_body, "{content_type}");
@@ -2531,12 +2527,14 @@ value1\r\n\
 
     /// A transaction inspecting `application/json` response bodies.
     fn json_response_transaction(id: &str) -> Transaction {
-        let mut tx = Transaction::new(id);
-        tx.set_config(Arc::new(WafConfig {
-            response_body_access: true,
-            response_body_mime_types: vec!["application/json".to_string()],
-            ..WafConfig::default()
-        }));
+        let mut tx = Transaction::with_config(
+            id,
+            Arc::new(WafConfig {
+                response_body_access: true,
+                response_body_mime_types: vec!["application/json".to_string()],
+                ..WafConfig::default()
+            }),
+        );
         tx.add_response_header("Content-Type", "application/json");
         tx
     }

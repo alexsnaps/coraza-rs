@@ -151,9 +151,7 @@ impl Waf {
     /// assert_eq!(tx.id(), "request-123");
     /// ```
     pub fn new_transaction_with_id(&self, id: String) -> Transaction {
-        let mut tx = Transaction::new(id);
-
-        tx.set_config(Arc::clone(&self.config));
+        let mut tx = Transaction::with_config(id, Arc::clone(&self.config));
         tx.set_audit_logger(Arc::clone(&self.audit_logger));
         if let Some(error_log) = &self.error_log {
             tx.set_error_log(error_log.clone());
@@ -310,9 +308,9 @@ mod tests {
 
         assert_eq!(tx.rule_engine(), RuleEngineStatus::DetectionOnly);
         assert!(tx.request_body_access());
-        assert_eq!(tx.request_body_limit, 1048576);
+        assert_eq!(tx.settings.request_body_limit, 1048576);
         assert!(tx.response_body_access());
-        assert_eq!(tx.response_body_limit, 2097152);
+        assert_eq!(tx.settings.response_body_limit, 2097152);
     }
 
     #[test]

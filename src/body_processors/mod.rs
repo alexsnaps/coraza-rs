@@ -181,11 +181,13 @@ fn inspect_request_with(
     content_type: &str,
     body: &[u8],
 ) -> Transaction {
-    let mut tx = Transaction::new("test");
-    tx.set_config(std::sync::Arc::new(crate::config::WafConfig {
-        request_body_access: true,
-        ..config
-    }));
+    let mut tx = Transaction::with_config(
+        "test",
+        std::sync::Arc::new(crate::config::WafConfig {
+            request_body_access: true,
+            ..config
+        }),
+    );
     tx.add_request_header("Content-Type", content_type);
     tx.set_request_body_processor(processor);
     tx.process_request_headers();
@@ -208,12 +210,14 @@ fn inspect_request(processor: BodyProcessorKind, content_type: &str, body: &[u8]
 /// phase.
 #[cfg(test)]
 fn inspect_response(processor: BodyProcessorKind, body: &[u8]) -> Transaction {
-    let mut tx = Transaction::new("test");
-    tx.set_config(std::sync::Arc::new(crate::config::WafConfig {
-        response_body_access: true,
-        response_body_mime_types: vec!["application/json".to_string()],
-        ..crate::config::WafConfig::default()
-    }));
+    let mut tx = Transaction::with_config(
+        "test",
+        std::sync::Arc::new(crate::config::WafConfig {
+            response_body_access: true,
+            response_body_mime_types: vec!["application/json".to_string()],
+            ..crate::config::WafConfig::default()
+        }),
+    );
     tx.add_response_header("Content-Type", "application/json");
     tx.set_response_body_processor(processor);
     tx.process_response_headers(200, "HTTP/1.1");
