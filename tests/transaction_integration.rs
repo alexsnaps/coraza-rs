@@ -12,7 +12,6 @@
 
 use coraza::RulePhase;
 use coraza::RuleVariable;
-use coraza::actions::{Action, ActionType, RuleMetadata};
 use coraza::seclang::Parser;
 use coraza::transaction::{Transaction, VariableCollection};
 use coraza::waf::Waf;
@@ -245,12 +244,6 @@ fn ctl_changes_request_body_settings_only_before_the_request_body_phase() {
 
 #[test]
 fn test_setenv_action_execution() {
-    let mut rule = RuleMetadata::new();
-    let action = Action::parse("setenv", "TEST_VAR=test_value", &mut rule)
-        .unwrap()
-        .expect("setenv runs when the rule matches");
-    assert_eq!(action.action_type(), ActionType::Nondisruptive);
-
     // Sets ENV, not the process environment
     let waf = waf(r#"SecAction "id:1,phase:1,pass,nolog,setenv:TEST_VAR=test_value""#);
     let mut tx = waf.new_transaction();
@@ -264,12 +257,25 @@ fn test_setenv_action_execution() {
     assert!(std::env::var_os("TEST_VAR").is_none());
 }
 
+#[cfg(unix)]
 #[test]
 fn test_exec_action_is_never_run() {
+    use std::os::unix::fs::PermissionsExt;
+
     // exec is accepted, but has no runtime part: scripts are never executed
-    let mut rule = RuleMetadata::new();
-    let action = Action::parse("exec", "/usr/bin/test.sh", &mut rule).unwrap();
-    assert!(action.is_none());
+    let dir = tempfile::tempdir().unwrap();
+    let ran = dir.path().join("ran");
+    let script = dir.path().join("script.sh");
+    std::fs::write(&script, format!("#!/bin/sh\ntouch {}\n", ran.display())).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let waf = waf(&format!(
+        r#"SecAction "id:1,phase:1,pass,nolog,exec:{}""#,
+        script.display()
+    ));
+
+    let mut tx = waf.new_transaction();
+    assert!(tx.process_request_headers().is_none());
+    assert!(!ran.exists());
 }
 
 // ===== Combined Scenario Tests =====

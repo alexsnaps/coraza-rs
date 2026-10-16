@@ -31,14 +31,14 @@
 //! 4. If match: execute deny, log, and msg actions
 //! ```
 
-pub mod group;
-pub mod operator;
-pub mod rule;
+mod group;
+mod operator;
+mod rule;
 pub mod transformation;
-pub mod variable;
+mod variable;
 
-pub use group::RuleGroup;
-pub use operator::RuleOperator;
-pub use rule::Rule;
+pub(crate) use group::RuleGroup;
+pub(crate) use operator::RuleOperator;
+pub(crate) use rule::Rule;
 pub use transformation::TransformationChain;
-pub use variable::{VariableException, VariableKey, VariableSpec};
+pub(crate) use variable::{VariableException, VariableKey, VariableSpec};

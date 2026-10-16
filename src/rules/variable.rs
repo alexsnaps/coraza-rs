@@ -23,7 +23,7 @@ use crate::types::RuleVariable;
 /// - Regex pattern: `ARGS:/user.*/`
 /// - All keys: `ARGS` (no key specified)
 #[derive(Debug, Clone)]
-pub enum VariableKey {
+pub(crate) enum VariableKey {
     /// Match a specific key (case-sensitive or case-insensitive depending on variable)
     String(String),
     /// Match keys using a regex pattern
@@ -36,7 +36,7 @@ pub enum VariableKey {
 /// - `ARGS|!ARGS:id` - Match all ARGS except 'id'
 /// - `HEADERS|!HEADERS:/cookie.*/` - Match all headers except those matching /cookie.*/
 #[derive(Debug, Clone)]
-pub struct VariableException {
+pub(crate) struct VariableException {
     /// String key to exclude
     key_str: Option<String>,
     /// Regex pattern to exclude
@@ -45,7 +45,7 @@ pub struct VariableException {
 
 impl VariableException {
     /// Create a new string-based exception.
-    pub fn new_string(key: String) -> Self {
+    pub(crate) fn new_string(key: String) -> Self {
         Self {
             key_str: Some(key),
             key_rx: None,
@@ -53,7 +53,7 @@ impl VariableException {
     }
 
     /// Create a new regex-based exception.
-    pub fn new_regex(pattern: Regex) -> Self {
+    pub(crate) fn new_regex(pattern: Regex) -> Self {
         Self {
             key_str: None,
             key_rx: Some(pattern),
@@ -94,24 +94,8 @@ impl PartialEq for VariableException {
 /// - Which key(s) to match (literal string, regex, or all)
 /// - Which keys to exclude (exceptions)
 /// - Whether to return the count instead of values
-///
-/// # Examples
-///
-/// ```
-/// use coraza::rules::VariableSpec;
-/// use coraza::types::RuleVariable;
-///
-/// // Match all ARGS
-/// let var = VariableSpec::new(RuleVariable::Args);
-///
-/// // Match specific ARGS:username
-/// let var = VariableSpec::new_string(RuleVariable::Args, "username".to_string());
-///
-/// // Count all ARGS
-/// let var = VariableSpec::new_count(RuleVariable::Args);
-/// ```
 #[derive(Debug, Clone)]
-pub struct VariableSpec {
+pub(crate) struct VariableSpec {
     /// The variable collection to inspect
     variable: RuleVariable,
 
@@ -127,7 +111,7 @@ pub struct VariableSpec {
 
 impl VariableSpec {
     /// Create a new rule variable for all keys in a collection.
-    pub fn new(variable: RuleVariable) -> Self {
+    pub(crate) fn new(variable: RuleVariable) -> Self {
         Self {
             variable,
             key: None,
@@ -137,7 +121,7 @@ impl VariableSpec {
     }
 
     /// Create a new rule variable with a string key selector.
-    pub fn new_string(variable: RuleVariable, key: String) -> Self {
+    pub(crate) fn new_string(variable: RuleVariable, key: String) -> Self {
         Self {
             variable,
             key: Some(VariableKey::String(key)),
@@ -147,7 +131,7 @@ impl VariableSpec {
     }
 
     /// Create a new rule variable with a regex key selector.
-    pub fn new_regex(variable: RuleVariable, pattern: Regex) -> Self {
+    pub(crate) fn new_regex(variable: RuleVariable, pattern: Regex) -> Self {
         Self {
             variable,
             key: Some(VariableKey::Regex(pattern)),
@@ -159,7 +143,8 @@ impl VariableSpec {
     /// Create a new rule variable in count mode.
     ///
     /// Count mode returns the number of matching values instead of the values themselves.
-    pub fn new_count(variable: RuleVariable) -> Self {
+    #[cfg(test)]
+    pub(crate) fn new_count(variable: RuleVariable) -> Self {
         Self {
             variable,
             key: None,
@@ -169,17 +154,17 @@ impl VariableSpec {
     }
 
     /// Add a string-based exception to this variable.
-    pub fn add_exception_string(&mut self, key: String) {
+    pub(crate) fn add_exception_string(&mut self, key: String) {
         self.exceptions.push(VariableException::new_string(key));
     }
 
     /// Add a regex-based exception to this variable.
-    pub fn add_exception_regex(&mut self, pattern: Regex) {
+    pub(crate) fn add_exception_regex(&mut self, pattern: Regex) {
         self.exceptions.push(VariableException::new_regex(pattern));
     }
 
     /// Enable count mode.
-    pub fn set_count(&mut self, count: bool) {
+    pub(crate) fn set_count(&mut self, count: bool) {
         self.count = count;
     }
 
@@ -199,7 +184,8 @@ impl VariableSpec {
     ///
     /// Vector of MatchData containing the matched variable, key, and value.
     /// If count mode is enabled, returns a single MatchData with the count as the value.
-    pub fn get_matches(&self, tx: &Transaction) -> Vec<MatchData> {
+    #[cfg(test)]
+    pub(crate) fn get_matches(&self, tx: &Transaction) -> Vec<MatchData> {
         self.matches_excluding(tx, |_| false)
     }
 
@@ -277,17 +263,19 @@ impl VariableSpec {
     }
 
     /// Get the variable type.
-    pub fn variable(&self) -> RuleVariable {
+    pub(crate) fn variable(&self) -> RuleVariable {
         self.variable
     }
 
     /// Check if this variable is in count mode.
-    pub fn is_count(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_count(&self) -> bool {
         self.count
     }
 
     /// Get the number of exceptions.
-    pub fn exception_count(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn exception_count(&self) -> usize {
         self.exceptions.len()
     }
 }

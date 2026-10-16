@@ -80,7 +80,8 @@ _Avoid_: integration, server
 
 ## Relationships
 
-- A WAF has one **Rule set**, shared by all its **Transactions**.
+- A WAF has one **Rule set**, shared by all its **Transactions**, compiled from SecLang directives
+  only; a **Connector** reads a matched rule's description, but never builds a rule.
 - A **Transaction** goes through each **Phase** at most once, in order; **Phase evaluation** runs the
   **Rule set**'s rules of that **Phase**. A body **Phase** runs only right after its headers
   **Phase**; called at any other time, it does nothing.

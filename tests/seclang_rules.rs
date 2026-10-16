@@ -133,7 +133,7 @@ fn matched_keys(tx: &Transaction, id: i32) -> Vec<String> {
     let mut keys: Vec<String> = tx
         .matched_rules()
         .iter()
-        .filter(|matched| matched.rule.id == id)
+        .filter(|matched| matched.rule.id() == id)
         .flat_map(|matched| matched.matches.iter().map(|data| data.key.clone()))
         .collect();
     keys.sort();
@@ -658,7 +658,7 @@ fn a_rule_engine_mode_change_applies_to_the_next_rule_of_the_phase() {
     let rule_2 = tx
         .matched_rules()
         .iter()
-        .find(|matched| matched.rule.id == 2)
+        .find(|matched| matched.rule.id() == 2)
         .expect("rule 2 matched");
     assert_eq!(rule_2.disruptive_action, Some("deny"));
     assert!(!rule_2.disruptive);

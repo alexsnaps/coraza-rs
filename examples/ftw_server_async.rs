@@ -282,7 +282,7 @@ fn log_transaction(
     if let Some(marker) = marker {
         let _ = writeln!(file, "[X-CRS-Test \"{}\"]", marker);
     }
-    for matched in tx.matched_rules().iter().filter(|m| m.rule.log) {
+    for matched in tx.matched_rules().iter().filter(|m| m.rule.log()) {
         let _ = writeln!(file, "{}", matched.error_log());
     }
     let _ = file.flush();

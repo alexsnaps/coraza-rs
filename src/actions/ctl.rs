@@ -790,30 +790,23 @@ mod tests {
 
     // ===== CTL Tag/Msg-Based Exclusion Tests =====
 
+    /// A transaction of a WAF with the rules `directives` compile to.
+    fn transaction_with(directives: &str) -> Transaction {
+        let mut parser = crate::seclang::Parser::new();
+        parser.from_string(directives).unwrap();
+        parser.into_waf().unwrap().new_transaction()
+    }
+
     #[test]
     fn test_ctl_execute_rule_remove_by_tag() {
-        use crate::config::WafConfig;
-        use crate::rules::Rule as WafRule;
-        use crate::waf::WafBuilder;
-
-        // Create WAF with tagged rules
-        let mut builder = WafBuilder::new(WafConfig::new());
-
-        let mut rule1 = WafRule::new().with_id(100);
-        rule1.metadata_mut().tags.push("attack".to_string());
-        builder.add_rule(rule1).unwrap();
-
-        let mut rule2 = WafRule::new().with_id(200);
-        rule2.metadata_mut().tags.push("attack".to_string());
-        builder.add_rule(rule2).unwrap();
-
-        let mut rule3 = WafRule::new().with_id(300);
-        rule3.metadata_mut().tags.push("sqli".to_string());
-        builder.add_rule(rule3).unwrap();
-
-        // Create transaction from WAF
-        let waf = builder.build().expect("Failed to build WAF");
-        let mut tx = waf.new_transaction_with_id("test-tag".to_string());
+        // A transaction of a WAF with rules tagged
+        let mut tx = transaction_with(
+            r#"
+        SecAction "id:100,pass,tag:attack"
+        SecAction "id:200,pass,tag:attack"
+        SecAction "id:300,pass,tag:sqli"
+            "#,
+        );
 
         // Execute ctl:ruleRemoveByTag=attack
         let action = CtlAction::parse("ruleRemoveByTag=attack").unwrap();
@@ -828,29 +821,14 @@ mod tests {
 
     #[test]
     fn test_ctl_execute_rule_remove_by_msg() {
-        use crate::config::WafConfig;
-        use crate::operators::Macro;
-        use crate::rules::Rule as WafRule;
-        use crate::waf::WafBuilder;
-
-        // Create WAF with rules having messages
-        let mut builder = WafBuilder::new(WafConfig::new());
-
-        let mut rule1 = WafRule::new().with_id(100);
-        rule1.metadata_mut().msg = Some(Macro::new("SQL Injection").unwrap());
-        builder.add_rule(rule1).unwrap();
-
-        let mut rule2 = WafRule::new().with_id(200);
-        rule2.metadata_mut().msg = Some(Macro::new("XSS Attack").unwrap());
-        builder.add_rule(rule2).unwrap();
-
-        let mut rule3 = WafRule::new().with_id(300);
-        rule3.metadata_mut().msg = Some(Macro::new("SQL Injection").unwrap());
-        builder.add_rule(rule3).unwrap();
-
-        // Create transaction from WAF
-        let waf = builder.build().expect("Failed to build WAF");
-        let mut tx = waf.new_transaction_with_id("test-msg".to_string());
+        // A transaction of a WAF with rules with messages
+        let mut tx = transaction_with(
+            r#"
+        SecAction "id:100,pass,msg:'SQL Injection'"
+        SecAction "id:200,pass,msg:'XSS Attack'"
+        SecAction "id:300,pass,msg:'SQL Injection'"
+            "#,
+        );
 
         // Execute ctl:ruleRemoveByMsg=SQL Injection
         let action = CtlAction::parse("ruleRemoveByMsg=SQL Injection").unwrap();
@@ -865,28 +843,14 @@ mod tests {
 
     #[test]
     fn test_ctl_execute_rule_remove_target_by_tag() {
-        use crate::config::WafConfig;
-        use crate::rules::Rule as WafRule;
-        use crate::waf::WafBuilder;
-
-        // Create WAF with tagged rules
-        let mut builder = WafBuilder::new(WafConfig::new());
-
-        let mut rule1 = WafRule::new().with_id(100);
-        rule1.metadata_mut().tags.push("crs".to_string());
-        builder.add_rule(rule1).unwrap();
-
-        let mut rule2 = WafRule::new().with_id(200);
-        rule2.metadata_mut().tags.push("crs".to_string());
-        builder.add_rule(rule2).unwrap();
-
-        let mut rule3 = WafRule::new().with_id(300);
-        rule3.metadata_mut().tags.push("custom".to_string());
-        builder.add_rule(rule3).unwrap();
-
-        // Create transaction from WAF
-        let waf = builder.build().expect("Failed to build WAF");
-        let mut tx = waf.new_transaction_with_id("test-target-tag".to_string());
+        // A transaction of a WAF with rules tagged
+        let mut tx = transaction_with(
+            r#"
+        SecAction "id:100,pass,tag:crs"
+        SecAction "id:200,pass,tag:crs"
+        SecAction "id:300,pass,tag:custom"
+            "#,
+        );
 
         // Execute ctl:ruleRemoveTargetByTag=crs;ARGS:id
         let action = CtlAction::parse("ruleRemoveTargetByTag=crs;ARGS:id").unwrap();
@@ -903,29 +867,14 @@ mod tests {
 
     #[test]
     fn test_ctl_execute_rule_remove_target_by_msg() {
-        use crate::config::WafConfig;
-        use crate::operators::Macro;
-        use crate::rules::Rule as WafRule;
-        use crate::waf::WafBuilder;
-
-        // Create WAF with rules having messages
-        let mut builder = WafBuilder::new(WafConfig::new());
-
-        let mut rule1 = WafRule::new().with_id(100);
-        rule1.metadata_mut().msg = Some(Macro::new("Parameter Attack").unwrap());
-        builder.add_rule(rule1).unwrap();
-
-        let mut rule2 = WafRule::new().with_id(200);
-        rule2.metadata_mut().msg = Some(Macro::new("Header Attack").unwrap());
-        builder.add_rule(rule2).unwrap();
-
-        let mut rule3 = WafRule::new().with_id(300);
-        rule3.metadata_mut().msg = Some(Macro::new("Parameter Attack").unwrap());
-        builder.add_rule(rule3).unwrap();
-
-        // Create transaction from WAF
-        let waf = builder.build().expect("Failed to build WAF");
-        let mut tx = waf.new_transaction_with_id("test-target-msg".to_string());
+        // A transaction of a WAF with rules with messages
+        let mut tx = transaction_with(
+            r#"
+        SecAction "id:100,pass,msg:'Parameter Attack'"
+        SecAction "id:200,pass,msg:'Header Attack'"
+        SecAction "id:300,pass,msg:'Parameter Attack'"
+            "#,
+        );
 
         // Execute ctl:ruleRemoveTargetByMsg=Parameter Attack;REQUEST_HEADERS:user-agent
         let action =
