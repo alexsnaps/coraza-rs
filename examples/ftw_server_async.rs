@@ -23,6 +23,8 @@ use std::io::Write as IoWrite;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1;
@@ -251,7 +253,7 @@ impl BackendResponse {
         };
         let body = match (spec["body"].as_str(), spec["encodedBody"].as_str()) {
             (Some(body), _) => body.as_bytes().to_vec(),
-            (None, Some(encoded)) => coraza::transformations::base64_decode(encoded.as_bytes()).0,
+            (None, Some(encoded)) => STANDARD.decode(encoded).unwrap_or_default(),
             (None, None) => Vec::new(),
         };
         let headers = spec["headers"]
@@ -282,7 +284,7 @@ fn log_transaction(
     if let Some(marker) = marker {
         let _ = writeln!(file, "[X-CRS-Test \"{}\"]", marker);
     }
-    for matched in tx.matched_rules().iter().filter(|m| m.rule.log) {
+    for matched in tx.matched_rules().iter().filter(|m| m.rule.log()) {
         let _ = writeln!(file, "{}", matched.error_log());
     }
     let _ = file.flush();

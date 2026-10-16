@@ -25,28 +25,11 @@ use crate::utils::strings::maybe_remove_quotes;
 
 type CompileResult<T> = Result<T, CompileError>;
 
-/// Compile a SecRule directive into a Rule.
-///
-/// Parses the format: `SecRule VARIABLES OPERATOR ACTIONS`
-///
-/// # Arguments
-///
-/// * `input` - Full SecRule directive string (without "SecRule" prefix)
-///
-/// The operator is created in the default [`OperatorContext`]: a relative data file
-/// is relative to the working directory. The actions are merged with the built-in
-/// defaults, as in a configuration without `SecDefaultAction`.
-///
-/// # Example
-///
-/// ```
-/// use coraza::seclang::compile_sec_rule;
-///
-/// let rule = compile_sec_rule("ARGS \"@rx attack\" \"id:1,deny,log\"")?;
-/// assert_eq!(rule.metadata().id, 1);
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-pub fn compile_sec_rule(input: &str) -> CompileResult<Rule> {
+/// [`compile_sec_rule_in`] in the default [`OperatorContext`], where a relative data file
+/// is relative to the working directory, and with the built-in default actions, as in a
+/// configuration without `SecDefaultAction`.
+#[cfg(test)]
+pub(crate) fn compile_sec_rule(input: &str) -> CompileResult<Rule> {
     compile_sec_rule_in(
         input,
         &OperatorContext::default(),
@@ -54,8 +37,9 @@ pub fn compile_sec_rule(input: &str) -> CompileResult<Rule> {
     )
 }
 
-/// Like [`compile_sec_rule`], creating the operator in `context` and merging the
-/// actions with `defaults`.
+/// Compiles the arguments of a `SecRule` directive (`VARIABLES OPERATOR ACTIONS`, without
+/// `SecRule`) into a rule, creating the operator in `context` and merging the actions
+/// with `defaults`.
 pub(crate) fn compile_sec_rule_in(
     input: &str,
     context: &OperatorContext<'_>,
@@ -93,34 +77,15 @@ pub(crate) fn compile_sec_rule_in(
     add_actions(rule, parsed_actions, defaults)
 }
 
-/// Compile a SecAction directive into a Rule.
-///
-/// Parses the format: `SecAction ACTIONS`
-///
-/// SecAction creates an operator-less rule that always matches.
-///
-/// # Arguments
-///
-/// * `input` - Full SecAction directive string (without "SecAction" prefix)
-///
-/// The actions are merged with the built-in defaults, as in a configuration without
-/// `SecDefaultAction`.
-///
-/// # Example
-///
-/// ```
-/// use coraza::seclang::compile_sec_action;
-///
-/// let rule = compile_sec_action("\"id:1,deny,nolog\"")?;
-/// assert_eq!(rule.metadata().id, 1);
-/// assert!(rule.operator().is_none());
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-pub fn compile_sec_action(input: &str) -> CompileResult<Rule> {
+/// [`compile_sec_action_in`] with the built-in default actions, as in a configuration
+/// without `SecDefaultAction`.
+#[cfg(test)]
+pub(crate) fn compile_sec_action(input: &str) -> CompileResult<Rule> {
     compile_sec_action_in(input, &DefaultActions::default())
 }
 
-/// Like [`compile_sec_action`], merging the actions with `defaults`.
+/// Compiles the actions of a `SecAction` directive (without `SecAction`) into a rule
+/// without operator, which always matches, merging them with `defaults`.
 pub(crate) fn compile_sec_action_in(input: &str, defaults: &DefaultActions) -> CompileResult<Rule> {
     // Remove quotes from actions
     let actions = maybe_remove_quotes(input);
@@ -291,26 +256,14 @@ impl DefaultActions {
 /// # Arguments
 ///
 /// * `input` - Marker label
-///
-/// # Example
-///
-/// ```
-/// use coraza::seclang::compile_sec_marker;
-///
-/// let rule = compile_sec_marker("BEGIN_PHASE_1")?;
-/// // Marker rules have ID 0 and no operator
-/// assert_eq!(rule.metadata().id, 0);
-/// assert!(rule.operator().is_none());
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-pub fn compile_sec_marker(input: &str) -> CompileResult<Rule> {
+pub(crate) fn compile_sec_marker(input: &str) -> CompileResult<Rule> {
     let label = maybe_remove_quotes(input.trim());
     if label.is_empty() {
         return Err(CompileError::new("SecMarker requires a label".to_string()));
     }
 
     // Create marker rule with ID 0 and phase Unknown (matches all phases)
-    let mut rule = Rule::new().with_id(0);
+    let mut rule = Rule::new();
 
     // Set marker label in metadata
     rule.metadata_mut().sec_mark = Some(label.to_string());

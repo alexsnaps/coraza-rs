@@ -31,7 +31,7 @@
 
 use coraza::transaction::Transaction;
 use coraza::types::RulePhase;
-use coraza::waf::{Waf, WafBuilder};
+use coraza::waf::Waf;
 use std::collections::HashMap;
 
 /// HTTP method for requests.
@@ -373,45 +373,6 @@ impl TestServer {
     #[allow(dead_code)]
     pub fn waf(&self) -> &Waf {
         &self.waf
-    }
-
-    /// Creates a new test server with rules configured via a closure.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza_tests::e2e::{TestServer, TestRequest};
-    /// use coraza::rules::{Rule, VariableSpec};
-    /// use coraza::types::{RulePhase, RuleVariable};
-    /// use coraza::operators::Operator;
-    ///
-    /// let server = TestServer::with_rules(|builder| {
-    ///     let rule = Rule::new(100, RulePhase::RequestBody)
-    ///         .with_variable(VariableSpec::parse("ARGS")?)
-    ///         .with_operator(Operator::new_rx("attack")?)
-    ///         .with_disruptive_action("deny", Some(403))
-    ///         .build()?;
-    ///     builder.add_rule(rule)?;
-    ///     Ok(())
-    /// }).unwrap();
-    ///
-    /// let response = server.process(
-    ///     TestRequest::get("/?input=attack").build()
-    /// );
-    /// assert!(response.is_blocked());
-    /// ```
-    #[allow(dead_code)]
-    pub fn with_rules<F>(configure: F) -> Result<Self, String>
-    where
-        F: FnOnce(&mut WafBuilder) -> Result<(), String>,
-    {
-        let mut builder = WafBuilder::default();
-        configure(&mut builder)?;
-
-        let waf = builder
-            .build()
-            .map_err(|e| format!("Failed to create WAF: {}", e))?;
-        Ok(Self { waf })
     }
 
     /// Processes a request through the WAF and returns the response.

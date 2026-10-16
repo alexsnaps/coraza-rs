@@ -23,32 +23,6 @@ use std::str::FromStr;
 /// # Returns
 ///
 /// `true` if the input IP address matches any of the provided IPs or ranges, `false` otherwise.
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::operators::ip::ip_match;
-/// # use coraza::operators::Operator;
-/// // Block specific IPs and ranges
-/// let op = ip_match("192.168.1.100,192.168.1.50,10.10.50.0/24").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "192.168.1.100".as_bytes(), &mut out));
-/// assert!(op.evaluate(&tx, "10.10.50.25".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "192.168.1.101".as_bytes(), &mut out));
-///
-/// // Match internal network
-/// let op = ip_match("10.0.0.0/8,172.16.0.0/12").unwrap();
-/// assert!(op.evaluate(&tx, "10.5.10.20".as_bytes(), &mut out));
-/// assert!(op.evaluate(&tx, "172.16.0.1".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "192.168.1.1".as_bytes(), &mut out));
-///
-/// // IPv6 support
-/// let op = ip_match("::1,2001:db8::/32").unwrap();
-/// assert!(op.evaluate(&tx, "::1".as_bytes(), &mut out));
-/// assert!(op.evaluate(&tx, "2001:db8::1".as_bytes(), &mut out));
-/// assert!(!op.evaluate(&tx, "::2".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone)]
 pub struct IpMatch {
     /// List of IP networks (CIDR blocks) to match against
@@ -65,13 +39,6 @@ impl IpMatch {
     /// # Returns
     ///
     /// `Ok(IpMatch)` if at least one valid IP/CIDR was parsed, `Err` otherwise.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use coraza::operators::ip::IpMatch;
-    /// let op = IpMatch::new("192.168.1.0/24,10.0.0.1").unwrap();
-    /// ```
     pub fn new(ips: &str) -> Result<Self, String> {
         let mut subnets = Vec::new();
 
@@ -134,17 +101,6 @@ impl Operator for IpMatch {
 /// # Arguments
 ///
 /// * `ips` - Comma-separated list of IP addresses with optional CIDR blocks
-///
-/// # Examples
-///
-/// ```
-/// # use coraza::operators::ip::ip_match;
-/// # use coraza::operators::Operator;
-/// let op = ip_match("192.168.1.0/24").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "192.168.1.100".as_bytes(), &mut out));
-/// ```
 pub fn ip_match(ips: &str) -> Result<IpMatch, String> {
     IpMatch::new(ips)
 }
@@ -202,17 +158,6 @@ pub fn ip_match_from_dataset(
 /// # Arguments
 ///
 /// File path to load IP addresses from.
-///
-/// # Examples
-///
-/// ```no_run
-/// # use coraza::operators::ip::ip_match_from_file;
-/// # use coraza::operators::Operator;
-/// let op = ip_match_from_file("/etc/coraza/blocked-ips.txt").unwrap();
-/// let tx = coraza::waf::Waf::default().new_transaction();
-/// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "10.0.0.1".as_bytes(), &mut out));
-/// ```
 #[derive(Debug, Clone)]
 pub struct IpMatchFromFile {
     /// List of IP networks (CIDR blocks) loaded from file
@@ -304,13 +249,6 @@ impl Operator for IpMatchFromFile {
 ///
 /// * `file_path` - Path to file containing IP addresses (one per line); a relative path
 ///   is relative to the working directory
-///
-/// # Examples
-///
-/// ```no_run
-/// # use coraza::operators::ip_match_from_file;
-/// let op = ip_match_from_file("/etc/coraza/blocked-ips.txt").unwrap();
-/// ```
 pub fn ip_match_from_file(file_path: impl AsRef<Path>) -> Result<IpMatchFromFile, String> {
     IpMatchFromFile::new(file_path)
 }
@@ -497,5 +435,42 @@ mod tests {
         let result = ip_match_from_file("/nonexistent/file.txt");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to read file"));
+    }
+
+    /// The doc example of `operators::ip::IpMatch`, before it became internal.
+    #[test]
+    fn doc_ip_match_type() {
+        use crate::operators::Operator;
+        use crate::operators::ip::ip_match;
+        // Block specific IPs and ranges
+        let op = ip_match("192.168.1.100,192.168.1.50,10.10.50.0/24").unwrap();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "192.168.1.100".as_bytes(), &mut out));
+        assert!(op.evaluate(&tx, "10.10.50.25".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "192.168.1.101".as_bytes(), &mut out));
+
+        // Match internal network
+        let op = ip_match("10.0.0.0/8,172.16.0.0/12").unwrap();
+        assert!(op.evaluate(&tx, "10.5.10.20".as_bytes(), &mut out));
+        assert!(op.evaluate(&tx, "172.16.0.1".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "192.168.1.1".as_bytes(), &mut out));
+
+        // IPv6 support
+        let op = ip_match("::1,2001:db8::/32").unwrap();
+        assert!(op.evaluate(&tx, "::1".as_bytes(), &mut out));
+        assert!(op.evaluate(&tx, "2001:db8::1".as_bytes(), &mut out));
+        assert!(!op.evaluate(&tx, "::2".as_bytes(), &mut out));
+    }
+
+    /// The doc example of `operators::ip::ip_match`, before it became internal.
+    #[test]
+    fn doc_ip_match() {
+        use crate::operators::Operator;
+        use crate::operators::ip::ip_match;
+        let op = ip_match("192.168.1.0/24").unwrap();
+        let tx = crate::waf::Waf::default().new_transaction();
+        let mut out = crate::operators::Outputs::default();
+        assert!(op.evaluate(&tx, "192.168.1.100".as_bytes(), &mut out));
     }
 }

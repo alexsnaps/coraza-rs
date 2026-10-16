@@ -16,28 +16,21 @@
 //!
 //! - **Simple Mode**: Apply transformations in sequence, returning the final value
 //! - **Multi-Match Mode**: Collect all intermediate transformed values for matching
-//!
-//! # Examples
-//!
-//! ```
-//! use coraza::rules::TransformationChain;
-//! use coraza::transformations::{lowercase, url_decode};
-//!
-//! let mut chain = TransformationChain::new();
-//! chain.add("lowercase", lowercase);
-//! chain.add("urlDecode", url_decode);
-//!
-//! let (result, errors) = chain.apply(b"HELLO%20WORLD");
-//! assert_eq!(result, b"hello world");
-//! ```
 
 use crate::transformations::{Transformation, TransformationError};
 
 /// A transformation in the chain with its name for identification.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct NamedTransformation {
     name: String,
     function: Transformation,
+}
+
+/// The transformation's name, as `t:` gives it, rather than a function address.
+impl std::fmt::Debug for NamedTransformation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.name)
+    }
 }
 
 /// A chain of transformations to apply sequentially.
@@ -45,20 +38,6 @@ struct NamedTransformation {
 /// Transformations are applied in the order they were added. The output of one
 /// transformation becomes the input to the next. Errors are collected but don't
 /// stop the chain from executing.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::rules::TransformationChain;
-/// use coraza::transformations::lowercase;
-///
-/// let mut chain = TransformationChain::new();
-/// chain.add("lowercase", lowercase);
-///
-/// let (result, errors) = chain.apply(b"HELLO");
-/// assert_eq!(result, b"hello");
-/// assert!(errors.is_empty());
-/// ```
 #[derive(Debug, Clone)]
 pub struct TransformationChain {
     transformations: Vec<NamedTransformation>,
@@ -84,17 +63,6 @@ impl TransformationChain {
     /// # Returns
     ///
     /// Result indicating success or error if name is empty.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::rules::TransformationChain;
-    /// use coraza::transformations::{lowercase, url_decode};
-    ///
-    /// let mut chain = TransformationChain::new();
-    /// chain.add("lowercase", lowercase).unwrap();
-    /// chain.add("urlDecode", url_decode).unwrap();
-    /// ```
     pub fn add(&mut self, name: impl Into<String>, function: Transformation) -> Result<(), String> {
         let name = name.into();
         if name.is_empty() {
@@ -107,48 +75,24 @@ impl TransformationChain {
     }
 
     /// Clear all transformations from the chain.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::rules::TransformationChain;
-    /// use coraza::transformations::lowercase;
-    ///
-    /// let mut chain = TransformationChain::new();
-    /// chain.add("lowercase", lowercase).unwrap();
-    /// chain.clear();
-    /// assert_eq!(chain.len(), 0);
-    /// ```
     pub fn clear(&mut self) {
         self.transformations.clear();
     }
 
     /// Get the number of transformations in the chain.
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.transformations.len()
     }
 
     /// Check if the chain is empty.
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.transformations.is_empty()
     }
 
     /// Get the names of all transformations in the chain.
-    ///
-    /// This is useful for debugging and logging.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::rules::TransformationChain;
-    /// use coraza::transformations::lowercase;
-    ///
-    /// let mut chain = TransformationChain::new();
-    /// chain.add("lowercase", lowercase).unwrap();
-    /// chain.add("urlDecode", lowercase).unwrap();
-    ///
-    /// assert_eq!(chain.names(), vec!["lowercase", "urlDecode"]);
-    /// ```
+    #[cfg(test)]
     pub fn names(&self) -> Vec<&str> {
         self.transformations
             .iter()
@@ -170,20 +114,6 @@ impl TransformationChain {
     /// A tuple containing:
     /// - The final transformed string
     /// - A vector of transformation errors encountered (if any)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::rules::TransformationChain;
-    /// use coraza::transformations::lowercase;
-    ///
-    /// let mut chain = TransformationChain::new();
-    /// chain.add("lowercase", lowercase).unwrap();
-    ///
-    /// let (result, errors) = chain.apply(b"HELLO");
-    /// assert_eq!(result, b"hello");
-    /// assert!(errors.is_empty());
-    /// ```
     pub fn apply(&self, input: &[u8]) -> (Vec<u8>, Vec<TransformationError>) {
         if self.transformations.is_empty() {
             return (input.to_vec(), Vec::new());
@@ -219,20 +149,6 @@ impl TransformationChain {
     /// A tuple containing:
     /// - A vector of all values (original + all changed intermediate values)
     /// - A vector of transformation errors encountered (if any)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::rules::TransformationChain;
-    /// use coraza::transformations::lowercase;
-    ///
-    /// let mut chain = TransformationChain::new();
-    /// chain.add("lowercase", lowercase).unwrap();
-    ///
-    /// let (values, errors) = chain.apply_multimatch(b"HELLO");
-    /// assert_eq!(values, vec![b"HELLO".to_vec(), b"hello".to_vec()]);
-    /// assert!(errors.is_empty());
-    /// ```
     pub fn apply_multimatch(&self, input: &[u8]) -> (Vec<Vec<u8>>, Vec<TransformationError>) {
         // Always include the original value
         let mut values = vec![input.to_vec()];
@@ -473,5 +389,86 @@ mod tests {
             chain.apply_multimatch(b"%ff").0,
             vec![b"%ff".to_vec(), vec![0xff], b"ff".to_vec()]
         );
+    }
+
+    /// The doc example of `rules::transformation`, before it became internal.
+    #[test]
+    fn doc_module() {
+        use crate::rules::TransformationChain;
+        use crate::transformations::{lowercase, url_decode};
+
+        let mut chain = TransformationChain::new();
+        chain.add("lowercase", lowercase).unwrap();
+        chain.add("urlDecode", url_decode).unwrap();
+
+        let (result, _errors) = chain.apply(b"HELLO%20WORLD");
+        assert_eq!(result, b"hello world");
+    }
+
+    /// The doc example of `rules::transformation::TransformationChain`, before it became internal.
+    #[test]
+    fn doc_transformation_chain_type() {
+        use crate::rules::TransformationChain;
+        use crate::transformations::lowercase;
+
+        let mut chain = TransformationChain::new();
+        chain.add("lowercase", lowercase).unwrap();
+
+        let (result, errors) = chain.apply(b"HELLO");
+        assert_eq!(result, b"hello");
+        assert!(errors.is_empty());
+    }
+
+    /// The doc example of `rules::transformation::TransformationChain::clear`, before it became internal.
+    #[test]
+    fn doc_transformation_chain_clear() {
+        use crate::rules::TransformationChain;
+        use crate::transformations::lowercase;
+
+        let mut chain = TransformationChain::new();
+        chain.add("lowercase", lowercase).unwrap();
+        chain.clear();
+        assert_eq!(chain.len(), 0);
+    }
+
+    /// The doc example of `rules::transformation::TransformationChain::names`, before it became internal.
+    #[test]
+    fn doc_transformation_chain_names() {
+        use crate::rules::TransformationChain;
+        use crate::transformations::lowercase;
+
+        let mut chain = TransformationChain::new();
+        chain.add("lowercase", lowercase).unwrap();
+        chain.add("urlDecode", lowercase).unwrap();
+
+        assert_eq!(chain.names(), vec!["lowercase", "urlDecode"]);
+    }
+
+    /// The doc example of `rules::transformation::TransformationChain::apply`, before it became internal.
+    #[test]
+    fn doc_transformation_chain_apply() {
+        use crate::rules::TransformationChain;
+        use crate::transformations::lowercase;
+
+        let mut chain = TransformationChain::new();
+        chain.add("lowercase", lowercase).unwrap();
+
+        let (result, errors) = chain.apply(b"HELLO");
+        assert_eq!(result, b"hello");
+        assert!(errors.is_empty());
+    }
+
+    /// The doc example of `rules::transformation::TransformationChain::apply_multimatch`, before it became internal.
+    #[test]
+    fn doc_transformation_chain_apply_multimatch() {
+        use crate::rules::TransformationChain;
+        use crate::transformations::lowercase;
+
+        let mut chain = TransformationChain::new();
+        chain.add("lowercase", lowercase).unwrap();
+
+        let (values, errors) = chain.apply_multimatch(b"HELLO");
+        assert_eq!(values, vec![b"HELLO".to_vec(), b"hello".to_vec()]);
+        assert!(errors.is_empty());
     }
 }

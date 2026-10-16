@@ -15,19 +15,6 @@ use std::fmt;
 ///
 /// Macros parse strings like `"value is %{TX.count}"` and can expand them
 /// using transaction state: `"value is 42"`.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::operators::macros::Macro;
-/// use coraza::types::RuleVariable;
-///
-/// // Parse a macro with variable reference
-/// let macro_obj = Macro::new("%{TX.score}").unwrap();
-///
-/// // Plain text (no variables)
-/// let macro_obj = Macro::new("plain text").unwrap();
-/// ```
 #[derive(Debug, Clone)]
 pub struct Macro {
     original: String,

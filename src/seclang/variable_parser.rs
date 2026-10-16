@@ -63,22 +63,7 @@ struct ParsedVariable {
 /// # Returns
 ///
 /// Vector of VariableSpec objects
-///
-/// # Example
-///
-/// ```
-/// use coraza::seclang::parse_variables;
-///
-/// // Parse simple variable
-/// let vars = parse_variables("ARGS")?;
-/// assert_eq!(vars.len(), 1);
-///
-/// // Parse multiple variables
-/// let vars = parse_variables("ARGS|REQUEST_HEADERS")?;
-/// assert_eq!(vars.len(), 2);
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-pub fn parse_variables(input: &str) -> ParseResult<Vec<VariableSpec>> {
+pub(crate) fn parse_variables(input: &str) -> ParseResult<Vec<VariableSpec>> {
     let mut variables = Vec::new();
     VariableList::parse(input)?.apply_to(&mut variables);
     Ok(variables)

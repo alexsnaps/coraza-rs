@@ -59,6 +59,11 @@ The Go implementation uses:
 - **Embedded filesystem**: CRS rules and tests bundled in binary
 
 ### Rust Approach: Direct Integration Tests
+
+> **Removed since:** `tests/crs_compatibility.rs` is gone. None of its tests processed a request: each
+> built a CRS-like rule by hand and checked that it was added, and rules are now built from SecLang
+> only. CRS behaviour is measured with the FTW runner (`ftw-runner/`).
+
 ```rust
 // tests/crs_compatibility.rs
 #[test]

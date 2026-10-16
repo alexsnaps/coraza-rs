@@ -8,10 +8,29 @@
 //! and configuration inheritance.
 
 use coraza::config::WafConfig;
-use coraza::operators::streq;
-use coraza::rules::{Rule, RuleOperator, VariableSpec};
+use coraza::seclang::Parser;
+use coraza::transaction::Interruption;
 use coraza::types::{RuleEngineStatus, RulePhase, RuleVariable};
-use coraza::waf::{Waf, WafBuilder};
+use coraza::waf::Waf;
+
+/// A WAF with the rules `directives` compile to.
+fn waf(directives: &str) -> Waf {
+    let mut parser = Parser::new();
+    parser.from_string(directives).expect("rules should parse");
+    parser.into_waf().expect("config should be valid")
+}
+
+/// `SecRule` `id`, denying a request with an argument `test{id}` in phase 1.
+fn rule(id: i32) -> String {
+    format!("SecRule ARGS \"@streq test{id}\" \"id:{id},phase:1,deny,status:403\"\n")
+}
+
+/// The interruption of a GET request for `/?{query}`, in phase 1, if any.
+fn get(waf: &Waf, query: &str) -> Option<Interruption> {
+    let mut tx = waf.new_transaction();
+    tx.process_uri(&format!("/?{query}"), "GET", "HTTP/1.1");
+    tx.process_request_headers()
+}
 
 // ============================================================================
 // WAF Configuration Tests
@@ -75,130 +94,30 @@ fn test_waf_invalid_config_rejected() {
 // ============================================================================
 
 #[test]
-fn test_waf_add_single_rule() {
-    let mut builder = WafBuilder::new(WafConfig::new());
-
-    let operator = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
-    let rule = Rule::new()
-        .with_id(1)
-        .add_variable(VariableSpec::new(RuleVariable::Args))
-        .with_operator(operator);
-
-    assert!(builder.add_rule(rule).is_ok());
-    let waf = builder.build().expect("Failed to build WAF");
+fn test_waf_loads_a_single_rule() {
+    let waf = waf(&rule(1));
     assert_eq!(waf.rule_count(), 1);
 }
 
 #[test]
-fn test_waf_add_multiple_rules() {
-    let mut builder = WafBuilder::new(WafConfig::new());
-
-    for id in 1..=10 {
-        let operator = RuleOperator::new(
-            streq(&format!("test{}", id)).unwrap().into(),
-            "@streq",
-            format!("test{}", id),
-        );
-        let rule = Rule::new()
-            .with_id(id)
-            .add_variable(VariableSpec::new(RuleVariable::Args))
-            .with_operator(operator);
-
-        builder.add_rule(rule).expect("Failed to add rule");
-    }
-
-    let waf = builder.build().expect("Failed to build WAF");
+fn test_waf_loads_multiple_rules() {
+    let waf = waf(&(1..=10).map(rule).collect::<String>());
     assert_eq!(waf.rule_count(), 10);
 }
 
 #[test]
 fn test_waf_duplicate_rule_id_rejected() {
-    let mut builder = WafBuilder::new(WafConfig::new());
-
-    let operator = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
-    let rule1 = Rule::new()
-        .with_id(100)
-        .add_variable(VariableSpec::new(RuleVariable::Args))
-        .with_operator(operator.clone());
-
-    builder.add_rule(rule1).expect("First rule should succeed");
-
-    let rule2 = Rule::new()
-        .with_id(100)
-        .add_variable(VariableSpec::new(RuleVariable::Args))
-        .with_operator(operator);
-
-    let result = builder.add_rule(rule2);
+    let mut parser = Parser::new();
+    let result = parser.from_string(&format!("{}{}", rule(100), rule(100)));
     assert!(result.is_err(), "Duplicate rule ID should be rejected");
 }
 
 #[test]
-fn test_waf_find_rule_by_id() {
-    let mut builder = WafBuilder::new(WafConfig::new());
+fn test_waf_reports_the_rule_that_interrupts() {
+    let waf = waf(&format!("{}{}", rule(41), rule(42)));
 
-    let operator = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
-    let rule = Rule::new()
-        .with_id(42)
-        .add_variable(VariableSpec::new(RuleVariable::Args))
-        .with_operator(operator);
-
-    builder.add_rule(rule).expect("Failed to add rule");
-
-    let waf = builder.build().expect("Failed to build WAF");
-    let found = waf.find_rule_by_id(42);
-    assert!(found.is_some());
-    assert_eq!(found.unwrap().metadata().id, 42);
-
-    let not_found = waf.find_rule_by_id(999);
-    assert!(not_found.is_none());
-}
-
-#[test]
-fn test_waf_remove_rule_by_id() {
-    let mut builder = WafBuilder::new(WafConfig::new());
-
-    let operator = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
-    let rule = Rule::new()
-        .with_id(50)
-        .add_variable(VariableSpec::new(RuleVariable::Args))
-        .with_operator(operator);
-
-    builder.add_rule(rule).expect("Failed to add rule");
-    assert_eq!(builder.rule_count(), 1);
-
-    builder.remove_rule_by_id(50);
-    let waf = builder.build().expect("Failed to build WAF");
-    assert_eq!(waf.rule_count(), 0);
-    assert!(waf.find_rule_by_id(50).is_none());
-}
-
-#[test]
-fn test_waf_remove_multiple_rules_by_id() {
-    let mut builder = WafBuilder::new(WafConfig::new());
-
-    // Add rules 10, 20, 30, 40, 50
-    for id in (10..=50).step_by(10) {
-        let operator = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
-        let rule = Rule::new()
-            .with_id(id)
-            .add_variable(VariableSpec::new(RuleVariable::Args))
-            .with_operator(operator);
-        builder.add_rule(rule).expect("Failed to add rule");
-    }
-
-    assert_eq!(builder.rule_count(), 5);
-
-    // Remove rule 20 and 40
-    builder.remove_rule_by_id(20);
-    builder.remove_rule_by_id(40);
-
-    let waf = builder.build().expect("Failed to build WAF");
-    assert_eq!(waf.rule_count(), 3);
-    assert!(waf.find_rule_by_id(10).is_some());
-    assert!(waf.find_rule_by_id(20).is_none());
-    assert!(waf.find_rule_by_id(30).is_some());
-    assert!(waf.find_rule_by_id(40).is_none());
-    assert!(waf.find_rule_by_id(50).is_some());
+    assert_eq!(get(&waf, "a=test42").map(|i| i.rule_id), Some(42));
+    assert_eq!(get(&waf, "a=test999"), None);
 }
 
 // ============================================================================
@@ -245,25 +164,6 @@ fn test_transaction_independence() {
 
     // tx2 should not be affected
     assert_eq!(tx2.get_variable(RuleVariable::ArgsGet, Some("key")), None);
-}
-
-#[test]
-fn test_transaction_shares_waf_rules() {
-    let mut builder = WafBuilder::new(WafConfig::new());
-
-    // Add a rule to WAF
-    let operator = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
-    let rule = Rule::new()
-        .with_id(100)
-        .add_variable(VariableSpec::new(RuleVariable::Args))
-        .with_operator(operator);
-
-    builder.add_rule(rule).expect("Failed to add rule");
-
-    // Transactions should have access to WAF rules via Arc
-    let waf = builder.build().expect("Failed to build WAF");
-    let _tx = waf.new_transaction();
-    // Transaction has access to rules through internal Arc reference
 }
 
 // ============================================================================
@@ -388,47 +288,21 @@ fn test_multiple_wafs_independent() {
 
 #[test]
 fn test_waf_rule_evaluation_basic() {
-    let mut builder = WafBuilder::new(WafConfig::new());
+    let waf = waf(r#"SecRule ARGS:input "@streq attack" "id:1,phase:1,deny,status:403""#);
 
-    // Add a simple rule
-    let operator = RuleOperator::new(streq("attack").unwrap().into(), "@streq", "attack");
-    let rule = Rule::new()
-        .with_id(1)
-        .add_variable(VariableSpec::new_string(
-            RuleVariable::Args,
-            "input".to_string(),
-        ))
-        .with_operator(operator);
-
-    builder.add_rule(rule).expect("Failed to add rule");
-
-    // Create transaction
-    let waf = builder.build().expect("Failed to build WAF");
-    let mut tx = waf.new_transaction();
-    tx.add_get_argument("input", "attack");
-
-    // Evaluate rules (this happens during phase processing)
-    // Note: Full evaluation integration requires Phase 2 processing
+    assert_eq!(get(&waf, "input=attack").map(|i| i.status), Some(403));
+    assert_eq!(get(&waf, "input=benign"), None);
 }
 
 #[test]
 fn test_waf_rules_shared_across_transactions() {
-    let mut builder = WafBuilder::new(WafConfig::new());
+    let waf = waf(&rule(1));
 
-    let operator = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
-    let rule = Rule::new()
-        .with_id(1)
-        .add_variable(VariableSpec::new(RuleVariable::Args))
-        .with_operator(operator);
-
-    builder.add_rule(rule).expect("Failed to add rule");
-
-    // Both transactions should see the same rule
-    let waf = builder.build().expect("Failed to build WAF");
-    let _tx1 = waf.new_transaction();
-    let _tx2 = waf.new_transaction();
-
-    // Transactions share rules via Arc (verified by rule_count test above)
+    // Both transactions see the same rule
+    let tx1 = get(&waf, "a=test1");
+    let tx2 = get(&waf, "a=test1");
+    assert_eq!(tx1.map(|i| i.rule_id), Some(1));
+    assert_eq!(tx2.map(|i| i.rule_id), Some(1));
 }
 
 // ============================================================================
@@ -485,27 +359,10 @@ fn test_waf_transaction_cleanup() {
 
 #[test]
 fn test_waf_large_rule_set() {
-    let mut builder = WafBuilder::new(WafConfig::new());
-
-    // Add 1000 rules
-    for id in 1..=1000 {
-        let operator = RuleOperator::new(
-            streq(&format!("test{}", id)).unwrap().into(),
-            "@streq",
-            format!("test{}", id),
-        );
-        let rule = Rule::new()
-            .with_id(id)
-            .add_variable(VariableSpec::new(RuleVariable::Args))
-            .with_operator(operator);
-
-        builder.add_rule(rule).expect("Failed to add rule");
-    }
-
-    let waf = builder.build().expect("Failed to build WAF");
+    let waf = waf(&(1..=1000).map(rule).collect::<String>());
     assert_eq!(waf.rule_count(), 1000);
 
-    // Should still be able to find specific rules
-    assert!(waf.find_rule_by_id(500).is_some());
-    assert!(waf.find_rule_by_id(1000).is_some());
+    // Each rule still applies
+    assert_eq!(get(&waf, "a=test500").map(|i| i.rule_id), Some(500));
+    assert_eq!(get(&waf, "a=test1000").map(|i| i.rule_id), Some(1000));
 }

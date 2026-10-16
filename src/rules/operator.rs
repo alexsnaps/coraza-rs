@@ -3,145 +3,32 @@
 
 //! Operator integration for rule evaluation.
 //!
-//! This module wraps operators with metadata (function name, parameters, negation)
-//! and provides evaluation logic.
+//! This module wraps a rule's operator with its negation and provides evaluation logic.
 
 use crate::operators::{OperatorEnum, Outputs};
 use crate::transaction::Transaction;
 
-/// Rule operator specification with metadata and negation support.
-///
-/// This wrapper contains the operator along with its function name, initialization
-/// data, and negation flag. Negation is detected from the function name prefix (e.g.,
-/// "!@rx" for negated regex matching).
-///
-/// # Examples
-///
-/// ```
-/// use coraza::rules::RuleOperator;
-/// use coraza::operators::{Rx, rx};
-///
-/// // Normal operator
-/// let op = RuleOperator::new(
-///     rx("attack").unwrap().into(),
-///     "@rx",
-///     "attack"
-/// );
-///
-/// // Negated operator (matches when operator returns false)
-/// let neg_op = RuleOperator::new(
-///     rx("safe").unwrap().into(),
-///     "!@rx",
-///     "safe"
-/// );
-/// ```
+/// A rule's operator, as SecLang's `[!]@NAME ARGUMENT` gives it: the test it applies to
+/// each value, and whether the rule matches when that test fails (`!`).
 #[derive(Debug, Clone)]
-pub struct RuleOperator {
-    /// The operator to evaluate
+pub(crate) struct RuleOperator {
     operator: OperatorEnum,
 
-    /// Function name (e.g., "@rx", "!@eq")
-    function: String,
-
-    /// Initialization data/parameter for the operator
-    data: String,
-
-    /// If true, negate the operator result
-    negation: bool,
+    /// Whether a value matches when `operator` rejects it (`!@NAME`)
+    negated: bool,
 }
 
 impl RuleOperator {
-    /// Create a new rule operator.
-    ///
-    /// The `function` parameter is used to detect negation: if it starts with '!',
-    /// the operator result will be inverted.
-    ///
-    /// # Arguments
-    ///
-    /// * `operator` - The operator to evaluate
-    /// * `function` - Function name (e.g., "@rx", "!@eq") - used for negation detection
-    /// * `data` - Initialization data/parameter
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::rules::RuleOperator;
-    /// use coraza::operators::{StrEq, streq};
-    ///
-    /// let op = RuleOperator::new(
-    ///     streq("admin").unwrap().into(),
-    ///     "@streq",
-    ///     "admin"
-    /// );
-    /// ```
-    pub fn new(
-        operator: OperatorEnum,
-        function: impl Into<String>,
-        data: impl Into<String>,
-    ) -> Self {
-        let function = function.into();
-        let negation = !function.is_empty() && function.starts_with('!');
-
-        Self {
-            operator,
-            function,
-            data: data.into(),
-            negation,
-        }
+    /// `operator`, inverted if `negated`.
+    pub(crate) fn new(operator: OperatorEnum, negated: bool) -> Self {
+        Self { operator, negated }
     }
 
-    /// Get the function name.
-    pub fn function(&self) -> &str {
-        &self.function
-    }
-
-    /// Get the initialization data.
-    pub fn data(&self) -> &str {
-        &self.data
-    }
-
-    /// Check if this operator is negated.
-    pub fn is_negated(&self) -> bool {
-        self.negation
-    }
-
-    /// Evaluate the operator against an input value.
-    ///
-    /// If negation is enabled, the result is inverted before returning.
-    ///
-    /// # Arguments
-    ///
-    /// * `tx` - Transaction whose variables macros expand to
-    /// * `input` - The input value to evaluate
-    /// * `out` - Where the operator hands back captures and path arguments, whatever
-    ///   the result
-    ///
-    /// # Returns
-    ///
-    /// True if the operator matches (after applying negation if set).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::rules::RuleOperator;
-    /// use coraza::operators::{Outputs, streq};
-    /// use coraza::waf::Waf;
-    ///
-    /// let op = RuleOperator::new(
-    ///     streq("test").unwrap().into(),
-    ///     "@streq",
-    ///     "test"
-    /// );
-    ///
-    /// let tx = Waf::default().new_transaction();
-    /// let mut out = Outputs::default();
-    /// assert!(op.evaluate(&tx, "test".as_bytes(), &mut out));
-    /// assert!(!op.evaluate(&tx, "other".as_bytes(), &mut out));
-    /// ```
-    pub fn evaluate(&self, tx: &Transaction, input: &[u8], out: &mut Outputs) -> bool {
+    /// Whether `input` matches: what the operator says of it, inverted if negated.
+    pub(crate) fn evaluate(&self, tx: &Transaction, input: &[u8], out: &mut Outputs) -> bool {
         let result = self.operator.evaluate(tx, input, out);
 
-        if self.negation { !result } else { result }
+        if self.negated { !result } else { result }
     }
 }
 
@@ -151,31 +38,10 @@ mod tests {
     use crate::operators::{contains, eq, rx, streq};
     use crate::transaction::Transaction;
 
-    // Ported from: coraza/internal/corazawaf/rule.go - SetOperator logic
-    #[test]
-    fn test_operator_creation() {
-        let op = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
-
-        assert_eq!(op.function(), "@streq");
-        assert_eq!(op.data(), "test");
-        assert!(!op.is_negated());
-    }
-
-    #[test]
-    fn test_operator_negation_detection() {
-        // Normal operator (no negation)
-        let op_normal = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
-        assert!(!op_normal.is_negated());
-
-        // Negated operator (starts with '!')
-        let op_negated = RuleOperator::new(streq("test").unwrap().into(), "!@streq", "test");
-        assert!(op_negated.is_negated());
-    }
-
     // Ported from: coraza/internal/corazawaf/rule.go::executeOperator
     #[test]
     fn test_operator_evaluate_normal() {
-        let op = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
+        let op = RuleOperator::new(streq("test").unwrap().into(), false);
 
         let tx = Transaction::new("test");
         assert!(op.evaluate(&tx, b"test", &mut Outputs::default()));
@@ -184,7 +50,7 @@ mod tests {
 
     #[test]
     fn test_operator_evaluate_negated() {
-        let op = RuleOperator::new(streq("test").unwrap().into(), "!@streq", "test");
+        let op = RuleOperator::new(streq("test").unwrap().into(), true);
 
         let tx = Transaction::new("test");
         // Negated: returns opposite of operator result
@@ -234,49 +100,18 @@ mod tests {
         let tx = Transaction::new("test");
 
         // Test negation with regex
-        let rx_op = RuleOperator::new(rx("^test").unwrap().into(), "!@rx", "^test");
+        let rx_op = RuleOperator::new(rx("^test").unwrap().into(), true);
         assert!(!rx_op.evaluate(&tx, b"test123", &mut Outputs::default())); // matches but negated
         assert!(rx_op.evaluate(&tx, b"other", &mut Outputs::default())); // doesn't match, negated = true
 
         // Test negation with contains
-        let contains_op =
-            RuleOperator::new(contains("admin").unwrap().into(), "!@contains", "admin");
+        let contains_op = RuleOperator::new(contains("admin").unwrap().into(), true);
         assert!(!contains_op.evaluate(&tx, b"admin user", &mut Outputs::default())); // matches but negated
         assert!(contains_op.evaluate(&tx, b"regular user", &mut Outputs::default())); // doesn't match, negated = true
 
         // Test negation with eq
-        let eq_op = RuleOperator::new(eq("0").unwrap().into(), "!@eq", "0");
+        let eq_op = RuleOperator::new(eq("0").unwrap().into(), true);
         assert!(!eq_op.evaluate(&tx, b"0", &mut Outputs::default())); // matches but negated
         assert!(eq_op.evaluate(&tx, b"1", &mut Outputs::default())); // doesn't match, negated = true
-    }
-
-    #[test]
-    fn test_empty_function_name() {
-        // Edge case: empty function name should not be considered negated
-        let op = RuleOperator::new(streq("test").unwrap().into(), "", "test");
-        assert!(!op.is_negated());
-    }
-
-    #[test]
-    fn test_function_name_metadata() {
-        // Verify function name is stored for logging/debugging
-        let op1 = RuleOperator::new(streq("test").unwrap().into(), "@streq", "test");
-        assert_eq!(op1.function(), "@streq");
-
-        let op2 = RuleOperator::new(rx(".*").unwrap().into(), "@rx", ".*");
-        assert_eq!(op2.function(), "@rx");
-
-        let op3 = RuleOperator::new(eq("42").unwrap().into(), "!@eq", "42");
-        assert_eq!(op3.function(), "!@eq");
-    }
-
-    #[test]
-    fn test_data_metadata() {
-        // Verify data is stored for logging/debugging
-        let op = RuleOperator::new(streq("admin").unwrap().into(), "@streq", "admin");
-        assert_eq!(op.data(), "admin");
-
-        let op2 = RuleOperator::new(rx("test.*").unwrap().into(), "@rx", "test.*");
-        assert_eq!(op2.data(), "test.*");
     }
 }

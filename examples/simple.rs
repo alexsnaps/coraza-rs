@@ -3,73 +3,46 @@
 //! Simple WAF Example
 //!
 //! This example demonstrates:
-//! - Creating a WAF with configuration
-//! - Adding security rules
+//! - Creating a WAF from SecLang configuration and rules
 //! - Creating transactions
 //! - Processing HTTP request/response lifecycle
 //! - Simulating both benign and malicious requests
 //!
 //! Run with: cargo run --example simple
 
-use coraza::actions::{Action, DenyAction};
-use coraza::config::WafConfig;
-use coraza::operators::contains;
-use coraza::rules::{Rule, RuleOperator, VariableSpec};
-use coraza::types::{RuleEngineStatus, RulePhase, RuleVariable};
-use coraza::waf::{Waf, WafBuilder};
+use coraza::seclang::Parser;
+use coraza::waf::Waf;
+
+/// The WAF's configuration and rules, as SecLang directives.
+const DIRECTIVES: &str = r#"
+    SecRuleEngine On
+    SecRequestBodyAccess On
+    SecResponseBodyAccess On
+    SecRequestBodyLimit 1048576
+    SecWebAppId demo-app
+
+    # Block requests with "malicious" in query parameters
+    SecRule ARGS_GET "@contains malicious" "id:100,phase:1,deny,status:403"
+    # Block requests with "attack" in POST body
+    SecRule ARGS_POST "@contains attack" "id:101,phase:2,deny,status:403"
+"#;
 
 fn main() {
     println!("🛡️  Coraza WAF - Simple Example\n");
 
-    // Step 1: Create WAF with configuration
-    println!("📝 Step 1: Creating WAF with configuration...");
-    let config = WafConfig {
-        rule_engine: RuleEngineStatus::On,
-        request_body_access: true,
-        response_body_access: true,
-        request_body_limit: 1048576, // 1MB
-        web_app_id: "demo-app".to_string(),
-        ..WafConfig::default()
-    };
-
-    let mut builder = WafBuilder::new(config);
+    // Step 1: Load the configuration and rules
+    println!("📝 Step 1: Loading the configuration and security rules...");
+    let mut parser = Parser::new();
+    parser
+        .from_string(DIRECTIVES)
+        .expect("Failed to load the directives");
+    let waf = parser.into_waf().expect("Failed to build WAF");
     println!("✅ WAF created with configuration\n");
 
-    // Step 2: Add security rules
-    println!("📋 Step 2: Adding security rules...");
-
-    // Rule 1: Block requests with "malicious" in query parameters
-    let mut rule1 = Rule::new()
-        .with_id(100)
-        .add_variable(VariableSpec::new(RuleVariable::ArgsGet))
-        .with_operator(RuleOperator::new(
-            contains("malicious").unwrap().into(),
-            "@contains",
-            "malicious".to_string(),
-        ))
-        .add_action(Action::Deny(DenyAction));
-    rule1.metadata_mut().phase = RulePhase::RequestHeaders;
-    rule1.metadata_mut().status = 403;
-
-    // Rule 2: Block requests with "attack" in POST body
-    let mut rule2 = Rule::new()
-        .with_id(101)
-        .add_variable(VariableSpec::new(RuleVariable::ArgsPost))
-        .with_operator(RuleOperator::new(
-            contains("attack").unwrap().into(),
-            "@contains",
-            "attack".to_string(),
-        ))
-        .add_action(Action::Deny(DenyAction));
-    rule2.metadata_mut().phase = RulePhase::RequestBody;
-    rule2.metadata_mut().status = 403;
-
-    builder.add_rule(rule1).expect("Failed to add rule 100");
-    builder.add_rule(rule2).expect("Failed to add rule 101");
-
+    // Step 2: Show the rules
+    println!("📋 Step 2: Security rules");
     println!("✅ Rule 100: Block 'malicious' in query params (Phase 1)");
     println!("✅ Rule 101: Block 'attack' in POST body (Phase 2)");
-    let waf = builder.build().expect("Failed to build WAF");
     println!("📊 Total rules loaded: {}\n", waf.rule_count());
 
     // Step 3: Demonstrate request processing
@@ -107,8 +80,6 @@ fn main() {
     println!("📊 Step 4: WAF Statistics");
     println!("{}", "=".repeat(70));
     println!("Rules loaded: {}", waf.rule_count());
-    println!("Rule 100 exists: {}", waf.find_rule_by_id(100).is_some());
-    println!("Rule 101 exists: {}", waf.find_rule_by_id(101).is_some());
 
     println!("\n🎉 Example complete! The Coraza WAF infrastructure is ready.");
     println!("\n💡 Summary: This example demonstrated:");
@@ -117,8 +88,7 @@ fn main() {
     println!("   ✅ Variable population (ARGS_GET, ARGS_POST, headers, cookies)");
     println!("   ✅ Body processing (URL-encoded forms)");
     println!("\n📚 Next steps:");
-    println!("   - Full automatic rule evaluation during phase processing (future enhancement)");
-    println!("   - Load CRS v4 rules from SecLang files");
+    println!("   - Load CRS v4 rules with Parser::from_file");
     println!("   - Integrate with web servers (Caddy, nginx, etc.)");
 }
 

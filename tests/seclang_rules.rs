@@ -133,7 +133,7 @@ fn matched_keys(tx: &Transaction, id: i32) -> Vec<String> {
     let mut keys: Vec<String> = tx
         .matched_rules()
         .iter()
-        .filter(|matched| matched.rule.id == id)
+        .filter(|matched| matched.rule.id() == id)
         .flat_map(|matched| matched.matches.iter().map(|data| data.key.clone()))
         .collect();
     keys.sort();
@@ -658,7 +658,7 @@ fn a_rule_engine_mode_change_applies_to_the_next_rule_of_the_phase() {
     let rule_2 = tx
         .matched_rules()
         .iter()
-        .find(|matched| matched.rule.id == 2)
+        .find(|matched| matched.rule.id() == 2)
         .expect("rule 2 matched");
     assert_eq!(rule_2.disruptive_action, Some("deny"));
     assert!(!rule_2.disruptive);
@@ -1031,7 +1031,7 @@ fn repeated_multipart_part_headers_are_flagged() {
 
 #[test]
 fn audit_log_and_body_directives_set_the_config() {
-    use coraza::types::{AuditLogFormat, AuditLogType, parse_audit_log_parts};
+    use coraza::types::{AuditLogFormat, AuditLogPart, AuditLogType};
 
     let mut parser = Parser::new();
     parser
@@ -1051,9 +1051,20 @@ fn audit_log_and_body_directives_set_the_config() {
 
     let config = parser.config();
     assert_eq!(config.audit_log_format, AuditLogFormat::Json);
+    use AuditLogPart::*;
     assert_eq!(
         config.audit_log_parts,
-        parse_audit_log_parts("ABIJDEFHZ").unwrap()
+        [
+            Header,
+            RequestHeaders,
+            RequestBodyAlternative,
+            UploadedFiles,
+            IntermediaryResponseHeaders,
+            IntermediaryResponseBody,
+            ResponseHeaders,
+            Trailer,
+            EndMarker,
+        ]
     );
     assert_eq!(config.audit_log_type, AuditLogType::Concurrent);
     assert_eq!(config.audit_log_relevant_status, "^(?:(5|4)(0|1)[0-9])$");

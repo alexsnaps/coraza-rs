@@ -17,8 +17,8 @@
 
 use crate::RuleVariable;
 
-pub mod map;
-pub mod single;
+mod map;
+mod single;
 
 pub use map::Map;
 pub use single::Single;
@@ -43,7 +43,11 @@ pub struct MatchData {
 
 impl MatchData {
     /// Create a new MatchData instance.
-    pub fn new(variable: RuleVariable, key: impl Into<String>, value: impl Into<Vec<u8>>) -> Self {
+    pub(crate) fn new(
+        variable: RuleVariable,
+        key: impl Into<String>,
+        value: impl Into<Vec<u8>>,
+    ) -> Self {
         Self {
             variable,
             key: key.into(),
@@ -54,7 +58,7 @@ impl MatchData {
     }
 
     /// Create a MatchData instance without a key.
-    pub fn without_key(variable: RuleVariable, value: impl Into<Vec<u8>>) -> Self {
+    pub(crate) fn without_key(variable: RuleVariable, value: impl Into<Vec<u8>>) -> Self {
         Self::new(variable, String::new(), value)
     }
 
@@ -66,7 +70,7 @@ impl MatchData {
     /// Create an empty MatchData instance for operator-less rules.
     ///
     /// Used for rules without operators (SecAction, SecMarker) that always match.
-    pub fn new_empty() -> Self {
+    pub(crate) fn new_empty() -> Self {
         Self::new(RuleVariable::Unknown, String::new(), String::new())
     }
 }

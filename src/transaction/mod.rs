@@ -12,7 +12,7 @@ use std::sync::Arc;
 use phase::FlowState;
 
 use crate::RuleVariable;
-use crate::actions::RuleMetadata;
+pub use crate::actions::RuleMetadata;
 use crate::audit_log::{
     AuditFile, AuditLog, AuditLogger, AuditMessage, AuditMessageData, AuditProducer, AuditRequest,
     AuditResponse, AuditTransaction, mime_type_of,

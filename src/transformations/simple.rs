@@ -24,20 +24,6 @@ const TRIM_SPACES: &[u8] = b" \t\n\r\x0c\x0b";
 ///
 /// ASCII input is lowercased byte by byte; other input is read as characters, each
 /// byte that isn't part of one becoming U+FFFD, as in Go Coraza.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::lowercase;
-///
-/// let (result, changed, _) = lowercase(b"TestCase");
-/// assert_eq!(result, b"testcase");
-/// assert!(changed);
-///
-/// let (result, changed, _) = lowercase(b"already lowercase");
-/// assert_eq!(result, b"already lowercase");
-/// assert!(!changed);
-/// ```
 pub fn lowercase(input: &[u8]) -> TransformationResult {
     let transformed = if input.is_ascii() {
         input.to_ascii_lowercase()
@@ -52,20 +38,6 @@ pub fn lowercase(input: &[u8]) -> TransformationResult {
 ///
 /// ASCII input is uppercased byte by byte; other input is read as characters, each
 /// byte that isn't part of one becoming U+FFFD, as in Go Coraza.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::uppercase;
-///
-/// let (result, changed, _) = uppercase(b"TestCase");
-/// assert_eq!(result, b"TESTCASE");
-/// assert!(changed);
-///
-/// let (result, changed, _) = uppercase(b"ALREADY UPPERCASE");
-/// assert_eq!(result, b"ALREADY UPPERCASE");
-/// assert!(!changed);
-/// ```
 pub fn uppercase(input: &[u8]) -> TransformationResult {
     let transformed = if input.is_ascii() {
         input.to_ascii_uppercase()
@@ -97,20 +69,6 @@ fn trim_end(input: &[u8]) -> &[u8] {
 /// Removes leading and trailing whitespace.
 ///
 /// Uses the same whitespace characters as ModSecurity (C++ isspace).
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::trim;
-///
-/// let (result, changed, _) = trim(b"  hello  ");
-/// assert_eq!(result, b"hello");
-/// assert!(changed);
-///
-/// let (result, changed, _) = trim(b"hello");
-/// assert_eq!(result, b"hello");
-/// assert!(!changed);
-/// ```
 pub fn trim(input: &[u8]) -> TransformationResult {
     let transformed = trim_end(trim_start(input));
     let changed = input.len() != transformed.len();
@@ -120,16 +78,6 @@ pub fn trim(input: &[u8]) -> TransformationResult {
 /// Removes leading whitespace.
 ///
 /// Uses the same whitespace characters as ModSecurity (C++ isspace).
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::trim_left;
-///
-/// let (result, changed, _) = trim_left(b"  hello  ");
-/// assert_eq!(result, b"hello  ");
-/// assert!(changed);
-/// ```
 pub fn trim_left(input: &[u8]) -> TransformationResult {
     let transformed = trim_start(input);
     let changed = input.len() != transformed.len();
@@ -139,16 +87,6 @@ pub fn trim_left(input: &[u8]) -> TransformationResult {
 /// Removes trailing whitespace.
 ///
 /// Uses the same whitespace characters as ModSecurity (C++ isspace).
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::trim_right;
-///
-/// let (result, changed, _) = trim_right(b"  hello  ");
-/// assert_eq!(result, b"  hello");
-/// assert!(changed);
-/// ```
 pub fn trim_right(input: &[u8]) -> TransformationResult {
     let transformed = trim_end(input);
     let changed = input.len() != transformed.len();
@@ -159,20 +97,6 @@ pub fn trim_right(input: &[u8]) -> TransformationResult {
 ///
 /// The input is read as characters, each byte that isn't part of one becoming
 /// U+FFFD, as in Go Coraza.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::remove_whitespace;
-///
-/// let (result, changed, _) = remove_whitespace(b"t e s t");
-/// assert_eq!(result, b"test");
-/// assert!(changed);
-///
-/// let (result, changed, _) = remove_whitespace(b"test");
-/// assert_eq!(result, b"test");
-/// assert!(!changed);
-/// ```
 pub fn remove_whitespace(input: &[u8]) -> TransformationResult {
     // ASCII without whitespace comes out as it is, without reading it as characters
     if input
@@ -201,20 +125,6 @@ pub fn remove_whitespace(input: &[u8]) -> TransformationResult {
 ///
 /// Each run of whitespace (ASCII whitespace, U+0085, U+00A0, or a 0xA0 byte that isn't
 /// part of a character) becomes one space, as in Go Coraza.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::compress_whitespace;
-///
-/// let (result, changed, _) = compress_whitespace(b"Multiple    spaces");
-/// assert_eq!(result, b"Multiple spaces");
-/// assert!(changed);
-///
-/// let (result, changed, _) = compress_whitespace(b"Single space");
-/// assert_eq!(result, b"Single space");
-/// assert!(!changed);
-/// ```
 pub fn compress_whitespace(input: &[u8]) -> TransformationResult {
     let mut result = Vec::with_capacity(input.len());
     let mut changed = false;
@@ -263,27 +173,6 @@ fn is_latin_space(c: char) -> bool {
 ///
 /// Decodes percent-encoded sequences (%XX) and converts '+' to space.
 /// Invalid percent sequences are left unchanged.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::transformations::url_decode;
-///
-/// let (result, changed, _) = url_decode(b"hello+world");
-/// assert_eq!(result, b"hello world");
-/// assert!(changed);
-///
-/// let (result, changed, _) = url_decode(b"test%20case");
-/// assert_eq!(result, b"test case");
-/// assert!(changed);
-///
-/// let (result, changed, _) = url_decode(b"%ff");
-/// assert_eq!(result, b"\xff");
-///
-/// let (result, changed, _) = url_decode(b"no encoding");
-/// assert_eq!(result, b"no encoding");
-/// assert!(!changed);
-/// ```
 pub fn url_decode(input: &[u8]) -> TransformationResult {
     // Fast path: check if there's anything to decode
     if let Some(pos) = input.iter().position(|&b| b == b'%' || b == b'+') {
@@ -559,5 +448,116 @@ mod tests {
         for c in ['a', 'Z', '0', '\u{2000}', '\u{3000}'] {
             assert!(!is_latin_space(c), "{c:?}");
         }
+    }
+
+    /// The doc example of `transformations::simple::lowercase`, before it became internal.
+    #[test]
+    fn doc_lowercase() {
+        use crate::transformations::lowercase;
+
+        let (result, changed, _) = lowercase(b"TestCase");
+        assert_eq!(result, b"testcase");
+        assert!(changed);
+
+        let (result, changed, _) = lowercase(b"already lowercase");
+        assert_eq!(result, b"already lowercase");
+        assert!(!changed);
+    }
+
+    /// The doc example of `transformations::simple::uppercase`, before it became internal.
+    #[test]
+    fn doc_uppercase() {
+        use crate::transformations::uppercase;
+
+        let (result, changed, _) = uppercase(b"TestCase");
+        assert_eq!(result, b"TESTCASE");
+        assert!(changed);
+
+        let (result, changed, _) = uppercase(b"ALREADY UPPERCASE");
+        assert_eq!(result, b"ALREADY UPPERCASE");
+        assert!(!changed);
+    }
+
+    /// The doc example of `transformations::simple::trim`, before it became internal.
+    #[test]
+    fn doc_trim() {
+        use crate::transformations::trim;
+
+        let (result, changed, _) = trim(b"  hello  ");
+        assert_eq!(result, b"hello");
+        assert!(changed);
+
+        let (result, changed, _) = trim(b"hello");
+        assert_eq!(result, b"hello");
+        assert!(!changed);
+    }
+
+    /// The doc example of `transformations::simple::trim_left`, before it became internal.
+    #[test]
+    fn doc_trim_left() {
+        use crate::transformations::trim_left;
+
+        let (result, changed, _) = trim_left(b"  hello  ");
+        assert_eq!(result, b"hello  ");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::simple::trim_right`, before it became internal.
+    #[test]
+    fn doc_trim_right() {
+        use crate::transformations::trim_right;
+
+        let (result, changed, _) = trim_right(b"  hello  ");
+        assert_eq!(result, b"  hello");
+        assert!(changed);
+    }
+
+    /// The doc example of `transformations::simple::remove_whitespace`, before it became internal.
+    #[test]
+    fn doc_remove_whitespace() {
+        use crate::transformations::remove_whitespace;
+
+        let (result, changed, _) = remove_whitespace(b"t e s t");
+        assert_eq!(result, b"test");
+        assert!(changed);
+
+        let (result, changed, _) = remove_whitespace(b"test");
+        assert_eq!(result, b"test");
+        assert!(!changed);
+    }
+
+    /// The doc example of `transformations::simple::compress_whitespace`, before it became internal.
+    #[test]
+    fn doc_compress_whitespace() {
+        use crate::transformations::compress_whitespace;
+
+        let (result, changed, _) = compress_whitespace(b"Multiple    spaces");
+        assert_eq!(result, b"Multiple spaces");
+        assert!(changed);
+
+        let (result, changed, _) = compress_whitespace(b"Single space");
+        assert_eq!(result, b"Single space");
+        assert!(!changed);
+    }
+
+    /// The doc example of `transformations::simple::url_decode`, before it became internal.
+    #[test]
+    fn doc_url_decode() {
+        use crate::transformations::url_decode;
+
+        let (result, changed, _) = url_decode(b"hello+world");
+        assert_eq!(result, b"hello world");
+        assert!(changed);
+
+        let (result, changed, _) = url_decode(b"test%20case");
+        assert_eq!(result, b"test case");
+        assert!(changed);
+
+        let (result, _changed, _) = url_decode(b"%ff");
+        assert_eq!(result, b"\xff");
+
+        let (result, changed, _) = url_decode(b"no encoding");
+        assert_eq!(result, b"no encoding");
+        assert!(!changed);
     }
 }

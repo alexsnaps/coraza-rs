@@ -22,47 +22,14 @@ use crate::seclang::CompileError;
 
 type ParseResult<T> = Result<T, CompileError>;
 
-/// Parse operator from SecRule syntax
-///
-/// Parses operator specifications like:
-/// - `@rx attack` - Regex operator
-/// - `@streq admin` - String equality
-/// - `!@contains bad` - Negated contains
-/// - `attack` - Default to @rx (implicit)
-/// - `!attack` - Negated @rx (implicit)
-///
-/// # Arguments
-///
-/// * `input` - Operator specification string
-///
-/// # Returns
-///
-/// The operator, with its function name (e.g. `"!@streq"`, which marks it negated) and argument
-///
-/// # Example
-///
-/// ```
-/// use coraza::seclang::parse_operator;
-///
-/// // Parse explicit operator
-/// let op = parse_operator("@rx attack")?;
-/// assert_eq!((op.function(), op.data()), ("@rx", "attack"));
-///
-/// // Parse implicit @rx
-/// let op = parse_operator("attack")?;
-/// assert_eq!((op.function(), op.data()), ("@rx", "attack"));
-///
-/// // Parse negated operator
-/// let op = parse_operator("!@streq admin")?;
-/// assert_eq!((op.function(), op.data()), ("!@streq", "admin"));
-/// assert!(op.is_negated());
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-pub fn parse_operator(input: &str) -> ParseResult<RuleOperator> {
+/// Parses an operator as SecRule writes it, created with no base directory or datasets:
+/// `@rx attack`, `!@contains bad`, or `attack` and `!attack` for an implicit `@rx`.
+#[cfg(test)]
+pub(crate) fn parse_operator(input: &str) -> ParseResult<RuleOperator> {
     parse_operator_in(input, &OperatorContext::default())
 }
 
-/// Like [`parse_operator`], creating the operator in `context`.
+/// Parses an operator as SecRule writes it, creating it in `context`.
 pub(crate) fn parse_operator_in(
     input: &str,
     context: &OperatorContext<'_>,
@@ -78,7 +45,7 @@ pub(crate) fn parse_operator_in(
     let operator = OperatorEnum::with_context(name, argument, context)
         .map_err(|e| CompileError::new(format!("failed to create @{} operator: {}", name, e)))?;
 
-    Ok(RuleOperator::new(operator, function, argument))
+    Ok(RuleOperator::new(operator, function.starts_with('!')))
 }
 
 /// An operator as written.
@@ -118,6 +85,18 @@ fn operator_spec<'i>(input: &mut &'i str) -> winnow::Result<OperatorSpec<'i>, Em
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::operators::Outputs;
+    use crate::transaction::Transaction;
+
+    /// Whether the operator `input` gives matches `value`.
+    fn matches(input: &str, value: &str) -> bool {
+        let operator = parse_operator(input).unwrap();
+        operator.evaluate(
+            &Transaction::new("test"),
+            value.as_bytes(),
+            &mut Outputs::default(),
+        )
+    }
 
     /// `(function, name, argument)` of `input`, which has been trimmed.
     fn spec(input: &str) -> (&str, &str, &str) {
@@ -150,58 +129,49 @@ mod tests {
 
     #[test]
     fn test_parse_rx_operator() {
-        let op = parse_operator("@rx attack").unwrap();
-        assert_eq!(op.function(), "@rx");
-        assert_eq!(op.data(), "attack");
+        assert!(matches("@rx attack", "an attack"));
+        assert!(!matches("@rx attack", "benign"));
     }
 
     #[test]
     fn test_parse_implicit_rx() {
-        let op = parse_operator("attack").unwrap();
-        assert_eq!(op.function(), "@rx");
-        assert_eq!(op.data(), "attack");
+        assert!(matches("attack", "an attack"));
+        assert!(!matches("attack", "benign"));
     }
 
     #[test]
     fn test_parse_negated_operator() {
-        let op = parse_operator("!@streq admin").unwrap();
-        assert_eq!(op.function(), "!@streq");
-        assert_eq!(op.data(), "admin");
+        assert!(!matches("!@streq admin", "admin"));
+        assert!(matches("!@streq admin", "user"));
     }
 
     #[test]
     fn test_parse_negated_implicit_rx() {
-        let op = parse_operator("!attack").unwrap();
-        assert_eq!(op.function(), "!@rx");
-        assert_eq!(op.data(), "attack");
+        assert!(!matches("!attack", "an attack"));
+        assert!(matches("!attack", "benign"));
     }
 
     #[test]
     fn test_parse_operator_no_arguments() {
-        let op = parse_operator("@pm").unwrap();
-        assert_eq!(op.function(), "@pm");
-        assert_eq!(op.data(), "");
+        assert!(parse_operator("@pm").is_ok());
     }
 
     #[test]
     fn test_parse_streq_operator() {
-        let op = parse_operator("@streq admin").unwrap();
-        assert_eq!(op.function(), "@streq");
-        assert_eq!(op.data(), "admin");
+        assert!(matches("@streq admin", "admin"));
+        assert!(!matches("@streq admin", "admins"));
     }
 
     #[test]
     fn test_parse_contains_operator() {
-        let op = parse_operator("@contains bad").unwrap();
-        assert_eq!(op.function(), "@contains");
-        assert_eq!(op.data(), "bad");
+        assert!(matches("@contains bad", "very bad"));
+        assert!(!matches("@contains bad", "good"));
     }
 
     #[test]
     fn test_parse_eq_operator() {
-        let op = parse_operator("@eq 5").unwrap();
-        assert_eq!(op.function(), "@eq");
-        assert_eq!(op.data(), "5");
+        assert!(matches("@eq 5", "5"));
+        assert!(!matches("@eq 5", "6"));
     }
 
     #[test]
@@ -213,27 +183,22 @@ mod tests {
 
     #[test]
     fn test_parse_operator_case_insensitive() {
-        let op1 = parse_operator("@RX attack").unwrap();
-        let op2 = parse_operator("@rx attack").unwrap();
-        let op3 = parse_operator("@Rx attack").unwrap();
-
-        assert_eq!(op1.function(), "@RX");
-        assert_eq!(op2.function(), "@rx");
-        assert_eq!(op3.function(), "@Rx");
-        // All should work (case-insensitive lookup)
+        // The name is looked up case-insensitively
+        for input in ["@RX attack", "@rx attack", "@Rx attack"] {
+            assert!(matches(input, "an attack"), "{input}");
+        }
     }
 
     #[test]
     fn test_parse_operator_with_multiple_spaces() {
-        let op = parse_operator("@rx   attack   pattern  ").unwrap();
-        assert_eq!(op.function(), "@rx");
-        assert_eq!(op.data(), "attack   pattern"); // Preserves internal spaces
+        // The argument keeps its inner spaces
+        assert!(matches("@rx   attack   pattern  ", "attack   pattern"));
+        assert!(!matches("@rx   attack   pattern  ", "attack pattern"));
     }
 
     #[test]
     fn test_parse_negation_only() {
-        let op = parse_operator("!").unwrap();
-        assert_eq!(op.function(), "!@rx");
-        assert_eq!(op.data(), "");
+        // A negated empty @rx, which matches anything
+        assert!(!matches("!", "anything"));
     }
 }

@@ -32,21 +32,9 @@ use crate::transaction::Transaction;
 /// 5. If parent rule and match: evaluate chained rules recursively
 /// 6. If parent rule and full chain matches: execute flow/disruptive actions
 ///
-/// # Examples
-///
-/// ```
-/// use coraza::rules::Rule;
-/// use coraza::RuleVariable;
-///
-/// // Simple rule that matches all requests
-/// let rule = Rule::new()
-///     .with_id(1);
-///
-/// // Rule has no operator - always matches (like SecAction)
-/// assert!(rule.operator().is_none());
-/// ```
+/// Rules are compiled from SecLang (`crate::seclang`), which is the only way to make one.
 #[derive(Debug)]
-pub struct Rule {
+pub(crate) struct Rule {
     /// Rule metadata (id, msg, severity, etc.)
     metadata: RuleMetadata,
 
@@ -65,7 +53,7 @@ pub struct Rule {
 
 impl Rule {
     /// Create a new rule with default values.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             metadata: RuleMetadata::new(),
             variables: Vec::new(),
@@ -75,28 +63,15 @@ impl Rule {
         }
     }
 
-    /// Set the rule ID.
-    pub fn with_id(mut self, id: i32) -> Self {
-        self.metadata.id = id;
-        self
-    }
-
     /// Add a variable specification.
-    pub fn add_variable(mut self, variable: VariableSpec) -> Self {
+    pub(crate) fn add_variable(mut self, variable: VariableSpec) -> Self {
         self.variables.push(variable);
         self
     }
 
     /// Set the operator.
-    pub fn with_operator(mut self, operator: RuleOperator) -> Self {
+    pub(crate) fn with_operator(mut self, operator: RuleOperator) -> Self {
         self.operator = Some(operator);
-        self
-    }
-
-    /// Adds an action. A rule has at most one disruptive action: adding one replaces
-    /// the previous (the last one wins, as in SecLang).
-    pub fn add_action(mut self, action: Action) -> Self {
-        self.push_action(action);
         self
     }
 
@@ -109,29 +84,24 @@ impl Rule {
         self.actions.push(action);
     }
 
-    /// Appends a rule to this rule's chain; it must also match for this rule to match.
-    pub fn with_chain(mut self, link: Rule) -> Self {
-        self.chain.push(link);
-        self
-    }
-
     /// Get the rule metadata.
-    pub fn metadata(&self) -> &RuleMetadata {
+    pub(crate) fn metadata(&self) -> &RuleMetadata {
         &self.metadata
     }
 
     /// Get mutable rule metadata.
-    pub fn metadata_mut(&mut self) -> &mut RuleMetadata {
+    pub(crate) fn metadata_mut(&mut self) -> &mut RuleMetadata {
         &mut self.metadata
     }
 
     /// Get the operator (if any).
-    pub fn operator(&self) -> Option<&RuleOperator> {
+    #[cfg(test)]
+    pub(crate) fn operator(&self) -> Option<&RuleOperator> {
         self.operator.as_ref()
     }
 
     /// Get the actions.
-    pub fn actions(&self) -> &[Action] {
+    pub(crate) fn actions(&self) -> &[Action] {
         &self.actions
     }
 
@@ -140,29 +110,14 @@ impl Rule {
         &mut self.variables
     }
 
-    /// Set the rule's variables (replaces existing variables).
-    ///
-    /// Used by `WafBuilder::update_rule_variables_by_id` and `_by_tag`. Unlike them,
-    /// `SecRuleUpdateTargetById` adds to a rule's variables.
-    pub fn set_variables(&mut self, variables: Vec<VariableSpec>) {
-        self.variables = variables;
-    }
-
-    /// Set the rule's actions (replaces existing actions).
-    ///
-    /// Used by `WafBuilder::update_rule_actions_by_id`. Unlike it,
-    /// `SecRuleUpdateActionById` merges into a rule's actions.
-    pub fn set_actions(&mut self, actions: Vec<Action>) {
-        self.actions = actions;
-    }
-
     /// Rules chained to this one, in evaluation order; empty if this rule starts no chain.
-    pub fn chain(&self) -> &[Rule] {
+    #[cfg(test)]
+    pub(crate) fn chain(&self) -> &[Rule] {
         &self.chain
     }
 
     /// Get the rule's processing phase.
-    pub fn phase(&self) -> RulePhase {
+    pub(crate) fn phase(&self) -> RulePhase {
         self.metadata.phase
     }
 
@@ -177,7 +132,7 @@ impl Rule {
     /// # Returns
     ///
     /// `true` if this rule is a SecMarker with the given label
-    pub fn is_sec_marker(&self, marker: &str) -> bool {
+    pub(crate) fn is_sec_marker(&self, marker: &str) -> bool {
         self.metadata.sec_mark.as_deref() == Some(marker)
     }
 
@@ -335,14 +290,33 @@ impl Default for Rule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::RuleVariable;
-    use crate::operators::streq;
+    use crate::rules::RuleGroup;
+    use crate::seclang::{compile_sec_action, compile_sec_rule};
     use crate::transaction::Transaction;
+
+    /// The rule a `SecRule` directive with `arguments` compiles to.
+    fn sec_rule(arguments: &str) -> Rule {
+        compile_sec_rule(arguments).unwrap()
+    }
+
+    /// `SecRule` directives with `arguments`, added in order: the first one, with
+    /// `chain`, takes the next ones as its chain.
+    fn chain(arguments: &[&str]) -> RuleGroup {
+        let mut group = RuleGroup::new();
+        for arguments in arguments {
+            group.add(sec_rule(arguments)).unwrap();
+        }
+        assert_eq!(group.count(), 1, "one chain");
+        group
+    }
+
+    const FIRST: &str = r#"ARGS:first "@streq value1" "id:1,chain""#;
+    const SECOND: &str = r#"ARGS:second "@streq value2" "t:none""#;
 
     // Ported from: coraza/internal/corazawaf/rule_test.go::TestSecActionRule
     #[test]
     fn test_operator_less_rule_always_matches() {
-        let rule = Rule::new().with_id(1);
+        let rule = compile_sec_action(r#""id:1""#).unwrap();
 
         let mut tx = Transaction::new("test");
         let matches = rule.evaluate(&mut tx);
@@ -353,17 +327,7 @@ mod tests {
 
     #[test]
     fn test_rule_with_operator_match() {
-        let rule = Rule::new()
-            .with_id(1)
-            .add_variable(VariableSpec::new_string(
-                RuleVariable::Args,
-                "test".to_string(),
-            ))
-            .with_operator(RuleOperator::new(
-                streq("value").unwrap().into(),
-                "@streq",
-                "value",
-            ));
+        let rule = sec_rule(r#"ARGS:test "@streq value" "id:1""#);
 
         let mut tx = Transaction::new("test");
         tx.add_get_argument("test", "value");
@@ -378,17 +342,7 @@ mod tests {
 
     #[test]
     fn test_rule_with_operator_no_match() {
-        let rule = Rule::new()
-            .with_id(1)
-            .add_variable(VariableSpec::new_string(
-                RuleVariable::Args,
-                "test".to_string(),
-            ))
-            .with_operator(RuleOperator::new(
-                streq("expected").unwrap().into(),
-                "@streq",
-                "expected",
-            ));
+        let rule = sec_rule(r#"ARGS:test "@streq expected" "id:1""#);
 
         let mut tx = Transaction::new("test");
         tx.add_get_argument("test", "different");
@@ -401,25 +355,7 @@ mod tests {
 
     #[test]
     fn test_rule_with_transformation() {
-        use crate::transformations::lowercase;
-
-        let mut rule = Rule::new()
-            .with_id(1)
-            .add_variable(VariableSpec::new_string(
-                RuleVariable::Args,
-                "test".to_string(),
-            ))
-            .with_operator(RuleOperator::new(
-                streq("hello").unwrap().into(),
-                "@streq",
-                "hello",
-            ));
-
-        // Add lowercase transformation
-        rule.metadata_mut()
-            .transformations
-            .add("lowercase", lowercase)
-            .unwrap();
+        let rule = sec_rule(r#"ARGS:test "@streq hello" "id:1,t:lowercase""#);
 
         let mut tx = Transaction::new("test");
         tx.add_get_argument("test", "HELLO");
@@ -434,36 +370,13 @@ mod tests {
     // Ported from: coraza/internal/corazawaf/rule_test.go - Chain tests
     #[test]
     fn test_chained_rule_both_match() {
-        let chained_rule = Rule::new()
-            .with_id(2)
-            .add_variable(VariableSpec::new_string(
-                RuleVariable::Args,
-                "second".to_string(),
-            ))
-            .with_operator(RuleOperator::new(
-                streq("value2").unwrap().into(),
-                "@streq",
-                "value2",
-            ));
-
-        let rule = Rule::new()
-            .with_id(1)
-            .add_variable(VariableSpec::new_string(
-                RuleVariable::Args,
-                "first".to_string(),
-            ))
-            .with_operator(RuleOperator::new(
-                streq("value1").unwrap().into(),
-                "@streq",
-                "value1",
-            ))
-            .with_chain(chained_rule);
+        let group = chain(&[FIRST, SECOND]);
 
         let mut tx = Transaction::new("test");
         tx.add_get_argument("first", "value1");
         tx.add_get_argument("second", "value2");
 
-        let matches = rule.evaluate(&mut tx);
+        let matches = group.get_rules()[0].evaluate(&mut tx);
 
         // Both rules match - should return matches from both
         assert_eq!(matches.len(), 2);
@@ -471,36 +384,13 @@ mod tests {
 
     #[test]
     fn test_chained_rule_first_fails() {
-        let chained_rule = Rule::new()
-            .with_id(2)
-            .add_variable(VariableSpec::new_string(
-                RuleVariable::Args,
-                "second".to_string(),
-            ))
-            .with_operator(RuleOperator::new(
-                streq("value2").unwrap().into(),
-                "@streq",
-                "value2",
-            ));
-
-        let rule = Rule::new()
-            .with_id(1)
-            .add_variable(VariableSpec::new_string(
-                RuleVariable::Args,
-                "first".to_string(),
-            ))
-            .with_operator(RuleOperator::new(
-                streq("value1").unwrap().into(),
-                "@streq",
-                "value1",
-            ))
-            .with_chain(chained_rule);
+        let group = chain(&[FIRST, SECOND]);
 
         let mut tx = Transaction::new("test");
         tx.add_get_argument("first", "wrong");
         tx.add_get_argument("second", "value2");
 
-        let matches = rule.evaluate(&mut tx);
+        let matches = group.get_rules()[0].evaluate(&mut tx);
 
         // First rule doesn't match - chain fails
         assert!(matches.is_empty());
@@ -508,64 +398,25 @@ mod tests {
 
     #[test]
     fn test_chained_rule_second_fails() {
-        let chained_rule = Rule::new()
-            .with_id(2)
-            .add_variable(VariableSpec::new_string(
-                RuleVariable::Args,
-                "second".to_string(),
-            ))
-            .with_operator(RuleOperator::new(
-                streq("value2").unwrap().into(),
-                "@streq",
-                "value2",
-            ));
-
-        let rule = Rule::new()
-            .with_id(1)
-            .add_variable(VariableSpec::new_string(
-                RuleVariable::Args,
-                "first".to_string(),
-            ))
-            .with_operator(RuleOperator::new(
-                streq("value1").unwrap().into(),
-                "@streq",
-                "value1",
-            ))
-            .with_chain(chained_rule);
+        let group = chain(&[FIRST, SECOND]);
 
         let mut tx = Transaction::new("test");
         tx.add_get_argument("first", "value1");
         tx.add_get_argument("second", "wrong");
 
-        let matches = rule.evaluate(&mut tx);
+        let matches = group.get_rules()[0].evaluate(&mut tx);
 
         // Second rule doesn't match - chain fails
         assert!(matches.is_empty());
     }
 
     #[test]
-    fn test_rule_builder_pattern() {
-        let rule = Rule::new()
-            .with_id(123)
-            .add_variable(VariableSpec::new(RuleVariable::Args))
-            .with_operator(RuleOperator::new(
-                streq("test").unwrap().into(),
-                "@streq",
-                "test",
-            ));
+    fn test_compiled_rule_has_its_parts() {
+        let rule = sec_rule(r#"ARGS "@streq test" "id:123,severity:ERROR""#);
 
         assert_eq!(rule.metadata().id, 123);
+        assert_eq!(rule.metadata().severity, Some(crate::RuleSeverity::Error));
         assert_eq!(rule.variables.len(), 1);
         assert!(rule.operator().is_some());
-    }
-
-    #[test]
-    fn test_metadata_access() {
-        let mut rule = Rule::new().with_id(1);
-
-        assert_eq!(rule.metadata().id, 1);
-
-        rule.metadata_mut().severity = Some(crate::RuleSeverity::Error);
-        assert_eq!(rule.metadata().severity, Some(crate::RuleSeverity::Error));
     }
 }

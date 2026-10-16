@@ -34,6 +34,7 @@ probed bugs.
   and returns an immutable `Waf`.
   - Done: rule management moved to `WafBuilder`; `Waf` is immutable. `Waf::new(config)` stays as the shortcut for a
     WAF without rules.
+  - Since then, `WafBuilder` is gone: rules come only from SecLang, and `Parser::into_waf` builds the `Waf`.
 
 ## 2. Rule state stored twice
 

@@ -11,8 +11,8 @@
 //!
 //! Most actions only describe the rule (`id`, `msg`, `tag`, `severity`, `phase`, `t`,
 //! `chain`, `status`, `log`, ...): they are applied to its [`RuleMetadata`] when the rule
-//! is compiled. The others are [`Action`]s, run when the rule matches, at a point set by
-//! their [`ActionType`]:
+//! is compiled. The others are `Action`s, run when the rule matches, at a point set by
+//! their `ActionType`:
 //!
 //! - **Non-disruptive** (`setvar`, `ctl`, `setenv`): for every value the rule matches.
 //! - **Flow** (`skip`, `skipAfter`): once the rule's whole chain matched.
@@ -44,13 +44,13 @@ use crate::rules::TransformationChain;
 use crate::transaction::Transaction;
 use crate::{RulePhase, RuleSeverity};
 
-pub use ctl::CtlAction;
-pub use deferred::SetenvAction;
-pub use disruptive::{
+pub(crate) use ctl::CtlAction;
+pub(crate) use deferred::SetenvAction;
+pub(crate) use disruptive::{
     AllowAction, AllowType, BlockAction, DenyAction, DropAction, PassAction, RedirectAction,
 };
-pub use flow::{SkipAction, SkipAfterAction};
-pub use variables::SetvarAction;
+pub(crate) use flow::{SkipAction, SkipAfterAction};
+pub(crate) use variables::SetvarAction;
 
 /// Action execution errors.
 #[derive(Debug, Clone, PartialEq)]
@@ -89,7 +89,7 @@ impl From<crate::operators::MacroError> for ActionError {
 
 /// When an [`Action`] runs, relative to its rule's chain and the rule engine mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ActionType {
+pub(crate) enum ActionType {
     /// Runs for every value the rule matches, even if a later chain link fails
     /// (setvar, ctl, setenv).
     Nondisruptive,
@@ -102,60 +102,62 @@ pub enum ActionType {
     Disruptive,
 }
 
-/// Metadata and flags of one rule (ID, message, severity, logging flags, ...).
-///
-/// Actions fill this in when the rule is compiled ([`Action::parse`]) and read it
-/// when the rule matches. The evaluated rule itself is [`crate::rules::Rule`].
+/// What describes one rule, as SecLang compiled it: its id, where it was written, its
+/// `rev`, `ver`, `severity`, `tags`, `maturity`, `accuracy` and `phase`, and whether its
+/// matches are logged. A [`crate::transaction::MatchedRule`] holds it for logging.
+//
+// Actions fill it in when the rule is compiled (`Action::parse`) and read it when the rule
+// matches; the evaluated rule itself is `crate::rules::Rule`.
 #[derive(Debug, Clone)]
 pub struct RuleMetadata {
     /// Rule ID (mandatory, set by id action)
-    pub id: i32,
+    pub(crate) id: i32,
     /// Rule message with macro expansion support
-    pub msg: Option<Macro>,
+    pub(crate) msg: Option<Macro>,
     /// Severity level (0-7)
-    pub severity: Option<RuleSeverity>,
+    pub(crate) severity: Option<RuleSeverity>,
     /// Classification tags
-    pub tags: Vec<String>,
+    pub(crate) tags: Vec<String>,
     /// Revision number
-    pub rev: String,
+    pub(crate) rev: String,
     /// Version string
-    pub ver: String,
+    pub(crate) ver: String,
     /// Maturity level (1-9); 0 when unset
-    pub maturity: u8,
+    pub(crate) maturity: u8,
     /// Accuracy level (1-9); 0 when unset
-    pub accuracy: u8,
+    pub(crate) accuracy: u8,
     /// Additional log data with macro expansion
-    pub log_data: Option<Macro>,
+    pub(crate) log_data: Option<Macro>,
     /// HTTP status code for blocking actions
-    pub status: i32,
+    pub(crate) status: i32,
     /// Whether to log matches
-    pub log: bool,
+    pub(crate) log: bool,
     /// Whether to audit log matches
-    pub audit_log: bool,
+    pub(crate) audit_log: bool,
     /// Whether the rule has the `chain` action: the next rule added to a
     /// [`crate::rules::RuleGroup`] joins this rule's chain
-    pub has_chain: bool,
+    pub(crate) has_chain: bool,
     /// Whether to capture regex groups into TX variables
-    pub capture: bool,
+    pub(crate) capture: bool,
     /// Whether to check variables before/after each transformation
-    pub multi_match: bool,
+    pub(crate) multi_match: bool,
     /// Transformations applied to each variable value before the operator (`t:`)
-    pub transformations: TransformationChain,
+    pub(crate) transformations: TransformationChain,
     /// SecMarker label (for flow control markers)
-    pub sec_mark: Option<String>,
+    pub(crate) sec_mark: Option<String>,
     /// Processing phase (1-5)
-    pub phase: RulePhase,
+    pub(crate) phase: RulePhase,
     /// File the rule was written in; empty for a rule not read from a file
-    pub file: String,
+    pub(crate) file: String,
     /// Line of `file` the rule's directive starts on; 0 when unknown
-    pub line: usize,
+    pub(crate) line: usize,
     /// The rule's directive as written; empty for a rule not compiled from SecLang
-    pub raw: String,
+    pub(crate) raw: String,
 }
 
 impl RuleMetadata {
     /// Create a new rule with default values.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             id: 0,
             msg: None,
@@ -180,11 +182,76 @@ impl RuleMetadata {
             raw: String::new(),
         }
     }
-}
 
-impl Default for RuleMetadata {
-    fn default() -> Self {
-        Self::new()
+    /// The rule's id (`id`).
+    pub fn id(&self) -> i32 {
+        self.id
+    }
+
+    /// The file the rule was written in; empty for a rule not read from a file.
+    pub fn file(&self) -> &str {
+        &self.file
+    }
+
+    /// The line of [`RuleMetadata::file`] the rule's directive starts on; 0 when unknown.
+    pub fn line(&self) -> usize {
+        self.line
+    }
+
+    /// The rule's revision (`rev`); empty if unset.
+    pub fn rev(&self) -> &str {
+        &self.rev
+    }
+
+    /// The rule's severity (`severity`), if set.
+    pub fn severity(&self) -> Option<RuleSeverity> {
+        self.severity
+    }
+
+    /// The version of the rule set the rule belongs to (`ver`); empty if unset.
+    pub fn ver(&self) -> &str {
+        &self.ver
+    }
+
+    /// The rule's tags (`tag`), in the order they are written.
+    pub fn tags(&self) -> &[String] {
+        &self.tags
+    }
+
+    /// The rule's maturity (`maturity`), 1 to 9; 0 if unset.
+    pub fn maturity(&self) -> u8 {
+        self.maturity
+    }
+
+    /// The rule's accuracy (`accuracy`), 1 to 9; 0 if unset.
+    pub fn accuracy(&self) -> u8 {
+        self.accuracy
+    }
+
+    /// The phase the rule runs in (`phase`).
+    pub fn phase(&self) -> RulePhase {
+        self.phase
+    }
+
+    /// The rule's directive as written; for a matched chain, the directives of every
+    /// rule in it, one per line.
+    pub fn raw(&self) -> &str {
+        &self.raw
+    }
+
+    /// The label of the `SecMarker` this rule stands for, if it does.
+    pub fn sec_mark(&self) -> Option<&str> {
+        self.sec_mark.as_deref()
+    }
+
+    /// Whether the rule's matches are logged (`log`, unless `nolog`).
+    pub fn log(&self) -> bool {
+        self.log
+    }
+
+    /// Whether the rule's matches go in the audit log (`auditlog`, unless `noauditlog`).
+    pub fn audit_log(&self) -> bool {
+        self.audit_log
     }
 }
 
@@ -194,7 +261,7 @@ impl Default for RuleMetadata {
 /// are applied to its [`RuleMetadata`] when the rule is compiled and have no runtime part;
 /// see [`Action::parse`].
 #[derive(Debug, Clone)]
-pub enum Action {
+pub(crate) enum Action {
     Deny(DenyAction),
     Drop(DropAction),
     Block(BlockAction),
@@ -219,20 +286,7 @@ impl Action {
     ///
     /// Returns `ActionError::UnknownAction` for an unknown name, or another
     /// `ActionError` if the argument is invalid for that action.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::actions::{Action, RuleMetadata};
-    ///
-    /// let mut rule = RuleMetadata::new();
-    /// assert!(Action::parse("id", "1", &mut rule).unwrap().is_none());
-    /// assert_eq!(rule.id, 1);
-    ///
-    /// let deny = Action::parse("deny", "", &mut rule).unwrap().unwrap();
-    /// assert_eq!(deny.name(), "deny");
-    /// ```
-    pub fn parse(
+    pub(crate) fn parse(
         name: &str,
         argument: &str,
         rule: &mut RuleMetadata,
@@ -288,7 +342,7 @@ impl Action {
     }
 
     /// The SecLang name of the action, e.g. `"skipAfter"`.
-    pub fn name(&self) -> &'static str {
+    pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::Deny(_) => "deny",
             Self::Drop(_) => "drop",
@@ -305,7 +359,7 @@ impl Action {
     }
 
     /// When the action runs; see [`ActionType`].
-    pub fn action_type(&self) -> ActionType {
+    pub(crate) fn action_type(&self) -> ActionType {
         match self {
             Self::Deny(_)
             | Self::Drop(_)

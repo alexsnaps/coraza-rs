@@ -22,7 +22,7 @@ type ParseResult<T> = Result<T, CompileError>;
 
 /// One action of a rule's action list, as written; see [`crate::actions::Action::parse`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsedAction {
+pub(crate) struct ParsedAction {
     /// Action key/name (lowercase, trimmed)
     pub key: String,
 
@@ -64,22 +64,7 @@ impl ParsedAction {
 /// - Keys are lowercased and trimmed
 /// - Values are trimmed and quotes removed
 /// - Unclosed quotes result in an error
-///
-/// # Example
-///
-/// ```
-/// use coraza::seclang::parse_actions;
-///
-/// // Parse multiple actions
-/// let actions = parse_actions("phase:2,auditlog,allow,log,id:5000003,msg:'msn bot'")?;
-/// assert_eq!(actions.len(), 6);
-///
-/// // Parse action with quoted value
-/// let actions = parse_actions("msg:'Attack detected'")?;
-/// assert_eq!(actions[0].value, "Attack detected");
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-pub fn parse_actions(input: &str) -> ParseResult<Vec<ParsedAction>> {
+pub(crate) fn parse_actions(input: &str) -> ParseResult<Vec<ParsedAction>> {
     if input.trim().is_empty() {
         return Ok(Vec::new());
     }

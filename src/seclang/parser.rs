@@ -35,7 +35,7 @@ use crate::types::{
     AuditEngineStatus, AuditLogFormat, AuditLogType, BodyLimitAction, RuleEngineStatus,
     parse_audit_log_parts,
 };
-use crate::waf::{ConfigError, Waf, WafBuilder};
+use crate::waf::{ConfigError, Waf};
 
 /// Maximum include recursion depth to prevent DoS attacks
 const MAX_INCLUDE_RECURSION: usize = 100;
@@ -121,15 +121,15 @@ struct DirectiveOptions<'a> {
 
 /// Parser configuration and state
 #[derive(Debug, Clone, Default)]
-pub struct ParserState {
+struct ParserState {
     /// Current line number
-    pub current_line: usize,
+    current_line: usize,
 
     /// Current file being parsed
-    pub current_file: String,
+    current_file: String,
 
     /// Current directory (for resolving relative includes)
-    pub current_dir: String,
+    current_dir: String,
 }
 
 /// SecLang parser
@@ -224,7 +224,7 @@ impl Parser {
     ///
     /// Returns [`ConfigError`] if the parsed configuration is invalid (see [`Waf::new`]).
     pub fn into_waf(self) -> Result<Waf, ConfigError> {
-        WafBuilder::with_rules(self.waf_config, self.rules).build()
+        Waf::with_rules(self.waf_config, self.rules)
     }
 
     /// Parse directives from a string

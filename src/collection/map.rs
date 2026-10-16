@@ -23,21 +23,6 @@ use std::collections::HashMap;
 ///
 /// Even when using case-insensitive mode, the original key casing is preserved
 /// and returned in `MatchData` results.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::collection::Map;
-/// use coraza::RuleVariable;
-///
-/// let mut map = Map::new(RuleVariable::RequestHeaders);
-/// map.add("Content-Type", "application/json");
-/// map.add("content-type", "text/html");  // Same key, different case
-///
-/// // Case-insensitive lookup returns both values
-/// let values = map.get("CONTENT-TYPE");
-/// assert_eq!(values.len(), 2);
-/// ```
 pub struct Map {
     /// Whether keys are case-sensitive
     case_sensitive: bool,
@@ -95,7 +80,7 @@ impl Map {
     /// Create a new map with case-insensitive keys.
     ///
     /// This is the default for collections like REQUEST_HEADERS.
-    pub fn new(variable: RuleVariable) -> Self {
+    pub(crate) fn new(variable: RuleVariable) -> Self {
         Self {
             case_sensitive: false,
             data: HashMap::new(),
@@ -106,7 +91,7 @@ impl Map {
     /// Create a new map with case-sensitive keys.
     ///
     /// This is used for collections like ARGS, ARGS_GET, ARGS_POST.
-    pub fn new_case_sensitive(variable: RuleVariable) -> Self {
+    pub(crate) fn new_case_sensitive(variable: RuleVariable) -> Self {
         Self {
             case_sensitive: true,
             data: HashMap::new(),
@@ -184,7 +169,7 @@ impl Map {
     }
 
     /// Appends `value` to the values of `key`.
-    pub fn add(&mut self, key: &str, value: impl AsRef<[u8]>) {
+    pub(crate) fn add(&mut self, key: &str, value: impl AsRef<[u8]>) {
         let lookup = self.lookup_key(key);
         let kv = KeyValue::new(key, value.as_ref());
         match self.data.get_mut(lookup.as_ref()) {
@@ -196,7 +181,7 @@ impl Map {
     }
 
     /// Replaces the values of `key`.
-    pub fn set<V: AsRef<[u8]>>(&mut self, key: &str, values: impl IntoIterator<Item = V>) {
+    pub(crate) fn set<V: AsRef<[u8]>>(&mut self, key: &str, values: impl IntoIterator<Item = V>) {
         let lookup = self.lookup_key(key);
         let key_values: Vec<KeyValue> = values
             .into_iter()
@@ -206,7 +191,7 @@ impl Map {
     }
 
     /// Replaces the value at `index` of `key`, or appends it if `index` is past the end.
-    pub fn set_index(&mut self, key: &str, index: usize, value: impl AsRef<[u8]>) {
+    pub(crate) fn set_index(&mut self, key: &str, index: usize, value: impl AsRef<[u8]>) {
         let lookup = self.lookup_key(key);
         let value = value.as_ref();
 
@@ -222,13 +207,13 @@ impl Map {
     }
 
     /// Removes `key` and all its values.
-    pub fn remove(&mut self, key: &str) {
+    pub(crate) fn remove(&mut self, key: &str) {
         let lookup = self.lookup_key(key);
         self.data.remove(lookup.as_ref());
     }
 
     /// Removes every key.
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.data.clear();
     }
 
@@ -412,5 +397,20 @@ mod tests {
         let values = map.get("id");
         assert_eq!(values.len(), 3);
         assert_eq!(values, vec!["123", "456", "789"]);
+    }
+
+    /// The doc example of `collection::map::Map`, before it became internal.
+    #[test]
+    fn doc_map_type() {
+        use crate::RuleVariable;
+        use crate::collection::Map;
+
+        let mut map = Map::new(RuleVariable::RequestHeaders);
+        map.add("Content-Type", "application/json");
+        map.add("content-type", "text/html"); // Same key, different case
+
+        // Case-insensitive lookup returns both values
+        let values = map.get("CONTENT-TYPE");
+        assert_eq!(values.len(), 2);
     }
 }

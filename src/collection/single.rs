@@ -9,17 +9,6 @@ use crate::RuleVariable;
 /// A collection that holds a single string value.
 ///
 /// Used for variables like REQUEST_URI, REQUEST_METHOD, etc.
-///
-/// # Examples
-///
-/// ```
-/// use coraza::collection::Single;
-/// use coraza::RuleVariable;
-///
-/// let mut single = Single::new(RuleVariable::RequestURI);
-/// single.set("/api/users");
-/// assert_eq!(single.get(), "/api/users");
-/// ```
 pub struct Single {
     data: String,
     variable: RuleVariable,
@@ -27,7 +16,7 @@ pub struct Single {
 
 impl Single {
     /// Create a new single-value collection.
-    pub fn new(variable: RuleVariable) -> Self {
+    pub(crate) fn new(variable: RuleVariable) -> Self {
         Self {
             data: String::new(),
             variable,
@@ -35,13 +24,8 @@ impl Single {
     }
 
     /// Set the value.
-    pub fn set(&mut self, value: impl Into<String>) {
+    pub(crate) fn set(&mut self, value: impl Into<String>) {
         self.data = value.into();
-    }
-
-    /// Clear the value.
-    pub fn reset(&mut self) {
-        self.data.clear();
     }
 
     /// The value; empty if unset.
@@ -85,14 +69,6 @@ mod tests {
     }
 
     #[test]
-    fn test_single_reset() {
-        let mut single = Single::new(RuleVariable::RequestMethod);
-        single.set("POST");
-        single.reset();
-        assert_eq!(single.get(), "");
-    }
-
-    #[test]
     fn test_single_find_all() {
         let mut single = Single::new(RuleVariable::RequestURI);
         single.set("/api/users");
@@ -109,5 +85,16 @@ mod tests {
         let mut single = Single::new(RuleVariable::RequestURI);
         single.set("/test");
         assert_eq!(single.to_string(), "REQUEST_URI: /test");
+    }
+
+    /// The doc example of `collection::single::Single`, before it became internal.
+    #[test]
+    fn doc_single_type() {
+        use crate::RuleVariable;
+        use crate::collection::Single;
+
+        let mut single = Single::new(RuleVariable::RequestURI);
+        single.set("/api/users");
+        assert_eq!(single.get(), "/api/users");
     }
 }
