@@ -141,12 +141,19 @@ fn parse_id(value: &str) -> Result<i32, ActionError> {
         .map_err(|_| invalid(format!("expected rule id, got '{}'", value)))
 }
 
-/// `ID` or `START-END` (inclusive).
+/// `ID` or `START-END` (inclusive), with `START` at most `END`, as Go's `parseIDOrRange`.
 fn parse_id_range(value: &str) -> Result<RangeInclusive<i32>, ActionError> {
-    match value.split_once('-') {
-        Some((start, end)) if !start.is_empty() => Ok(parse_id(start)?..=parse_id(end)?),
-        _ => parse_id(value).map(|id| id..=id),
+    let Some((start, end)) = value.split_once('-') else {
+        return parse_id(value).map(|id| id..=id);
+    };
+    let range = parse_id(start)?..=parse_id(end)?;
+    if range.is_empty() {
+        return Err(invalid(format!(
+            "expected START-END with START <= END, got '{}'",
+            value
+        )));
     }
+    Ok(range)
 }
 
 /// Splits `rules;COLLECTION[:key]` into the rule selector and the target.

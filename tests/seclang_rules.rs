@@ -1213,6 +1213,16 @@ fn invalid_ctl_audit_and_debug_values_are_parse_errors() {
 }
 
 #[test]
+fn ctl_rule_id_ranges_without_a_start_or_running_backwards_are_parse_errors() {
+    // As SecRuleRemoveById rejects them; Go's ctl rejects them too, when it runs
+    for ctl in ["ruleRemoveById=-5", "ruleRemoveById=5-1"] {
+        let mut parser = Parser::new();
+        let rule = format!(r#"SecAction "id:1,phase:1,pass,ctl:{ctl}""#);
+        assert!(parser.from_string(&rule).is_err(), "{ctl}");
+    }
+}
+
+#[test]
 fn bodies_are_inspected_only_with_body_access() {
     for (access, inspected) in [("Off", false), ("On", true)] {
         let waf = waf(&format!(
