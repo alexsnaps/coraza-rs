@@ -398,12 +398,13 @@ Found at `ee1d995`, comparing with Go Coraza at `3fc3ae2`: by reading `internal/
   - Go keeps what this crate drops: the value of an unquoted attribute (`<a attr=unquoted>`), a text node with an
     unknown entity (`&unknown; entity`, kept as written), every value of a repeated attribute (`b="1" b="2"`). A
     payload in any of these never reaches rules on `REQUEST_XML` or `XML`.
-- [ ] **`FILES` holds one of a file's two names.** For a part with both `filename` and `filename*` naming different
+- [x] **`FILES` holds one of a file's two names.** For a part with both `filename` and `filename*` naming different
   files, Go adds both to `FILES` and `FILES_SIZES`, "so a rule catches whichever one a given backend actually
   resolves" (`TestMultipartFilenameStar`); this crate adds the `filename*` one, and the other only to
   `MULTIPART_FILENAME`. With `filename="evil.php"; filename*=UTF-8''benign.txt`, `FILES` holds `benign.txt`, so the
   CRS rules on `FILES` (920120, 920121, 933110, 933111, 933220, 944140) never see `evil.php`, which a backend reading
   `filename` stores.
+  - Done: as in Go, the other name joins `FILES` and `FILES_SIZES` too.
 - [ ] **`FILES`, `FILES_NAMES` and `FILES_TMPNAMES` are keyed by the part's name.** Go adds each value under the key
   `""` (`filesCol.Add("", filename)`). CRS reads them whole, so only `MATCHED_VAR_NAME` differs (`FILES:upload` here,
   `FILES` in Go), and a rule selecting `FILES:upload` matches here but not in Go.

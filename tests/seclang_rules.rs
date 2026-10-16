@@ -2181,7 +2181,8 @@ fn extended_multipart_filenames_are_decoded_with_their_charset_and_language() {
     assert_eq!(sorted(MultipartFilename), ["plain.txt", "€.php"]);
     assert_eq!(sorted(MultipartFilenameCharset), ["UTF-8"]);
     assert_eq!(sorted(MultipartFilenameLanguage), ["en"]);
-    assert_eq!(values(&tx, Files, "f"), ["€.php"]);
+    // Both names, as in Go Coraza
+    assert_eq!(values(&tx, Files, "f"), ["€.php", "plain.txt"]);
     assert_eq!(
         tx.get_variable(coraza::RuleVariable::MultipartStrictError, None)
             .as_deref(),
@@ -2353,4 +2354,28 @@ fn a_transaction_dropped_while_panicking_runs_no_rule() {
 
     assert!(unwound.is_err());
     assert!(ids.lock().unwrap().is_empty());
+}
+
+#[test]
+fn files_hold_both_names_of_a_file_named_twice() {
+    // As in Go Coraza (TestMultipartFilenameStar): a backend may store the file under
+    // either name, so rules see both
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule FILES "@rx \.php$" "id:1,phase:2,deny,status:403"
+    "#);
+    let body = "--b\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"evil.php\"; filename*=UTF-8''benign.txt\r\n\r\nx\r\n--b--\r\n";
+
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
+    tx.process_request_headers();
+
+    assert_eq!(
+        tx.process_request_body(body.as_bytes()).map(|i| i.rule_id),
+        Some(1)
+    );
+    for name in ["benign.txt", "evil.php"] {
+        let size = tx.get_variable(RuleVariable::FilesSizes, Some(name));
+        assert_eq!(size.as_deref(), Some("1"), "{name}");
+    }
 }
