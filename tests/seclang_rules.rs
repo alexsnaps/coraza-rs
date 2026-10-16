@@ -518,6 +518,23 @@ fn ctl_rule_remove_by_id_skips_rules_for_one_transaction() {
 }
 
 #[test]
+fn ctl_rule_remove_by_id_removes_a_wide_range_without_listing_its_ids() {
+    // Go keeps the range rather than each id in it ("Ranges avoid expanding all IDs")
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,nolog,ctl:ruleRemoveById=10-20000000"
+        SecAction "id:15000000,phase:1,deny,status:403"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    let started = std::time::Instant::now();
+    let interruption = tx.process_request_headers();
+    let took = started.elapsed();
+
+    assert!(interruption.is_none());
+    assert!(took < std::time::Duration::from_secs(1), "took {took:?}");
+}
+
+#[test]
 fn ctl_rule_remove_by_tag_and_msg_skip_the_rules_they_select() {
     let waf = waf(r#"
         SecAction "id:1,phase:1,pass,nolog,ctl:ruleRemoveByTag=noisy,ctl:ruleRemoveByMsg=Chatty"
@@ -1213,6 +1230,16 @@ fn invalid_ctl_audit_and_debug_values_are_parse_errors() {
 }
 
 #[test]
+fn ctl_rule_id_ranges_without_a_start_or_running_backwards_are_parse_errors() {
+    // As SecRuleRemoveById rejects them; Go's ctl rejects them too, when it runs
+    for ctl in ["ruleRemoveById=-5", "ruleRemoveById=5-1"] {
+        let mut parser = Parser::new();
+        let rule = format!(r#"SecAction "id:1,phase:1,pass,ctl:{ctl}""#);
+        assert!(parser.from_string(&rule).is_err(), "{ctl}");
+    }
+}
+
+#[test]
 fn bodies_are_inspected_only_with_body_access() {
     for (access, inspected) in [("Off", false), ("On", true)] {
         let waf = waf(&format!(
@@ -1480,6 +1507,62 @@ fn multipart_part_names_and_filenames_are_variables() {
 
     assert_eq!(tx_var(&tx, "name").as_deref(), Some("1"));
     assert_eq!(interruption.map(|i| i.rule_id), Some(2));
+}
+
+/// A transaction of `waf` that uploaded the file `a.txt`, holding `hello`, through phase 2.
+fn upload(waf: &Waf) -> Transaction {
+    let body = "--b\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"a.txt\"\r\n\r\nhello\r\n--b--\r\n";
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
+    tx.process_request_headers();
+    tx.process_request_body(body.as_bytes());
+    tx
+}
+
+/// The contents of the files in `dir`.
+fn files_in(dir: &std::path::Path) -> Vec<Vec<u8>> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| std::fs::read(entry.unwrap().path()).unwrap())
+        .collect()
+}
+
+#[test]
+fn uploaded_files_are_stored_in_the_upload_dir_and_listed_in_files_tmpnames() {
+    let dir = tempfile::tempdir().unwrap();
+    let waf = waf(&format!(
+        r#"
+        SecRequestBodyAccess On
+        SecUploadDir {}
+        SecRule FILES_TMPNAMES "@rx ." "id:1,phase:2,deny,status:403"
+        "#,
+        dir.path().display()
+    ));
+
+    let tx = upload(&waf);
+
+    assert_eq!(tx.interruption().map(|i| i.rule_id), Some(1));
+    assert_eq!(files_in(dir.path()), [b"hello"]);
+}
+
+#[test]
+fn uploaded_files_are_removed_when_the_transaction_ends_unless_kept() {
+    // As Go's Transaction.Close does
+    for (keep_files, kept) in [("Off", 0), ("On", 1)] {
+        let dir = tempfile::tempdir().unwrap();
+        let waf = waf(&format!(
+            r#"
+            SecRequestBodyAccess On
+            SecUploadDir {}
+            SecUploadKeepFiles {keep_files}
+            "#,
+            dir.path().display()
+        ));
+
+        drop(upload(&waf));
+
+        assert_eq!(files_in(dir.path()).len(), kept, "{keep_files}");
+    }
 }
 
 #[test]
@@ -2078,4 +2161,23 @@ fn ctl_removes_targets_from_rules_for_the_transaction() {
     // a chain's links and from a count
     assert_eq!(run("/x?a=1&ignored=evil").1, None);
     assert_eq!(run("/x?ignored=1&a=evil").1.as_deref(), Some("1"));
+}
+
+#[test]
+fn ctl_removes_a_target_from_every_rule_in_an_id_range() {
+    // As in Go, ruleRemoveTargetById takes an id or a range, as ruleRemoveById does
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,nolog,ctl:ruleRemoveTargetById=10-15;ARGS"
+        SecRule ARGS "@contains evil" "id:10,phase:1,pass,setvar:tx.ten=1"
+        SecRule ARGS "@contains evil" "id:15,phase:1,pass,setvar:tx.fifteen=1"
+        SecRule ARGS "@contains evil" "id:20,phase:1,pass,setvar:tx.twenty=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_uri("/x?a=evil", "GET", "HTTP/1.1");
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "ten"), None);
+    assert_eq!(tx_var(&tx, "fifteen"), None);
+    assert_eq!(tx_var(&tx, "twenty").as_deref(), Some("1"));
 }

@@ -912,16 +912,17 @@ impl Transaction {
             matched_var: Single::new(RuleVariable::MatchedVar),
             matched_var_name: Single::new(RuleVariable::MatchedVarName),
             matched_vars: map(RuleVariable::MatchedVars),
-            rule_engine: RuleEngineStatus::On,
-            request_body_access: true,
-            request_body_limit: 131072, // 128KB default
+            // The settings `set_config` takes from a WAF's config, here from a default one
+            rule_engine: config.rule_engine,
+            request_body_access: config.request_body_access,
+            request_body_limit: config.request_body_limit,
+            response_body_access: config.response_body_access,
+            response_body_limit: config.response_body_limit,
             audit_engine: config.audit_engine,
             audit_log_parts: config.audit_log_parts.clone(),
             debug_log_level: config.debug_log_level,
             config: Arc::new(config),
             force_request_body_variable: false,
-            response_body_access: false,
-            response_body_limit: 524288, // 512KB default
             force_response_body_variable: false,
             last_phase: None,
             flow: FlowState::new(),
@@ -1386,8 +1387,8 @@ impl Transaction {
         self.force_request_body_variable
     }
 
-    /// Audit logging mode of this transaction; the library writes no audit log, so this
-    /// is for the embedder.
+    /// Audit logging mode of this transaction (`SecAuditEngine`, changed by
+    /// `ctl:auditEngine`): whether its logging phase writes an audit log entry.
     pub fn audit_engine(&self) -> AuditEngineStatus {
         self.audit_engine
     }
@@ -1667,7 +1668,7 @@ impl Transaction {
     /// let mut tx = Transaction::new("tx-1");
     /// tx.add_response_header("Content-Type", "application/json; charset=utf-8");
     ///
-    /// // Note: RESPONSE_CONTENT_TYPE is not yet accessible, will be added later
+    /// assert_eq!(tx.response_content_type(), "application/json");
     /// ```
     pub fn add_response_header(&mut self, key: &str, value: &str) {
         if key.is_empty() {
@@ -1744,6 +1745,7 @@ impl Transaction {
             let options = BodyProcessorOptions {
                 mime: content_type.to_string(),
                 json_depth_limit: self.config.request_body_json_depth_limit,
+                upload_dir: self.config.upload_dir.clone(),
                 ..Default::default()
             };
 
@@ -1777,6 +1779,7 @@ impl Transaction {
     /// use coraza::transaction::Transaction;
     ///
     /// let mut tx = Transaction::new("tx-1");
+    /// tx.set_request_body_access(true); // SecRequestBodyAccess On
     /// tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
     /// tx.process_request_headers();
     ///
@@ -1829,7 +1832,7 @@ impl Transaction {
     /// let result = tx.process_response_headers(200, "HTTP/1.1");
     ///
     /// // Response variables are populated
-    /// // (Note: Direct access to response_status not yet public)
+    /// assert_eq!(tx.response_status(), "200");
     /// ```
     pub fn process_response_headers(
         &mut self,
@@ -2121,6 +2124,20 @@ impl Transaction {
             parts: self.audit_log_parts.clone(),
             transaction,
             messages,
+        }
+    }
+}
+
+impl Drop for Transaction {
+    /// Removes the files the transaction's uploads were stored in (FILES_TMPNAMES), unless
+    /// `SecUploadKeepFiles` keeps them, as Go's `Transaction.Close` does.
+    fn drop(&mut self) {
+        if self.config.upload_keep_files {
+            return;
+        }
+        for (_, path) in self.files_tmp_names.iter() {
+            // Nothing to report a file that is already gone to
+            let _ = std::fs::remove_file(&*String::from_utf8_lossy(path));
         }
     }
 }
@@ -2468,6 +2485,7 @@ mod tests {
     #[test]
     fn test_process_request_body_urlencoded() {
         let mut tx = Transaction::new("tx-020");
+        tx.set_request_body_access(true);
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
 
         let body = b"username=admin&password=secret&role=admin";
@@ -2495,6 +2513,7 @@ mod tests {
     #[test]
     fn test_process_request_body_json() {
         let mut tx = Transaction::new("tx-021");
+        tx.set_request_body_access(true);
         tx.add_request_header("Content-Type", "application/json");
         // As in Go, the content type alone selects no JSON or XML processor
         tx.set_request_body_processor(BodyProcessorKind::Json);
@@ -2513,6 +2532,7 @@ mod tests {
     #[test]
     fn test_process_request_body_xml() {
         let mut tx = Transaction::new("tx-022");
+        tx.set_request_body_access(true);
         tx.add_request_header("Content-Type", "application/xml");
         // As in Go, the content type alone selects no JSON or XML processor
         tx.set_request_body_processor(BodyProcessorKind::Xml);
@@ -2531,6 +2551,7 @@ mod tests {
     #[test]
     fn test_process_request_body_multipart() {
         let mut tx = Transaction::new("tx-023");
+        tx.set_request_body_access(true);
         tx.add_request_header(
             "Content-Type",
             "multipart/form-data; boundary=----WebKitFormBoundary",
@@ -2578,6 +2599,7 @@ value1\r\n\
             ("application/json", false, ""),
         ] {
             let mut tx = Transaction::new("tx");
+            tx.set_request_body_access(true);
             tx.add_request_header("Content-Type", content_type);
             tx.force_request_body_variable = forced;
             tx.process_request_headers();
@@ -2591,6 +2613,7 @@ value1\r\n\
     #[test]
     fn test_process_request_body_already_processed() {
         let mut tx = Transaction::new("tx-025");
+        tx.set_request_body_access(true);
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
 
         let body1 = b"key1=value1";

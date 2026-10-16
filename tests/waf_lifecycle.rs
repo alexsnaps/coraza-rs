@@ -60,6 +60,24 @@ fn test_waf_config_inheritance_to_transactions() {
 }
 
 #[test]
+fn a_transaction_without_a_waf_has_the_settings_of_a_default_wafs() {
+    let settings = |tx: &coraza::transaction::Transaction| {
+        (
+            tx.rule_engine(),
+            tx.request_body_access(),
+            tx.request_body_limit(),
+            tx.response_body_access(),
+            tx.response_body_limit(),
+        )
+    };
+
+    let standalone = coraza::transaction::Transaction::new("standalone");
+    let of_a_default_waf = Waf::default().new_transaction();
+
+    assert_eq!(settings(&standalone), settings(&of_a_default_waf));
+}
+
+#[test]
 fn test_waf_invalid_config_rejected() {
     let config = WafConfig {
         request_body_limit: -1,

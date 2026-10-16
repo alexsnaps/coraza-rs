@@ -36,7 +36,7 @@ enum CtlCommand {
     RuleRemoveById(RangeInclusive<i32>),
     RuleRemoveByTag(String),
     RuleRemoveByMsg(String),
-    RuleRemoveTargetById(i32, RuleTarget),
+    RuleRemoveTargetById(RangeInclusive<i32>, RuleTarget),
     RuleRemoveTargetByTag(String, RuleTarget),
     RuleRemoveTargetByMsg(String, RuleTarget),
     AuditEngine(AuditEngineStatus),
@@ -82,7 +82,7 @@ impl CtlCommand {
             "ruleRemoveByMsg" => Self::RuleRemoveByMsg(value.to_string()),
             "ruleRemoveTargetById" => {
                 let (id, target) = split_target(value)?;
-                Self::RuleRemoveTargetById(parse_id(id)?, target)
+                Self::RuleRemoveTargetById(parse_id_range(id)?, target)
             }
             "ruleRemoveTargetByTag" => {
                 let (tag, target) = split_target(value)?;
@@ -141,12 +141,19 @@ fn parse_id(value: &str) -> Result<i32, ActionError> {
         .map_err(|_| invalid(format!("expected rule id, got '{}'", value)))
 }
 
-/// `ID` or `START-END` (inclusive).
+/// `ID` or `START-END` (inclusive), with `START` at most `END`, as Go's `parseIDOrRange`.
 fn parse_id_range(value: &str) -> Result<RangeInclusive<i32>, ActionError> {
-    match value.split_once('-') {
-        Some((start, end)) if !start.is_empty() => Ok(parse_id(start)?..=parse_id(end)?),
-        _ => parse_id(value).map(|id| id..=id),
+    let Some((start, end)) = value.split_once('-') else {
+        return parse_id(value).map(|id| id..=id);
+    };
+    let range = parse_id(start)?..=parse_id(end)?;
+    if range.is_empty() {
+        return Err(invalid(format!(
+            "expected START-END with START <= END, got '{}'",
+            value
+        )));
     }
+    Ok(range)
 }
 
 /// Splits `rules;COLLECTION[:key]` into the rule selector and the target.
@@ -203,7 +210,7 @@ fn split_target(value: &str) -> Result<(&str, RuleTarget), ActionError> {
 /// - `ruleRemoveById=ID` or `ID1-ID2` - Remove rule(s) by ID or range
 /// - `ruleRemoveByTag=TAG` - Remove rules by tag
 /// - `ruleRemoveByMsg=MSG` - Remove rules by message
-/// - `ruleRemoveTargetById=ID;COLLECTION:key` - Remove variable from rule
+/// - `ruleRemoveTargetById=ID;COLLECTION:key` or `ID1-ID2;...` - Remove variable from rule(s)
 /// - `ruleRemoveTargetByTag=TAG;COLLECTION:key` - Remove variable from tagged rules
 /// - `ruleRemoveTargetByMsg=MSG;COLLECTION:key` - Remove variable from rules by message
 ///
@@ -280,8 +287,10 @@ impl CtlAction {
                 }
             }
             CtlCommand::RuleRemoveById(ids) => {
-                for id in ids.clone() {
-                    tx.remove_rule_by_id(id);
+                if ids.start() == ids.end() {
+                    tx.remove_rule_by_id(*ids.start());
+                } else {
+                    tx.remove_rules_by_id_range(ids.clone());
                 }
             }
             CtlCommand::RuleRemoveByTag(tag) => {
@@ -294,8 +303,16 @@ impl CtlAction {
                     tx.remove_rule_by_id(id);
                 }
             }
-            CtlCommand::RuleRemoveTargetById(id, target) => {
-                tx.remove_rule_target(*id, target.variable, target.key.clone());
+            CtlCommand::RuleRemoveTargetById(ids, target) => {
+                // As in Go, a range selects the rules in it; one id needs no rule set
+                let ids = if ids.start() == ids.end() {
+                    vec![*ids.start()]
+                } else {
+                    rule_ids(tx, |rule| ids.contains(&rule.id))
+                };
+                for id in ids {
+                    tx.remove_rule_target(id, target.variable, target.key.clone());
+                }
             }
             CtlCommand::RuleRemoveTargetByTag(tag, target) => {
                 for id in rule_ids(tx, |rule| rule.tags.contains(tag)) {
@@ -392,7 +409,7 @@ mod tests {
         assert_eq!(
             parse("ruleRemoveTargetById=123;ARGS:User"),
             CtlCommand::RuleRemoveTargetById(
-                123,
+                123..=123,
                 RuleTarget {
                     variable: RuleVariable::Args,
                     key: VariableException::new_string("user".to_string())
@@ -550,7 +567,7 @@ mod tests {
         let action = CtlAction::parse("requestBodyAccess=off").unwrap();
 
         let mut tx = Transaction::new("test-2");
-        assert!(tx.request_body_access()); // default is true
+        tx.set_request_body_access(true);
 
         action.evaluate(&mut tx);
         assert!(!tx.request_body_access());
@@ -563,7 +580,7 @@ mod tests {
         let action = CtlAction::parse("requestBodyLimit=256000").unwrap();
 
         let mut tx = Transaction::new("test-3");
-        assert_eq!(tx.request_body_limit(), 131072); // default is 128KB
+        assert_eq!(tx.request_body_limit(), 128 * 1024 * 1024); // the default, as in Go
 
         action.evaluate(&mut tx);
         assert_eq!(tx.request_body_limit(), 256000);
@@ -628,11 +645,12 @@ mod tests {
         let action = CtlAction::parse("requestBodyAccess=off").unwrap();
 
         let mut tx = Transaction::new("test-8");
+        tx.set_request_body_access(true);
         // Simulate being in request body phase
         tx.process_request_headers();
         tx.process_request_body(b"test");
 
-        assert!(tx.request_body_access()); // default is true
+        assert!(tx.request_body_access());
 
         // Try to change it - should be silently ignored
         action.evaluate(&mut tx);

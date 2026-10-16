@@ -197,6 +197,7 @@ fn handle_request(
     // Phase 1: Request Headers
     if let Some(interruption) = tx.process_request_headers() {
         write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref())?;
+        tx.process_logging()?;
         return send_blocking_response(stream, &interruption);
     }
 
@@ -207,11 +208,10 @@ fn handle_request(
         limited_reader.read_to_end(&mut body)?;
     }
 
-    // Phase 2: Request Body
-    if !body.is_empty()
-        && let Some(interruption) = tx.process_request_body(&body)
-    {
+    // Phase 2: Request Body, which runs with or without a body
+    if let Some(interruption) = tx.process_request_body(&body) {
         write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref())?;
+        tx.process_logging()?;
         return send_blocking_response(stream, &interruption);
     }
 
@@ -221,6 +221,7 @@ fn handle_request(
     // Phase 3: Response Headers
     if let Some(interruption) = tx.process_response_headers(200, "HTTP/1.1") {
         write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref())?;
+        tx.process_logging()?;
         return send_blocking_response(stream, &interruption);
     }
 
@@ -229,6 +230,7 @@ fn handle_request(
     // Phase 4: Response Body
     if let Some(interruption) = tx.process_response_body(response_body) {
         write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref())?;
+        tx.process_logging()?;
         return send_blocking_response(stream, &interruption);
     }
 
@@ -337,4 +339,65 @@ fn write_request_log(
     writeln!(file, "[{}] [tx_id \"{}\"]", timestamp, tx.id())?;
 
     file.flush()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+
+    use super::*;
+
+    fn waf(rules: &str) -> Waf {
+        let mut parser = Parser::new();
+        parser.from_string(rules).expect("rules should parse");
+        parser.into_waf().expect("config should be valid")
+    }
+
+    /// The response the server sends for `request`.
+    fn respond(waf: Waf, request: &str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client.write_all(request.as_bytes()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+
+        let logfile = Arc::new(Mutex::new(tempfile::tempfile().unwrap()));
+        handle_request(&mut server, Arc::new(waf), logfile).unwrap();
+        drop(server);
+
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        response
+    }
+
+    #[test]
+    fn requests_without_a_body_run_the_request_body_phase() {
+        // As in Go's connectors; CRS blocks on the inbound anomaly score in phase 2
+        let waf = waf(r#"SecRule REQUEST_METHOD "@streq GET" "id:1,phase:2,deny,status:403""#);
+
+        let response = respond(waf, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+        assert!(response.starts_with("HTTP/1.1 403 "), "{response}");
+    }
+
+    #[test]
+    fn interrupted_requests_run_the_logging_phase() {
+        let dir = tempfile::tempdir().unwrap();
+        let audit_log = dir.path().join("audit.log");
+        let waf = waf(&format!(
+            r#"
+            SecAuditEngine On
+            SecAuditLog {}
+            SecRule REQUEST_METHOD "@streq GET" "id:1,phase:1,deny,status:403"
+            "#,
+            audit_log.display()
+        ));
+
+        let response = respond(waf, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+
+        assert!(response.starts_with("HTTP/1.1 403 "), "{response}");
+        // The logging phase writes the audit log
+        let audit = std::fs::read_to_string(&audit_log).unwrap_or_default();
+        assert!(!audit.is_empty(), "no audit log entry");
+    }
 }

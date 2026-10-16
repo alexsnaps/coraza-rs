@@ -5,6 +5,7 @@
 //! the rules' actions change while they run.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::RangeInclusive;
 
 use super::{Interruption, Transaction};
 use crate::RuleVariable;
@@ -33,6 +34,10 @@ pub(super) struct FlowState {
     /// Rules removed for this transaction (`ctl:ruleRemoveById`, `ByTag`, `ByMsg`)
     removed_rules: BTreeSet<i32>,
 
+    /// Id ranges removed for this transaction (`ctl:ruleRemoveById=START-END`), kept as
+    /// ranges, as in Go, rather than as each id in them
+    removed_rule_ranges: Vec<RangeInclusive<i32>>,
+
     /// Keys removed from rules for this transaction (`ctl:ruleRemoveTarget*`), by rule id
     removed_targets: BTreeMap<i32, Vec<(RuleVariable, VariableException)>>,
 }
@@ -47,6 +52,7 @@ impl FlowState {
             skip_after: String::new(),
             allow: AllowType::Unset,
             removed_rules: BTreeSet::new(),
+            removed_rule_ranges: Vec::new(),
             removed_targets: BTreeMap::new(),
         }
     }
@@ -197,9 +203,20 @@ impl Transaction {
         self.flow.removed_rules.insert(id);
     }
 
+    /// Removes the rules whose id is in `ids` for this transaction only, as
+    /// `ctl:ruleRemoveById=START-END` does.
+    pub(crate) fn remove_rules_by_id_range(&mut self, ids: RangeInclusive<i32>) {
+        self.flow.removed_rule_ranges.push(ids);
+    }
+
     /// Whether rule `rule_id` was removed for this transaction.
     pub(crate) fn is_rule_removed(&self, rule_id: i32) -> bool {
         self.flow.removed_rules.contains(&rule_id)
+            || self
+                .flow
+                .removed_rule_ranges
+                .iter()
+                .any(|ids| ids.contains(&rule_id))
     }
 
     /// Excludes the keys of `variable` that `exception` matches from rule `rule_id`, for

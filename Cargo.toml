@@ -53,6 +53,11 @@ default = []
 async-server = ["tokio", "hyper", "http-body-util", "hyper-util"]
 
 [[example]]
+name = "ftw_server"
+# Its tests run with the crate's
+test = true
+
+[[example]]
 name = "ftw_server_async"
 required-features = ["async-server"]
 
