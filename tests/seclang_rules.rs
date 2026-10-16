@@ -257,6 +257,27 @@ fn argument_values_keep_the_bytes_the_request_sent() {
 }
 
 #[test]
+fn body_argument_values_keep_the_bytes_the_request_sent() {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule ARGS_POST "@validateUtf8Encoding" "id:1,phase:2,deny,status:403"
+    "#);
+    let post = |content_type: &str, body: &[u8]| {
+        let mut tx = waf.new_transaction();
+        tx.process_uri("/post", "POST", "HTTP/1.1");
+        tx.add_request_header("Content-Type", content_type);
+        tx.process_request_headers();
+        tx.process_request_body(body).map(|i| i.rule_id)
+    };
+
+    // CRS 941310-1 sends `\xbc` and `\xbe` raw in a urlencoded body
+    let urlencoded = post("application/x-www-form-urlencoded", b"var=\xbcscript\xbe");
+    assert_eq!(urlencoded, Some(1));
+    let multipart = b"--b\r\nContent-Disposition: form-data; name=\"var\"\r\n\r\n\xbc\r\n--b--\r\n";
+    assert_eq!(post("multipart/form-data; boundary=b", multipart), Some(1));
+}
+
+#[test]
 fn allow_skips_the_rest_of_the_transaction() {
     let waf = waf(r#"
         SecAction "id:1,phase:1,allow"

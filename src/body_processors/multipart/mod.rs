@@ -114,10 +114,9 @@ impl BodyProcessor for MultipartBodyProcessor {
                 tx.files_sizes.set_index(filename, 0, size.to_string());
                 tx.files_names.add(&part.name, &part.name);
             } else {
-                // Regular form field
-                let value = String::from_utf8_lossy(&part.data);
+                // Regular form field, whose value keeps its bytes, as in Go Coraza
                 total_size += part.data.len() as u64;
-                tx.add_post_argument(&part.name, value.as_bytes());
+                tx.add_post_argument(&part.name, &part.data);
             }
         }
 

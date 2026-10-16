@@ -1574,7 +1574,7 @@ impl Transaction {
 
     /// Adds the arguments of a query string to ARGS_GET and ARGS.
     fn extract_get_arguments(&mut self, query: &str) {
-        for (key, value) in crate::body_processors::urlencoded::parse_query(query) {
+        for (key, value) in crate::body_processors::urlencoded::parse_query(query.as_bytes()) {
             self.add_get_argument(&key, &value);
         }
     }
