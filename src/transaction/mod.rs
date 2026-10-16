@@ -17,7 +17,7 @@ use crate::audit_log::{
     AuditFile, AuditLog, AuditLogger, AuditMessage, AuditMessageData, AuditProducer, AuditRequest,
     AuditResponse, AuditTransaction, mime_type_of,
 };
-use crate::body_processors::{BodyProcessorKind, BodyProcessorOptions};
+use crate::body_processors::{BodyProcessorKind, parse_query};
 use crate::collection::{Map, MatchData, Single};
 use crate::config::WafConfig;
 use crate::operators::Outputs;
@@ -944,6 +944,12 @@ impl Transaction {
         self.rules = Some(rules);
     }
 
+    /// Settings of the WAF the transaction belongs to, as the WAF has them: `ctl` changes
+    /// the transaction's own copies.
+    pub(crate) fn config(&self) -> &WafConfig {
+        &self.config
+    }
+
     /// Makes the transaction write its audit log entry with `logger`.
     pub(crate) fn set_audit_logger(&mut self, logger: Arc<AuditLogger>) {
         self.audit_logger = Some(logger);
@@ -1380,7 +1386,7 @@ impl Transaction {
 
     /// Adds the arguments of a query string to ARGS_GET and ARGS.
     fn extract_get_arguments(&mut self, query: &str) {
-        for (key, value) in crate::body_processors::urlencoded::parse_query(query.as_bytes()) {
+        for (key, value) in parse_query(query.as_bytes()) {
             self.add_get_argument(&key, &value);
         }
     }
@@ -1534,13 +1540,6 @@ impl Transaction {
     /// Stores the request body in REQUEST_BODY and parses it with the processor
     /// REQBODY_PROCESSOR names, if any.
     fn inspect_request_body(&mut self, body: &[u8]) {
-        // Get Content-Type to determine body processor
-        let content_type_values = self.request_headers.get("content-type");
-        let content_type = content_type_values
-            .first()
-            .map(|s| s.as_str())
-            .unwrap_or("");
-
         let mut processor = self
             .reqbody_processor
             .get()
@@ -1552,15 +1551,8 @@ impl Transaction {
         }
 
         if let Some(processor) = processor {
-            let options = BodyProcessorOptions {
-                mime: content_type.to_string(),
-                json_depth_limit: self.config.request_body_json_depth_limit,
-                upload_dir: self.config.upload_dir.clone(),
-                ..Default::default()
-            };
-
             // A malformed body doesn't stop the transaction: rules see it in REQBODY_ERROR
-            if let Err(e) = processor.process_request(body, self, &options) {
+            if let Err(e) = processor.process_request(body, self) {
                 self.reqbody_error.set("1");
                 self.reqbody_error_msg
                     .set(format!("{}: {}", processor.name(), e));
@@ -1688,11 +1680,7 @@ impl Transaction {
     fn inspect_response_body(&mut self, body: &[u8]) {
         match self.res_body_processor.get().parse::<BodyProcessorKind>() {
             Ok(processor) => {
-                let options = BodyProcessorOptions {
-                    json_depth_limit: self.config.response_body_json_depth_limit,
-                    ..Default::default()
-                };
-                if let Err(e) = processor.process_response(body, self, &options) {
+                if let Err(e) = processor.process_response(body, self) {
                     self.res_body_error.set("1");
                     self.res_body_error_msg
                         .set(format!("{}: {}", processor.name(), e));

@@ -37,6 +37,11 @@ What a variable holds for a key: in collections such as `ARGS`, the bytes the re
 whether or not they are UTF-8; keys, and single-value variables such as `REQUEST_URI`, are text.
 _Avoid_: string, text (for values)
 
+**Body processor**:
+The parser (`URLENCODED`, `MULTIPART`, `JSON`, `XML`, `RAW`) that turns a transaction's request or
+response body into variables, as `REQBODY_PROCESSOR` or `RES_BODY_PROCESSOR` names it.
+_Avoid_: body parser
+
 **Operator**:
 The test a rule applies to each value it inspects (`@rx`, `@streq`, `@detectSQLi`, ...); it reads
 the transaction's variables but never changes the transaction.
@@ -86,6 +91,9 @@ _Avoid_: integration, server
   (`process_connection`, `process_uri`, `add_request_header`, `add_*_argument`,
   `add_response_header`, the phase calls), which keep variables derived from others, such as
   `ARGS`, consistent.
+- A **Transaction**'s request **Body processor** is chosen by its first `Content-Type`, or by
+  `ctl:requestBodyProcessor` before the request body **Phase**; it runs only in that **Phase**, and
+  writes only its own variables, while the **Transaction** records its failure in `REQBODY_ERROR`.
 - A **Transaction** starts with its WAF's settings (body access and limits, body processor,
   audit engine and parts, debug log level); only a `ctl` action changes them, for that
   **Transaction** alone.

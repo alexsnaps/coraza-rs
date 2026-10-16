@@ -8,136 +8,120 @@
 
 mod parser;
 
-use super::{BodyProcessor, BodyProcessorError, BodyProcessorOptions};
+use super::BodyProcessorError;
+use crate::RuleVariable;
 use crate::transaction::Transaction;
 use mime::Mime;
 use std::io::Write;
 
-/// Multipart body processor for file uploads
-pub struct MultipartBodyProcessor;
+/// Parses a request body, with the boundary its `Content-Type` gives, into ARGS_POST (and
+/// ARGS), FILES*, FILES_COMBINED_SIZE and the MULTIPART_* variables, storing uploaded
+/// files in `SecUploadDir` if set. MULTIPART_STRICT_ERROR is set if the body can't be
+/// parsed, or any part is malformed.
+///
+/// # Errors
+///
+/// If the body can't be parsed, or an uploaded file can't be stored.
+pub(super) fn process_request(body: &[u8], tx: &mut Transaction) -> Result<(), BodyProcessorError> {
+    let content_type = tx
+        .variable_value(RuleVariable::RequestHeaders, Some("content-type"))
+        .unwrap_or_default()
+        .into_owned();
+    let parts = parts(&content_type, body).inspect_err(|_| tx.multipart_strict_error.set("1"))?;
+    let upload_dir = tx.config().upload_dir.clone();
 
-impl BodyProcessor for MultipartBodyProcessor {
-    fn process_request(
-        &self,
-        body: &[u8],
-        tx: &mut Transaction,
-        options: &BodyProcessorOptions,
-    ) -> Result<(), BodyProcessorError> {
-        // Parse Content-Type to get boundary
-        let content_type = options.mime.parse::<Mime>().map_err(|e| {
-            tx.multipart_strict_error.set("1");
-            BodyProcessorError::InvalidEncoding(
-                "multipart".to_string(),
-                format!("invalid content-type: {}", e),
-            )
-        })?;
+    let mut total_size: u64 = 0;
 
-        // Verify it's multipart
-        if content_type.type_() != mime::MULTIPART {
+    // Process each part
+    for part in parts {
+        if part.repeats_header {
+            tx.multipart_duplicate_part_header.set("1");
             tx.multipart_strict_error.set("1");
-            return Err(BodyProcessorError::Malformed(
-                "multipart".to_string(),
-                "not a multipart body".to_string(),
-            ));
+        }
+        if part.invalid_quoting {
+            tx.multipart_invalid_quoting.set("1");
+            tx.multipart_strict_error.set("1");
         }
 
-        // Extract boundary parameter
-        let boundary = content_type
-            .get_param(mime::BOUNDARY)
-            .ok_or_else(|| {
-                tx.multipart_strict_error.set("1");
-                BodyProcessorError::Malformed(
-                    "multipart".to_string(),
-                    "missing boundary parameter".to_string(),
-                )
-            })?
-            .as_str();
-
-        // Create multipart parser
-        let multipart_parser = parser::MultipartParser::new(boundary, body.to_vec());
-
-        // Parse all parts
-        let parts = multipart_parser.parse().map_err(|e| {
+        // Each header, as Go Coraza lists it: its canonical name and its value as sent
+        for (name, value) in &part.headers {
+            let header = format!("{}: {value}", canonical_header_name(name));
+            tx.multipart_part_headers.add(&part.name, &header);
+        }
+        tx.multipart_name.add(&part.name, &part.name);
+        if let Some(filename) = &part.filename {
+            tx.multipart_filename.add(&part.name, filename);
+        }
+        // The name a backend reading `filename` rather than `filename*` would use
+        if let Some(alt_filename) = &part.alt_filename {
+            tx.multipart_filename.add(&part.name, alt_filename);
+        }
+        if let Some(encoding) = &part.filename_encoding {
+            tx.multipart_filename_charset
+                .add(&part.name, &encoding.charset);
+            tx.multipart_filename_language
+                .add(&part.name, &encoding.language);
+        }
+        if part.malformed_filename {
             tx.multipart_strict_error.set("1");
-            BodyProcessorError::Malformed("multipart".to_string(), e.to_string())
-        })?;
-
-        let mut total_size: u64 = 0;
-
-        // Process each part
-        for part in parts {
-            if part.repeats_header {
-                tx.multipart_duplicate_part_header.set("1");
-                tx.multipart_strict_error.set("1");
-            }
-            if part.invalid_quoting {
-                tx.multipart_invalid_quoting.set("1");
-                tx.multipart_strict_error.set("1");
-            }
-
-            // Each header, as Go Coraza lists it: its canonical name and its value as sent
-            for (name, value) in &part.headers {
-                let header = format!("{}: {value}", canonical_header_name(name));
-                tx.multipart_part_headers.add(&part.name, &header);
-            }
-            tx.multipart_name.add(&part.name, &part.name);
-            if let Some(filename) = &part.filename {
-                tx.multipart_filename.add(&part.name, filename);
-            }
-            // The name a backend reading `filename` rather than `filename*` would use
-            if let Some(alt_filename) = &part.alt_filename {
-                tx.multipart_filename.add(&part.name, alt_filename);
-            }
-            if let Some(encoding) = &part.filename_encoding {
-                tx.multipart_filename_charset
-                    .add(&part.name, &encoding.charset);
-                tx.multipart_filename_language
-                    .add(&part.name, &encoding.language);
-            }
-            if part.malformed_filename {
-                tx.multipart_strict_error.set("1");
-            }
-
-            // Check if this is a file upload (has filename)
-            if let Some(filename) = &part.filename {
-                let size = part.data.len() as u64;
-                total_size += size;
-
-                // Save to temporary file if upload_dir is set
-                if !options.upload_dir.is_empty() {
-                    let temp_file = save_to_temp(&options.upload_dir, &part.data)?;
-                    tx.files_tmp_names.add(&part.name, &temp_file);
-                }
-
-                // Populate FILES collections (keyed by field name)
-                tx.files.add(&part.name, filename);
-                tx.files_sizes.set_index(filename, 0, size.to_string());
-                tx.files_names.add(&part.name, &part.name);
-            } else {
-                // Regular form field, whose value keeps its bytes, as in Go Coraza
-                total_size += part.data.len() as u64;
-                tx.add_post_argument(&part.name, &part.data);
-            }
         }
 
-        // Set total combined size
-        tx.files_combined_size.set(total_size.to_string());
+        // Check if this is a file upload (has filename)
+        if let Some(filename) = &part.filename {
+            let size = part.data.len() as u64;
+            total_size += size;
 
-        Ok(())
+            // Save to temporary file if upload_dir is set
+            if !upload_dir.is_empty() {
+                let temp_file = save_to_temp(&upload_dir, &part.data)?;
+                tx.files_tmp_names.add(&part.name, &temp_file);
+            }
+
+            // Populate FILES collections (keyed by field name)
+            tx.files.add(&part.name, filename);
+            tx.files_sizes.set_index(filename, 0, size.to_string());
+            tx.files_names.add(&part.name, &part.name);
+        } else {
+            // Regular form field, whose value keeps its bytes, as in Go Coraza
+            total_size += part.data.len() as u64;
+            tx.add_post_argument(&part.name, &part.data);
+        }
     }
 
-    fn process_response(
-        &self,
-        _body: &[u8],
-        _tx: &mut Transaction,
-        _options: &BodyProcessorOptions,
-    ) -> Result<(), BodyProcessorError> {
-        // Multipart processor doesn't process response bodies
-        Ok(())
-    }
+    // Set total combined size
+    tx.files_combined_size.set(total_size.to_string());
+
+    Ok(())
 }
 
-/// Save file data to temporary directory
+/// The parts of a multipart `body`, split at the boundary of `content_type`.
+///
+/// # Errors
+///
+/// If `content_type` isn't a multipart type with a boundary, or the body is malformed.
+fn parts(content_type: &str, body: &[u8]) -> Result<Vec<parser::Part>, BodyProcessorError> {
+    let malformed =
+        |message: String| BodyProcessorError::Malformed("multipart".to_string(), message);
+    let content_type = content_type.parse::<Mime>().map_err(|e| {
+        BodyProcessorError::InvalidEncoding(
+            "multipart".to_string(),
+            format!("invalid content-type: {}", e),
+        )
+    })?;
+    if content_type.type_() != mime::MULTIPART {
+        return Err(malformed("not a multipart body".to_string()));
+    }
+    let boundary = content_type
+        .get_param(mime::BOUNDARY)
+        .ok_or_else(|| malformed("missing boundary parameter".to_string()))?;
+    parser::MultipartParser::new(boundary.as_str(), body.to_vec())
+        .parse()
+        .map_err(|e| malformed(e.to_string()))
+}
+
+/// Stores an uploaded file's `data` in a new file of `upload_dir`, named `crzmp` and 16
+/// random characters, as Go Coraza does with `os.CreateTemp`: readable and writable by its
+/// owner only, and never replacing an existing file. Returns the file's path.
 fn save_to_temp(upload_dir: &str, data: &[u8]) -> Result<String, BodyProcessorError> {
     use std::fs;
     use std::path::PathBuf;
@@ -145,13 +129,15 @@ fn save_to_temp(upload_dir: &str, data: &[u8]) -> Result<String, BodyProcessorEr
     // Create upload directory if it doesn't exist
     fs::create_dir_all(upload_dir)?;
 
-    // Generate unique temp filename
     let temp_name = format!("crzmp{}", crate::utils::strings::random_string(16));
     let mut temp_path = PathBuf::from(upload_dir);
     temp_path.push(temp_name);
 
-    // Write file
-    let mut file = fs::File::create(&temp_path)?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(&temp_path)?;
     file.write_all(data)?;
 
     Ok(temp_path.to_string_lossy().to_string())
@@ -181,48 +167,38 @@ fn canonical_header_name(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{BodyProcessorKind, inspect_request, inspect_request_with, request_error};
     use super::*;
-    use crate::RuleVariable;
-    use crate::body_processors::BodyProcessorKind;
+    use crate::config::WafConfig;
     use std::fs;
 
     #[test]
     fn test_multipart_invalid_mime_type() {
-        let processor = MultipartBodyProcessor;
-        let mut tx = Transaction::new("test-1");
+        // Not empty: an empty body reaches no processor
+        let body = b"x";
 
-        let body = b"";
-        let options = BodyProcessorOptions {
-            mime: "application/json".to_string(),
-            ..Default::default()
-        };
-
-        let result = processor.process_request(body, &mut tx, &options);
-        assert!(result.is_err());
+        let tx = inspect_request(BodyProcessorKind::Multipart, "application/json", body);
+        let result = request_error(&tx);
+        assert!(result.is_some());
         assert_eq!(tx.multipart_strict_error.get(), "1");
 
-        if let Err(e) = result {
-            assert!(e.to_string().contains("not a multipart body"));
+        if let Some(e) = result {
+            assert!(e.contains("not a multipart body"));
         }
     }
 
     #[test]
     fn test_multipart_missing_boundary() {
-        let processor = MultipartBodyProcessor;
-        let mut tx = Transaction::new("test-2");
+        // Not empty: an empty body reaches no processor
+        let body = b"x";
 
-        let body = b"";
-        let options = BodyProcessorOptions {
-            mime: "multipart/form-data".to_string(),
-            ..Default::default()
-        };
-
-        let result = processor.process_request(body, &mut tx, &options);
-        assert!(result.is_err());
+        let tx = inspect_request(BodyProcessorKind::Multipart, "multipart/form-data", body);
+        let result = request_error(&tx);
+        assert!(result.is_some());
         assert_eq!(tx.multipart_strict_error.get(), "1");
 
-        if let Err(e) = result {
-            assert!(e.to_string().contains("missing boundary"));
+        if let Some(e) = result {
+            assert!(e.contains("missing boundary"));
         }
     }
 
@@ -242,19 +218,12 @@ Content of a.txt.\r
 -----------------------------9051914041544843365972754266--\r
 ";
 
-        let processor = MultipartBodyProcessor;
-        let mut tx = Transaction::new("test-3");
-
-        let options = BodyProcessorOptions {
-        mime:
-            "multipart/form-data; boundary=---------------------------9051914041544843365972754266"
-                .to_string(),
-                ..Default::default()
-        };
-
-        processor
-            .process_request(payload.as_bytes(), &mut tx, &options)
-            .unwrap();
+        let tx = inspect_request(
+            BodyProcessorKind::Multipart,
+            "multipart/form-data; boundary=---------------------------9051914041544843365972754266",
+            payload.as_bytes(),
+        );
+        assert_eq!(request_error(&tx), None);
 
         // Check that field was parsed
         assert_eq!(
@@ -284,14 +253,12 @@ Content of a.txt.\r
             \n\
             Pineapple. Pizza.\n\
             --boundary--\n";
-        let mut tx = Transaction::new("test");
-        let options = BodyProcessorOptions {
-            mime: "multipart/form-data; boundary=boundary".to_string(),
-            ..Default::default()
-        };
-        MultipartBodyProcessor
-            .process_request(payload.as_bytes(), &mut tx, &options)
-            .unwrap();
+        let tx = inspect_request(
+            BodyProcessorKind::Multipart,
+            "multipart/form-data; boundary=boundary",
+            payload.as_bytes(),
+        );
+        assert_eq!(request_error(&tx), None);
 
         assert_eq!(
             tx.multipart_part_headers.get("flavors"),
@@ -315,19 +282,12 @@ Content-Type: text/html\r
 -----------------------------9051914041544843365972754266--\r
 ";
 
-        let processor = MultipartBodyProcessor;
-        let mut tx = Transaction::new("test-4");
-
-        let options = BodyProcessorOptions {
-        mime:
-            "multipart/form-data; boundary=---------------------------9051914041544843365972754266"
-                .to_string(),
-                ..Default::default()
-        };
-
-        processor
-            .process_request(payload.as_bytes(), &mut tx, &options)
-            .unwrap();
+        let tx = inspect_request(
+            BodyProcessorKind::Multipart,
+            "multipart/form-data; boundary=---------------------------9051914041544843365972754266",
+            payload.as_bytes(),
+        );
+        assert_eq!(request_error(&tx), None);
 
         // Check that headers were captured
         let headers = tx.multipart_part_headers.get("file1");
@@ -353,19 +313,16 @@ Content-Disposition: form-data; name=\"post\";\n\
 --a--\
 ";
 
-        let processor = MultipartBodyProcessor;
-        let mut tx = Transaction::new("test-5");
-
-        let options = BodyProcessorOptions {
-            mime: "multipart/form-data; boundary=a".to_string(),
-            ..Default::default()
-        };
-
         // Should fail on malformed headers
-        let result = processor.process_request(payload.as_bytes(), &mut tx, &options);
+        let tx = inspect_request(
+            BodyProcessorKind::Multipart,
+            "multipart/form-data; boundary=a",
+            payload.as_bytes(),
+        );
+        let result = request_error(&tx);
 
         // Strict error should be set regardless of whether parsing failed
-        if result.is_err() {
+        if result.is_some() {
             assert_eq!(tx.multipart_strict_error.get(), "1");
         }
     }
@@ -381,24 +338,20 @@ Test file content\r
 -----------------------------9051914041544843365972754266--\r
 ";
 
-        let processor = MultipartBodyProcessor;
-        let mut tx = Transaction::new("test-6");
-
         // Create temp directory for test
         let temp_dir = std::env::temp_dir().join("coraza-test-multipart");
         fs::create_dir_all(&temp_dir).unwrap();
 
-        let options = BodyProcessorOptions {
-        mime:
-            "multipart/form-data; boundary=---------------------------9051914041544843365972754266"
-                .to_string(),
-        upload_dir: temp_dir.to_string_lossy().to_string(),
-        ..Default::default()
-        };
-
-        processor
-            .process_request(payload.as_bytes(), &mut tx, &options)
-            .unwrap();
+        let tx = inspect_request_with(
+            WafConfig {
+                upload_dir: temp_dir.to_string_lossy().to_string(),
+                ..WafConfig::default()
+            },
+            BodyProcessorKind::Multipart,
+            "multipart/form-data; boundary=---------------------------9051914041544843365972754266",
+            payload.as_bytes(),
+        );
+        assert_eq!(request_error(&tx), None);
 
         // Check that temp file was created
         let temp_files: Vec<_> = tx
@@ -436,17 +389,12 @@ Content-Type: text/plain\r
 -----------------------------9051914041544843365972754266--\r
 ";
 
-        let processor = MultipartBodyProcessor;
-        let mut tx = Transaction::new("test-7");
-
-        let options = BodyProcessorOptions {
-        mime: "multipart/form-data; boundary=---------------------------9051914041544843365972754266".to_string(),
-        ..Default::default()
-        };
-
-        processor
-            .process_request(payload.as_bytes(), &mut tx, &options)
-            .unwrap();
+        let tx = inspect_request(
+            BodyProcessorKind::Multipart,
+            "multipart/form-data; boundary=---------------------------9051914041544843365972754266",
+            payload.as_bytes(),
+        );
+        assert_eq!(request_error(&tx), None);
 
         // Combined size should be 5 (field) + 10 (file) = 15
         let combined = tx.files_combined_size.get();
@@ -454,50 +402,17 @@ Content-Type: text/plain\r
     }
 
     #[test]
-    fn test_multipart_from_registry() {
-        let processor = BodyProcessorKind::Multipart;
-        let mut tx = Transaction::new("test-8");
-
-        let payload = "\
------------------------------boundary\r
-Content-Disposition: form-data; name=\"field\"\r
-\r
-value\r
------------------------------boundary--\r
-";
-
-        let options = BodyProcessorOptions {
-            mime: "multipart/form-data; boundary=---------------------------boundary".to_string(),
-            ..Default::default()
-        };
-
-        processor
-            .process_request(payload.as_bytes(), &mut tx, &options)
-            .unwrap();
-
-        assert_eq!(
-            tx.variable_map(RuleVariable::ArgsPost).get("field"),
-            vec!["value"]
-        );
-    }
-
-    #[test]
     fn test_multipart_empty_body() {
-        let processor = MultipartBodyProcessor;
-        let mut tx = Transaction::new("test-9");
-
         let payload = "\
 -----------------------------boundary--\r
 ";
 
-        let options = BodyProcessorOptions {
-            mime: "multipart/form-data; boundary=---------------------------boundary".to_string(),
-            ..Default::default()
-        };
-
-        processor
-            .process_request(payload.as_bytes(), &mut tx, &options)
-            .unwrap();
+        let tx = inspect_request(
+            BodyProcessorKind::Multipart,
+            "multipart/form-data; boundary=---------------------------boundary",
+            payload.as_bytes(),
+        );
+        assert_eq!(request_error(&tx), None);
 
         // Should have no files or fields
         assert!(tx.files.is_empty());
@@ -519,20 +434,17 @@ text default\r
 -----------------------------9051914041544843365972754266\r
 ";
 
-        let processor = MultipartBodyProcessor;
-        let mut tx = Transaction::new("test-10");
-
-        let options = BodyProcessorOptions {
         // Duplicate parameter "a=1; a=2" - Go rejects this, Rust mime crate accepts it
-          mime: "multipart/form-data; boundary=---------------------------9051914041544843365972754266; a=1; a=2".to_string(),
-          ..Default::default()
-        };
-
-        let result = processor.process_request(payload.as_bytes(), &mut tx, &options);
+        let tx = inspect_request(
+            BodyProcessorKind::Multipart,
+            "multipart/form-data; boundary=---------------------------9051914041544843365972754266; a=1; a=2",
+            payload.as_bytes(),
+        );
+        let result = request_error(&tx);
 
         // Rust mime crate is lenient and parses successfully (unlike Go)
         // This is acceptable for a WAF - we still inspect the data
-        if result.is_ok() {
+        if result.is_none() {
             // Parser succeeded - check that we got the data
             assert_eq!(
                 tx.variable_map(RuleVariable::ArgsPost).get("text"),
@@ -564,22 +476,18 @@ Content-Type: text/plain\r\n\
 This is another very small test file..\r\n\
 ----------------------------756b6d74fa1a8ee2--\r\n";
 
-        let processor = MultipartBodyProcessor;
-        let mut tx = Transaction::new("test-11");
-
-        let options = BodyProcessorOptions {
-            mime: "multipart/form-data; boundary=--------------------------756b6d74fa1a8ee2"
-                .to_string(),
-            ..Default::default()
-        };
-
-        let result = processor.process_request(payload, &mut tx, &options);
+        let tx = inspect_request(
+            BodyProcessorKind::Multipart,
+            "multipart/form-data; boundary=--------------------------756b6d74fa1a8ee2",
+            payload,
+        );
+        let result = request_error(&tx);
 
         // Our parser is more lenient than Go's - it handles mixed line endings
         // Go would fail with "NextPart: EOF", but we accept it
         // For a WAF, being lenient is acceptable (we want to inspect the data)
         // However, we could make this stricter if needed
-        if result.is_err() {
+        if result.is_some() {
             assert_eq!(tx.multipart_strict_error.get(), "1");
         }
         // Note: Our parser might succeed here where Go's fails - that's okay for WAF purposes
@@ -601,19 +509,16 @@ Content-Disposition: form-data;\n\
 2\n\
 -------------------------------69343412719991675451336310646--\n";
 
-        let processor = MultipartBodyProcessor;
-        let mut tx = Transaction::new("test-12");
-
-        let options = BodyProcessorOptions {
-          mime: "multipart/form-data; boundary=-----------------------------69343412719991675451336310646".to_string(),
-          ..Default::default()
-        };
-
-        let result = processor.process_request(payload.as_bytes(), &mut tx, &options);
+        let tx = inspect_request(
+            BodyProcessorKind::Multipart,
+            "multipart/form-data; boundary=-----------------------------69343412719991675451336310646",
+            payload.as_bytes(),
+        );
+        let result = request_error(&tx);
 
         // Our parser doesn't support header folding (which is correct - it's not standard in multipart)
         // Should fail due to malformed headers
-        if result.is_err() {
+        if result.is_some() {
             assert_eq!(tx.multipart_strict_error.get(), "1");
         }
         // Note: Our simple parser might handle this differently than Go
@@ -639,21 +544,17 @@ Content-Type: text/plain\n\
 This is another very small test file..\n\
 \n";
 
-        let processor = MultipartBodyProcessor;
-        let mut tx = Transaction::new("test-13");
-
-        let options = BodyProcessorOptions {
-            mime: "multipart/form-data; boundary=------------------------756b6d74fa1a8ee2"
-                .to_string(),
-            ..Default::default()
-        };
-
-        let result = processor.process_request(payload.as_bytes(), &mut tx, &options);
+        let tx = inspect_request(
+            BodyProcessorKind::Multipart,
+            "multipart/form-data; boundary=------------------------756b6d74fa1a8ee2",
+            payload.as_bytes(),
+        );
+        let result = request_error(&tx);
 
         // Our parser handles missing final boundary gracefully (stops when no more boundaries found)
         // Go's parser might fail here. For a WAF, accepting incomplete data is reasonable
         // We still want to inspect whatever data we can parse
-        if result.is_err() {
+        if result.is_some() {
             assert_eq!(tx.multipart_strict_error.get(), "1");
         }
         // Note: Our parser might succeed here (parsing partial data) - acceptable for WAF

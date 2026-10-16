@@ -1101,6 +1101,28 @@ fn json_bodies_deeper_than_the_limit_are_body_errors() {
 }
 
 #[test]
+fn json_response_bodies_deeper_than_the_limit_are_body_errors() {
+    let waf = waf(r#"
+        SecResponseBodyAccess On
+        SecResponseBodyMimeType application/json
+        SecResponseBodyJsonDepthLimit 2
+        SecRule RESPONSE_HEADERS:Content-Type "@beginsWith application/json" "id:100,phase:3,pass,nolog,ctl:responseBodyProcessor=JSON"
+        SecRule RES_BODY_ERROR "@eq 1" "id:1,phase:4,deny,status:500"
+    "#);
+
+    for (body, too_deep) in [
+        (r#"{"a": {"b": 1}}"#, false),
+        (r#"{"a": [{"b": 1}]}"#, true),
+    ] {
+        let mut tx = waf.new_transaction();
+        tx.add_response_header("Content-Type", "application/json");
+        tx.process_response_headers(200, "HTTP/1.1");
+        let interruption = tx.process_response_body(body.as_bytes());
+        assert_eq!(interruption.is_some(), too_deep, "{body}");
+    }
+}
+
+#[test]
 fn only_response_bodies_of_listed_types_are_inspected() {
     let waf = waf(r#"
         SecResponseBodyAccess On
@@ -1568,6 +1590,31 @@ fn uploaded_files_are_stored_in_the_upload_dir_and_listed_in_files_tmpnames() {
 
     assert_eq!(tx.interruption().map(|i| i.rule_id), Some(1));
     assert_eq!(files_in(dir.path()), [b"hello"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn uploaded_files_are_readable_by_their_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // As Go's os.CreateTemp creates them
+    let dir = tempfile::tempdir().unwrap();
+    let waf = waf(&format!(
+        r#"
+        SecRequestBodyAccess On
+        SecUploadDir {}
+        "#,
+        dir.path().display()
+    ));
+
+    // Kept until the end: the transaction removes its uploads when dropped
+    let _tx = upload(&waf);
+
+    let modes: Vec<u32> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().metadata().unwrap().permissions().mode() & 0o777)
+        .collect();
+    assert_eq!(modes, [0o600]);
 }
 
 #[test]

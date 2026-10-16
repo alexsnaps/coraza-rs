@@ -6,50 +6,19 @@
 //! Parses XML bodies and extracts attribute values and text content.
 //! This is a lenient parser that handles malformed/incomplete XML gracefully.
 
-use super::{BodyProcessor, BodyProcessorError, BodyProcessorOptions};
 use crate::transaction::Transaction;
 use quick_xml::Reader;
 use quick_xml::events::Event;
 
-/// XML body processor
-pub struct XmlBodyProcessor;
-
-impl BodyProcessor for XmlBodyProcessor {
-    fn process_request(
-        &self,
-        body: &[u8],
-        tx: &mut Transaction,
-        _options: &BodyProcessorOptions,
-    ) -> Result<(), BodyProcessorError> {
-        // Parse XML and extract attributes and content
-        let (attrs, contents) = parse_xml(body);
-
-        // Populate REQUEST_XML collection
-        // //@* = all attribute values
-        // /* = all text content
-        let request_xml = &mut tx.request_xml;
-
-        // Store all attribute values under //@* key
-        for attr in attrs {
-            request_xml.add("//@*", &attr);
-        }
-
-        // Store all content values under /* key
-        for content in contents {
-            request_xml.add("/*", &content);
-        }
-
-        Ok(())
+/// Parses a request body's attribute values into REQUEST_XML `//@*`, and its text into
+/// REQUEST_XML `/*`, leniently: parsing stops at the first error.
+pub(super) fn process_request(body: &[u8], tx: &mut Transaction) {
+    let (attrs, contents) = parse_xml(body);
+    for attr in attrs {
+        tx.request_xml.add("//@*", &attr);
     }
-
-    fn process_response(
-        &self,
-        _body: &[u8],
-        _tx: &mut Transaction,
-        _options: &BodyProcessorOptions,
-    ) -> Result<(), BodyProcessorError> {
-        // XML processor doesn't process response bodies in this implementation
-        Ok(())
+    for content in contents {
+        tx.request_xml.add("/*", &content);
     }
 }
 
@@ -112,8 +81,14 @@ fn parse_xml(xml_data: &[u8]) -> (Vec<String>, Vec<String>) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{BodyProcessorKind, inspect_request};
     use super::*;
-    use crate::body_processors::BodyProcessorKind;
+
+    /// A transaction whose XML request body the XML processor inspected.
+    fn inspect_xml(body: &[u8]) -> Transaction {
+        inspect_request(BodyProcessorKind::Xml, "application/xml", body)
+    }
+
     #[test]
     fn test_xml_attributes() {
         // Go test: TestXMLAttribures
@@ -292,13 +267,8 @@ mod tests {
 
     #[test]
     fn test_xml_processor_basic() {
-        let processor = XmlBodyProcessor;
-        let mut tx = Transaction::new("test-1");
-
         let xml_doc = br#"<user><name>admin</name><role>superuser</role></user>"#;
-        processor
-            .process_request(xml_doc, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_xml(xml_doc);
 
         // Check REQUEST_XML populated
         let xml_content = tx.request_xml.get("/*");
@@ -308,13 +278,8 @@ mod tests {
 
     #[test]
     fn test_xml_processor_with_attributes() {
-        let processor = XmlBodyProcessor;
-        let mut tx = Transaction::new("test-2");
-
         let xml_doc = br#"<config version="1.0"><setting key="debug">true</setting></config>"#;
-        processor
-            .process_request(xml_doc, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_xml(xml_doc);
 
         // Check attributes
         let xml_attrs = tx.request_xml.get("//@*");
@@ -327,28 +292,9 @@ mod tests {
     }
 
     #[test]
-    fn test_xml_from_registry() {
-        let processor = BodyProcessorKind::Xml;
-        let mut tx = Transaction::new("test-3");
-
-        let xml_doc = br#"<test>value</test>"#;
-        processor
-            .process_request(xml_doc, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
-
-        let xml_content = tx.request_xml.get("/*");
-        assert!(xml_content.contains(&"value".to_string()));
-    }
-
-    #[test]
     fn test_xml_empty() {
-        let processor = XmlBodyProcessor;
-        let mut tx = Transaction::new("test-4");
-
         let xml_doc = b"<root></root>";
-        processor
-            .process_request(xml_doc, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_xml(xml_doc);
 
         // Empty XML should produce no content
         let xml_content = tx.request_xml.get("/*");
@@ -360,14 +306,9 @@ mod tests {
 
     #[test]
     fn test_xml_malformed_lenient() {
-        let processor = XmlBodyProcessor;
-        let mut tx = Transaction::new("test-5");
-
         // Malformed XML - missing closing tags
         let xml_doc = b"<root><item>value1<item>value2";
-        processor
-            .process_request(xml_doc, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_xml(xml_doc);
 
         // Should still extract what it can
         let xml_content = tx.request_xml.get("/*");

@@ -9,7 +9,7 @@
 
 pub mod actions;
 pub mod audit_log;
-pub mod body_processors;
+mod body_processors;
 pub mod collection;
 pub mod config;
 pub mod operators;

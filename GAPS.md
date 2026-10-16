@@ -114,6 +114,12 @@ Suggested order: 1 → 2 → 3 → 6, then 4 and 5. The first three items of 1 a
     interrupts the transaction (413 for a request, 500 for a response, outside any rule) before that phase's rules,
     and `ProcessPartial` inspects only the first `limit` bytes. Go counts a body exactly at the limit as reaching
     it, and so does this.
+- [x] **`SecUploadFileLimit` and `SecUploadFileMode` are not enforced.** Both are parsed into `WafConfig`
+  (`upload_file_limit`, `upload_file_mode`), and nothing reads them: a multipart body stores any number of files in
+  `SecUploadDir`, and `MULTIPART_FILE_LIMIT_EXCEEDED` is never set.
+  - Not a gap: Go parses both and enforces neither (its `SecUploadFileLimit` is "parsed but not yet enforced", see
+    corazawaf/coraza#1686). Uploads are now stored as Go's `os.CreateTemp` stores them, with mode 0600 and never
+    replacing an existing file, where they had the umask's default mode.
 
 ## 3. Variables that parse but are never set
 

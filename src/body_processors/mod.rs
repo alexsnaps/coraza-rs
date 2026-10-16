@@ -1,70 +1,48 @@
 // Copyright 2022 Juan Pablo Tosso and the OWASP Coraza contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! Body processors for different content types.
+//! Body processors: the parsers that turn a transaction's request or response body into
+//! variables, as `REQBODY_PROCESSOR` and `RES_BODY_PROCESSOR` name them.
 //!
-//! Body processors parse HTTP request and response bodies and populate
-//! transaction variables accordingly. Different processors handle different
-//! content types (URL-encoded, JSON, XML, multipart, etc.).
-//!
-//! # Example
-//!
-//! ```
-//! use coraza::RuleVariable;
-//! use coraza::body_processors::{BodyProcessorKind, BodyProcessorOptions};
-//! use coraza::waf::Waf;
-//!
-//! let content_type = "application/x-www-form-urlencoded";
-//! let processor = BodyProcessorKind::for_content_type(content_type).unwrap();
-//!
-//! let mut tx = Waf::default().new_transaction();
-//! let options = BodyProcessorOptions { mime: content_type.to_string(), ..Default::default() };
-//! processor.process_request(b"username=admin", &mut tx, &options)?;
-//! let username = tx.get_variable(RuleVariable::ArgsPost, Some("username"));
-//! assert_eq!(username.as_deref(), Some("admin"));
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
+//! A transaction runs them from [`Transaction::process_request_body`] and
+//! [`Transaction::process_response_body`], which record their failures in `REQBODY_ERROR`
+//! and `RES_BODY_ERROR`. Each one writes only its own variables, and reads what it needs
+//! (the `Content-Type`, the WAF's limits and upload directory) from the transaction.
 
 use crate::transaction::Transaction;
 use std::io;
 
-pub mod json;
-pub mod multipart;
-pub mod raw;
-pub mod urlencoded;
-pub mod xml;
+mod json;
+mod multipart;
+mod raw;
+mod urlencoded;
+mod xml;
 
-/// Body processor error types
+pub(crate) use urlencoded::parse_query;
+
+/// Why a body processor could not parse a body. Its text ends up in the variables rules
+/// read, such as `REQBODY_ERROR_MSG`.
 #[derive(Debug)]
-pub enum BodyProcessorError {
-    /// I/O error while reading body
+pub(crate) enum BodyProcessorError {
+    /// Storing an uploaded file failed
     Io(io::Error),
 
-    /// Body exceeds size limit
-    SizeLimit(usize, usize),
-
-    /// Invalid content encoding
+    /// The body's encoding, as its content type gives it, is invalid: the kind of body,
+    /// and why
     InvalidEncoding(String, String),
 
-    /// Malformed content
+    /// The body is malformed: the kind of body, and how
     Malformed(String, String),
-
-    /// Generic error
-    Generic(String),
 }
 
 impl std::fmt::Display for BodyProcessorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BodyProcessorError::Io(e) => write!(f, "I/O error: {}", e),
-            BodyProcessorError::SizeLimit(size, limit) => {
-                write!(f, "body size {} exceeds limit {}", size, limit)
-            }
             BodyProcessorError::InvalidEncoding(typ, msg) => {
                 write!(f, "invalid {} encoding: {}", typ, msg)
             }
             BodyProcessorError::Malformed(typ, msg) => write!(f, "malformed {}: {}", typ, msg),
-            BodyProcessorError::Generic(msg) => write!(f, "{}", msg),
         }
     }
 }
@@ -84,107 +62,10 @@ impl From<io::Error> for BodyProcessorError {
     }
 }
 
-/// Options passed to body processors
-#[derive(Debug, Clone)]
-pub struct BodyProcessorOptions {
-    /// MIME type of the request body (e.g., "multipart/form-data; boundary=...")
-    pub mime: String,
-
-    /// Upload directory for file uploads (multipart)
-    pub upload_dir: String,
-
-    /// File mode for uploaded files (octal, e.g., 0o600)
-    pub file_mode: u32,
-
-    /// Directory mode for upload directory (octal, e.g., 0o700)
-    pub dir_mode: u32,
-
-    /// Maximum number of files in multipart upload
-    pub file_limit: usize,
-
-    /// Keep uploaded files after transaction
-    pub keep_files: bool,
-
-    /// Deepest nesting of objects and arrays a JSON body may have
-    pub json_depth_limit: usize,
-}
-
-impl Default for BodyProcessorOptions {
-    fn default() -> Self {
-        Self {
-            mime: String::new(),
-            upload_dir: String::new(),
-            file_mode: 0,
-            dir_mode: 0,
-            file_limit: 0,
-            keep_files: false,
-            json_depth_limit: crate::config::DEFAULT_JSON_DEPTH_LIMIT,
-        }
-    }
-}
-
-/// Body processor trait for processing request and response bodies
-///
-/// Body processors are responsible for parsing bodies and populating
-/// transaction variables based on the content type.
-pub trait BodyProcessor: Send + Sync {
-    /// Process request body and populate transaction variables
-    ///
-    /// # Arguments
-    ///
-    /// * `body` - The raw request body bytes
-    /// * `tx` - The transaction to populate
-    /// * `options` - Body processor options
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use coraza::body_processors::{BodyProcessor, BodyProcessorOptions, BodyProcessorError};
-    /// use coraza::transaction::Transaction;
-    ///
-    /// struct MyProcessor;
-    ///
-    /// impl BodyProcessor for MyProcessor {
-    ///     fn process_request(&self, body: &[u8], tx: &mut Transaction,
-    ///                        options: &BodyProcessorOptions)
-    ///                       -> Result<(), BodyProcessorError> {
-    ///         // Parse body and populate tx variables
-    ///         Ok(())
-    ///     }
-    ///
-    ///     fn process_response(&self, _body: &[u8], _tx: &mut Transaction,
-    ///                         _options: &BodyProcessorOptions)
-    ///                        -> Result<(), BodyProcessorError> {
-    ///         Ok(())
-    ///     }
-    /// }
-    /// ```
-    fn process_request(
-        &self,
-        body: &[u8],
-        tx: &mut Transaction,
-        options: &BodyProcessorOptions,
-    ) -> Result<(), BodyProcessorError>;
-
-    /// Process response body and populate transaction variables
-    ///
-    /// # Arguments
-    ///
-    /// * `body` - The raw response body bytes
-    /// * `tx` - The transaction to populate
-    /// * `options` - Body processor options
-    fn process_response(
-        &self,
-        body: &[u8],
-        tx: &mut Transaction,
-        options: &BodyProcessorOptions,
-    ) -> Result<(), BodyProcessorError>;
-}
-
 /// The built-in body processors, named as `REQBODY_PROCESSOR` and
 /// `ctl:requestBodyProcessor` name them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BodyProcessorKind {
+pub(crate) enum BodyProcessorKind {
     /// Keeps the body as-is (`REQUEST_BODY` only): `RAW`
     Raw,
     /// `application/x-www-form-urlencoded`: `URLENCODED`
@@ -201,7 +82,7 @@ impl BodyProcessorKind {
     /// The processor a request `Content-Type` value selects, matched by
     /// case-insensitive prefix: urlencoded and multipart only. As in Go Coraza, JSON
     /// and XML bodies need `ctl:requestBodyProcessor`.
-    pub fn for_content_type(content_type: &str) -> Option<Self> {
+    pub(crate) fn for_content_type(content_type: &str) -> Option<Self> {
         let content_type = content_type.trim().to_ascii_lowercase();
         if content_type.starts_with("application/x-www-form-urlencoded") {
             Some(Self::UrlEncoded)
@@ -213,7 +94,7 @@ impl BodyProcessorKind {
     }
 
     /// The processor's name, e.g. `URLENCODED`.
-    pub const fn name(self) -> &'static str {
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Raw => "RAW",
             Self::UrlEncoded => "URLENCODED",
@@ -223,41 +104,49 @@ impl BodyProcessorKind {
         }
     }
 
-    /// Parses a request body into `tx`; see [`BodyProcessor::process_request`].
+    /// Parses a request body into `tx`'s variables.
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is malformed for this processor.
-    pub fn process_request(
+    /// If the body is malformed for this processor, or an uploaded file can't be stored.
+    pub(crate) fn process_request(
         self,
         body: &[u8],
         tx: &mut Transaction,
-        options: &BodyProcessorOptions,
     ) -> Result<(), BodyProcessorError> {
-        self.processor().process_request(body, tx, options)
-    }
-
-    /// Parses a response body into `tx`; see [`BodyProcessor::process_response`].
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the body is malformed for this processor.
-    pub fn process_response(
-        self,
-        body: &[u8],
-        tx: &mut Transaction,
-        options: &BodyProcessorOptions,
-    ) -> Result<(), BodyProcessorError> {
-        self.processor().process_response(body, tx, options)
-    }
-
-    fn processor(self) -> &'static dyn BodyProcessor {
         match self {
-            Self::Raw => &raw::RawBodyProcessor,
-            Self::UrlEncoded => &urlencoded::UrlencodedBodyProcessor,
-            Self::Multipart => &multipart::MultipartBodyProcessor,
-            Self::Json => &json::JsonBodyProcessor,
-            Self::Xml => &xml::XmlBodyProcessor,
+            Self::Multipart => multipart::process_request(body, tx),
+            Self::Json => json::process_request(body, tx),
+            // Any body parses as these
+            Self::Raw => {
+                raw::process_request(body, tx);
+                Ok(())
+            }
+            Self::UrlEncoded => {
+                urlencoded::process_request(body, tx);
+                Ok(())
+            }
+            Self::Xml => {
+                xml::process_request(body, tx);
+                Ok(())
+            }
+        }
+    }
+
+    /// Parses a response body into `tx`'s variables; only JSON ones are parsed, the
+    /// others are left alone.
+    ///
+    /// # Errors
+    ///
+    /// If the body is malformed for this processor.
+    pub(crate) fn process_response(
+        self,
+        body: &[u8],
+        tx: &mut Transaction,
+    ) -> Result<(), BodyProcessorError> {
+        match self {
+            Self::Json => json::process_response(body, tx),
+            Self::Raw | Self::UrlEncoded | Self::Multipart | Self::Xml => Ok(()),
         }
     }
 }
@@ -281,6 +170,77 @@ impl std::str::FromStr for BodyProcessorKind {
             crate::types::ParseValueError::new("unknown body processor", name.to_string())
         })
     }
+}
+
+/// A transaction whose request body, of `content_type`, `processor` inspected in the
+/// request body phase, with request body access and otherwise `config`'s settings.
+#[cfg(test)]
+fn inspect_request_with(
+    config: crate::config::WafConfig,
+    processor: BodyProcessorKind,
+    content_type: &str,
+    body: &[u8],
+) -> Transaction {
+    let mut tx = Transaction::new("test");
+    tx.set_config(std::sync::Arc::new(crate::config::WafConfig {
+        request_body_access: true,
+        ..config
+    }));
+    tx.add_request_header("Content-Type", content_type);
+    tx.set_request_body_processor(processor);
+    tx.process_request_headers();
+    tx.process_request_body(body);
+    tx
+}
+
+/// [`inspect_request_with`] a default WAF's settings.
+#[cfg(test)]
+fn inspect_request(processor: BodyProcessorKind, content_type: &str, body: &[u8]) -> Transaction {
+    inspect_request_with(
+        crate::config::WafConfig::default(),
+        processor,
+        content_type,
+        body,
+    )
+}
+
+/// A transaction whose JSON response body `processor` inspected in the response body
+/// phase.
+#[cfg(test)]
+fn inspect_response(processor: BodyProcessorKind, body: &[u8]) -> Transaction {
+    let mut tx = Transaction::new("test");
+    tx.set_config(std::sync::Arc::new(crate::config::WafConfig {
+        response_body_access: true,
+        response_body_mime_types: vec!["application/json".to_string()],
+        ..crate::config::WafConfig::default()
+    }));
+    tx.add_response_header("Content-Type", "application/json");
+    tx.set_response_body_processor(processor);
+    tx.process_response_headers(200, "HTTP/1.1");
+    tx.process_response_body(body);
+    tx
+}
+
+/// REQBODY_PROCESSOR_ERROR_MSG, if the request body processor failed.
+#[cfg(test)]
+fn request_error(tx: &Transaction) -> Option<String> {
+    use crate::RuleVariable::{ReqbodyProcessorError, ReqbodyProcessorErrorMsg};
+    let failed = tx.get_variable(ReqbodyProcessorError, None).as_deref() == Some("1");
+    failed.then(|| {
+        tx.get_variable(ReqbodyProcessorErrorMsg, None)
+            .unwrap_or_default()
+    })
+}
+
+/// RES_BODY_PROCESSOR_ERROR_MSG, if the response body processor failed.
+#[cfg(test)]
+fn response_error(tx: &Transaction) -> Option<String> {
+    use crate::RuleVariable::{ResBodyProcessorError, ResBodyProcessorErrorMsg};
+    let failed = tx.get_variable(ResBodyProcessorError, None).as_deref() == Some("1");
+    failed.then(|| {
+        tx.get_variable(ResBodyProcessorErrorMsg, None)
+            .unwrap_or_default()
+    })
 }
 
 #[cfg(test)]
