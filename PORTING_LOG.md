@@ -2,74 +2,45 @@
 
 **Note:** Crate renamed from `coraza-rs` to `coraza` on 2026-03-09.
 
-## Current Status (as of 2026-03-11)
+## Current Status (as of 2026-10-16)
 
-**Phase 11: Integration & Testing** - ✅ COMPLETE (All 5 steps complete)
+CRS v4.30.0, with Go Coraza's `coraza.conf-recommended` and CRS's `crs-setup.conf.example`, loads with nothing
+skipped, and 5,193 of CRS's 5,231 FTW regression tests pass (99.3%), none of the 38 failures being the engine's ([FTW_INTEGRATION_STATUS.md](FTW_INTEGRATION_STATUS.md)). Go Coraza's
+transformation tests pass in full (348). On Go Coraza's CRS benchmarks, a request takes 2.6 to 31 times less time
+than in Go, and compiling CRS 2.7 times more ([README.md](README.md)). What still differs from Go Coraza is in
+[GAPS.md](GAPS.md).
 
-**Previously Completed:**
-**Phase 10: WAF Core & Configuration** - ✅ COMPLETE (6/6 steps, 2 skipped/deferred)
+**Phases:**
+- ✅ **Phases 1 to 11** (2026-03-09 to 03-11): the port itself. Types, transformations, operators, collections,
+  actions, the rule engine, the SecLang parser, transactions and body processors, the WAF and its configuration, and
+  integration tests.
+- ✅ **Phase 12** (2026-03-25 to 03-27, PR #1): FTW integration. The CRS regression tests run against the crate.
+- ✅ **Phase 13** (2026-10-14, PR #2): consolidation. One config type, rules compiled by the parser, one
+  representation of each concept.
+- ✅ **Phase 14** (2026-10-15, PR #4): closing the gaps against Go Coraza. CRS loads in full, and the FTW tests pass
+  as Go's harness runs them.
+- ✅ **Phase 15** (2026-10-15 to 10-16, in PRs #4 to #7): performance. The CRS benchmarks, the winnow parser, fewer
+  allocations.
+- ✅ **Phase 16** (2026-10-15 to 10-16, PRs #7 and #8): phase evaluation in the transaction, as Go orders it, and
+  values that keep the request's bytes.
+- ✅ **Phase 17** (2026-10-16, PRs #9 to #13): the connector's interface. Input calls only, rules only from SecLang,
+  the error log sink, one copy of a transaction's settings.
+- ✅ **Phase 18** (2026-10-16, branch `body-parsing`): body processing as Go does it. Multipart uploads, and a port
+  of Go's XML decoder.
 
-- ✅ **Phase 1:** Foundation types (RuleSeverity, RulePhase, RuleVariable, etc.) - COMPLETE
-- ✅ **Phase 2:** String utilities - COMPLETE
-- ✅ **Phase 3:** Transformations (30 transformations) - COMPLETE
-- ✅ **Phase 4:** Collections (Map, ConcatMap, Keyed trait) - COMPLETE
-- ✅ **Phase 5:** Operators (19 operators implemented, 6 deferred) - COMPLETE
-- ✅ **Phase 6:** Actions (27 core actions, 4 deferred) - COMPLETE
-- ✅ **Phase 7:** Rule Engine (8/8 steps complete, 3 features deferred) - COMPLETE
-- ✅ **Phase 8:** SecLang Parser (9/9 steps complete, 7 directives deferred) - COMPLETE
-- ✅ **Phase 9:** Transaction Enhancements (11/12 steps complete, Step 11 deferred to Phase 10) - COMPLETE
-  - ✅ Step 1: Body Processor Foundation - COMPLETE
-  - ✅ Step 2: URL-Encoded Body Processor - COMPLETE
-  - ✅ Step 3: Multipart Body Processor - COMPLETE
-  - ✅ Step 4: JSON Body Processor - COMPLETE
-  - ✅ Step 5: XML Body Processor - COMPLETE
-  - ✅ Step 6: Variable Population System - COMPLETE
-  - ✅ Step 7: Phase Processing with Rule Evaluation - COMPLETE
-  - ✅ Step 8: CTL Action Execution - COMPLETE (7 transaction-level commands, 13 WAF-level deferred to Phase 10)
-  - ✅ Step 9: Advanced RuleGroup Features - COMPLETE (skip/skipAfter, phase filtering, interruption handling)
-  - ✅ Step 10: Deferred Actions - COMPLETE (exec, expirevar, setenv, initcol with Go parity)
-  - ⏭️ Step 11: Persistence Layer - SKIPPED (not implemented in Go)
-  - ✅ Step 12: Integration Tests & Documentation - COMPLETE (17 integration tests)
-- ✅ **Phase 10:** WAF Core & Configuration (6/6 steps complete, 2 skipped/deferred) - COMPLETE
-  - ✅ Step 1: WAF Core & Configuration - COMPLETE (29 tests)
-  - ✅ Step 2: Rule Storage & Management - COMPLETE (10 tests)
-  - ✅ Step 3: Rule Update & Default Actions - COMPLETE (4 tests)
-  - ✅ Step 4: File-Based Operators - COMPLETE (7 tests)
-  - ✅ Step 5: CTL Rule Exclusion (Transaction-Local) - COMPLETE (10 tests)
-  - ✅ Step 6: CTL Tag/Msg-Based Exclusions - COMPLETE (5 tests)
-  - ⏭️ Step 7: Persistence Layer - SKIPPED (not implemented in Go)
-  - ⏭️ Step 8: Audit Logging - DEFERRED to future phase
-- ✅ **Phase 11:** Integration & Testing (5/5 steps complete) - COMPLETE
-  - ✅ Step 1: E2E Test Infrastructure - COMPLETE (TestServer, TestRequest, TestResponse - 5 tests)
-  - ✅ Step 2: WAF Lifecycle Tests - COMPLETE (29 tests covering config, rules, transactions, phases)
-  - ✅ Step 3: HTTP Integration Tests - COMPLETE (10 tests covering various HTTP scenarios)
-  - ✅ Step 4: SecLang E2E Integration Tests - COMPLETE (26 tests demonstrating parser→WAF→HTTP pipeline)
-  - ✅ Step 5: OWASP CRS v4 Compatibility - COMPLETE (23 tests validating CRS infrastructure and attack patterns)
+The phase sections below were written as each phase was done, and describe the code as it was then. Phases 13 to 18
+changed much of it: `TransactionState`, the `Action` trait, `WafBuilder` and `RuleGroup::eval` are gone, values are
+bytes, and the public surface is what a connector uses. Their entries are at the end of this log.
 
-**Quality Metrics:**
-- 1274 tests passing total (↑16 from Phase 11 initial completion):
-  - 919 unit tests (lib tests)
-  - 93 integration tests:
-    - 26 E2E SecLang integration tests (tests/e2e_seclang.rs)
-    - 29 WAF lifecycle tests (tests/waf_lifecycle.rs)
-    - 10 HTTP integration tests (tests/http_integration.rs)
-    - 23 CRS v4 compatibility tests (tests/crs_compatibility.rs) - ✨ Expanded with attack patterns!
-    - 5 E2E infrastructure tests (tests/e2e/mod.rs)
-  - 168 doc tests
-  - 94 other integration tests (transaction, seclang, rule engine)
-- ✅ Clippy clean (0 warnings)
-- ✅ 100% test parity with Go implementation for all implemented features
-- ✅ CRS v4 infrastructure validated with attack pattern coverage:
-  - Protocol violations (920xxx): HTTP request smuggling, invalid methods, missing headers
-  - Path traversal (930xxx): Unix/Windows variants, restricted file access
-  - LFI/RFI (931xxx): Local/remote file inclusion patterns
-  - Command injection (932xxx): Unix/Windows RCE, Shellshock
-  - PHP injection (933xxx): Function calls, variable injection
-  - Session fixation (943xxx): Session ID manipulation
-  - Java attacks (944xxx): Deserialization detection
-
-**Next Milestone:** Production release preparation
-**Focus:** Documentation, examples, performance benchmarking, deployment guides
+**Quality metrics** (at `62872e3`):
+- 1,249 tests passing:
+  - 936 unit tests (lib)
+  - 270 integration tests: 130 in `tests/seclang_rules.rs`, 41 in `tests/seclang.rs`, 26 in `tests/e2e_seclang.rs`,
+    26 in `tests/http_integration.rs`, 23 in `tests/waf_lifecycle.rs`, 13 in `tests/transaction_integration.rs`, 10
+    in `tests/e2e_tests.rs` and 1 in `tests/upload_temp_dir.rs`
+  - 3 in `examples/ftw_server.rs`
+  - 40 doc tests
+- `cargo clippy --all-features --all-targets -- -D warnings` and `cargo fmt --check` clean
 
 ## Porting Strategy & Guidelines
 
@@ -103,6 +74,10 @@
 
 ### Example 1: TransactionState (Operators)
 
+> **Update (2026-10-14):** `TransactionState` is gone (`812b875`). It had one production implementation, and its
+> do-nothing default bodies hid a method `Transaction` never implemented (`set_allow_type`, so `allow` did nothing).
+> Operators, macros and actions now take `&Transaction`, the concrete type, as guideline 1 asks.
+
 ```rust
 // ✅ GOOD: Generic static dispatch (what we implemented)
 pub trait TransactionState {
@@ -128,6 +103,10 @@ impl Operator for Eq {
 ```
 
 ### Example 2: RuleMetadata Removed (Actions)
+
+> **Update (2026-10-14):** the struct below, `actions::Rule`, is now named `RuleMetadata` (`db29cea`), as it shared
+> its name with `rules::Rule`. The `Action` trait is now an enum of the 11 actions that do something at runtime, and
+> the actions that only set metadata are plain functions (`fb34985`).
 
 **Initial Implementation (WRONG):**
 ```rust
@@ -2210,6 +2189,11 @@ CRS v4 rules can be parsed, but rule set modification directives (used for custo
 
 ## Deferred Items Summary
 
+> **Superseded (2026-10-16):** all of these are done. The operators in phase 12 (`@pmFromFile`, `@detectSQLi`,
+> `@detectXSS`), 13 (`@ipMatchFromFile` from SecLang) and 14 (the dataset operators); `ctl` in phases 13 and 14;
+> the directives in phase 14. `exec`, `expirevar` and `initcol` check their argument and have no runtime effect
+> (`fb34985`), and `setenv` sets `ENV` (`9b819b6`).
+
 The following features were deferred from earlier phases and will be implemented in Phases 9-10:
 
 ### From Phase 3: Operators (6 deferred)
@@ -2246,6 +2230,9 @@ The following features were deferred from earlier phases and will be implemented
 **Total Deferred:** 21 items (6 operators + 4 actions + 1 CTL execution + 3 features + 7 directives)
 
 ## Next Steps: Remaining Phases
+
+> **Superseded (2026-10-16):** phases 9 to 11 were done by 2026-03-11; the work since is in phases 12 to 18, at the
+> end of this log, and what is still open in [GAPS.md](GAPS.md).
 
 ### Phase 9: Transaction Enhancements ⏳ IN PROGRESS (~15 days, 8/12 steps complete)
 **Goal:** Enhance transaction system with full WAF capabilities and implement deferred features.
@@ -2320,6 +2307,8 @@ The following features were deferred from earlier phases and will be implemented
 ---
 
 ## Project Status Dashboard (as of 2026-03-11)
+
+> **Superseded:** see the current status at the top of this log.
 
 ### Completed Work
 **9 out of 11 phases complete** (82% of phases)
@@ -5928,3 +5917,167 @@ fn test_full_waf_lifecycle() {
 **Ready for Phase 11: Integration & Testing**
 
 ---
+
+## Phase 12: FTW Integration ✅ COMPLETE (2026-03-25 to 03-27, PR #1)
+
+### Goal
+Run CRS's go-ftw regression tests against the crate, as planned in
+[FTW_INTEGRATION_PLAN.md](FTW_INTEGRATION_PLAN.md).
+
+- `ftw-runner/`, a Go harness with go-ftw as a library, and `examples/ftw_server.rs` (`b518c9b`, `ebac1b3`).
+- `examples/ftw_server_async.rs` (hyper, tokio) runs the whole suite (`ed5fb6c`), with the rules `Include`
+  directives name, in a release build (`477d132`, `5ce0ab7`).
+- Operators `@pmFromFile` (`20197bc`), `@detectSQLi` and `@detectXSS`, on libinjectionrs (`57b39d2`).
+- Chained rules (`6f9bb3e`), quotes stripped from `SecMarker` names (`0cb47a9`), collections in the transaction's
+  variables (`013b6b5`), every matched rule recorded (`6831585`), variables resolved (`3f32d89`, `1d42162`), and
+  blocking actions that block (`eff1fa0`).
+
+No pass rate was recorded.
+
+---
+
+## Phase 13: Consolidation ✅ COMPLETE (2026-10-14, PR #2)
+
+### Goal
+Remove the duplicated and half-wired designs a review at `df91834` found (`c86f36d`), each change with its tests.
+
+- **One way from SecLang to a WAF.** One `config::WafConfig`, with Go's defaults (`02c27eb`). The parser compiles
+  `SecRule`, `SecAction` and `SecMarker`, and `Parser::into_waf` builds the WAF and links its chains;
+  `Parser::skip_failed_directives` keeps loading past failing directives (`dc9a7f5`). `WafBuilder` split from `Waf`
+  (`d2e41fb`).
+- **Rules as compiled.** `t:` was recorded and never applied: now it is, looked up by name, unknown names failing
+  (`33385ef`). `capture` fills `TX.0` to `TX.9` (`6716dbd`). Chains have one representation: in a 3-link chain the
+  middle link's actions never ran and the last ran twice (`49942bf`). `multiMatch` tests each value on its own
+  (`095300f`).
+- **The transaction, not a trait.** `TransactionState` gave way to `Transaction`, and `allow`, which a default body
+  had made a no-op, works (`812b875`). One `match` maps every `RuleVariable` to its data (`0c33a4a`); the
+  collection traits are gone (`6ffdb42`).
+- **Lookups by `match`.** Directives (`650a7cc`), actions (`b859700`), one operator table, which makes
+  `@ipMatchFromFile` and `@noMatch` usable from SecLang (`6daebe1`), and `BodyProcessorKind` in place of the global
+  body processor registry (`d6d2abc`). `actions::register`, which always panicked, is gone (`b5c2477`).
+- **Actions.** An enum of the 11 runtime actions, the metadata-only ones plain functions (`fb34985`); `ctl` values
+  parsed when the rule is compiled (`fa4fcf5`).
+- **Smaller duplicates.** Directive errors located in one place (`abd1bf8`); one `ParseValueError` (`e225736`); one
+  transformation signature (`c25e7fb`); one URL decoder, so `%C3%A9` in a query is `é`, not `Ã©` (`c01628d`); shared
+  hex and quote helpers (`dcfe4a7`, `5661717`).
+- **Tooling.** `ftw_server_async` requires its feature (`f408ed3`); `cargo fmt` (`5477075`); a failing body processor
+  sets `REQBODY_ERROR` rather than printing, the last print in library code (`f6c4544`).
+
+---
+
+## Phase 14: Closing the Gaps Against Go Coraza ✅ COMPLETE (2026-10-15, PR #4)
+
+### Goal
+Load CRS v4.30.0 in full and behave as Go Coraza (`3fc3ae2`) does, as recorded in [GAPS.md](GAPS.md) (`9d09fe8`).
+At the start, loading CRS skipped 93 directives.
+
+- **Detection** on libperfusion (`2a5c022`): on libinjection's 335,284 sample inputs, the same SQLi verdicts and
+  fingerprints as libinjection-go v0.3.4, and 32 more XSS inputs flagged, none fewer.
+- **CRS loads in full** (`92013ad`): data files found next to the config naming them (`ec262b4`); negated variables
+  exclude keys (`d51a506`); `SecRuleUpdateTargetById` and `ByTag`, CRS's 55 exclusions (`ec7b627`);
+  `SecDefaultAction`, with which CRS's `block` adds to the anomaly score rather than denies (`8592ea6`);
+  `ARGUMENTS_LIMIT_REACHED`, `URI_PARSE_ERROR` and `MULTIPART_DUPLICATE_PART_HEADER`, with `SecArgumentsLimit`
+  enforced (`544a390`); `t:removeCommentsChar` (`396b84e`); the audit log, JSON depth and response MIME directives
+  (`92dd054`).
+- **Settings acted on.** Body processors chosen through `REQBODY_PROCESSOR` and `ctl` (`d3e1335`); `ctl:auditEngine`,
+  `auditLogParts` and `debugLogLevel` (`6b8270c`); body access (`0be69f3`) and body limits (`b8bf643`).
+- **Variables set.** `REQUEST_URI` with its query string (`60f0abd`), `XML` (`7166de0`), `MATCHED_VAR` and its kin
+  (`3bd2d64`), the names variables (`362e057`), `UNIQUE_ID`, `ARGS_COMBINED_SIZE` and `MULTIPART_INVALID_QUOTING`
+  (`8ab7641`), `ENV` from `setenv` (`9b819b6`), `RULE`, `HIGHEST_SEVERITY` and `TIME*` (`3a88696`), `ARGS_PATH`,
+  `MULTIPART_NAME` and `MULTIPART_FILENAME` (`bdbb456`), `MULTIPART_FILENAME_CHARSET` and `_LANGUAGE` from
+  `filename*` (`4254ebb`), and Go's spellings `RES_BODY_*` and `FILES_TMPNAMES` (`ae6b3ff`).
+- **Directives.** `SecRuleRemoveById`, `ByMsg`, `ByTag` and `SecRuleUpdateActionById` (`be9e49b`); `SecDataset`, with
+  `@pmFromDataset` and `@ipMatchFromDataset` (`9a4227b`); the debug, audit log, remote rules and MIME clear
+  directives (`471b68d`); and the ones Go accepts and ignores (`f507728`): the parser knows all 69 of Go's.
+- **Logging.** Matches recorded as Go records them, with Go's error log line (`e376690`); audit logs in the `Native`,
+  `JSON` and `JSONLegacy` formats to `Serial` and `Concurrent` writers (`93ce929`), then `OCSF` and `Syslog`
+  (`26ae64d`).
+- **Operators** `@geoLookup`, `@inspectFile`, `@rbl`, `@restpath` and `@validateNid` (`baa6242`).
+- **Transformations.** No more strings built from invalid UTF-8 in `unsafe` blocks, which killed the FTW server
+  (`d85c56e`); bytes carried between transformations (`db1f1cf`); Go's current `urlDecodeUni`, `cssDecode`,
+  `normalisePathWin` and `cmdLine` (`fb56ef1`). Go's transformation tests: 333 of 348 passed before, all after.
+- **Found by the FTW tests.** `t:compressWhitespace` panicked inside characters (`b12facb`); regex keys of
+  case-insensitive collections (`1f6af7a`); quoted multipart parameters (`fb14611`); `REQUEST_BODY` only from the
+  URLENCODED and RAW processors (`44c0b88`); `REQUEST_FILENAME` decoded (`3f48fef`); cookies parsed as Go does
+  (`cba9e0b`); `@rx` compiled as Go compiles it (`f205580`); every part header in `MULTIPART_PART_HEADERS`
+  (`ac62ba6`); `ctl:ruleRemoveTarget*` applied (`4e2fc52`); `t:htmlEntityDecode` as Go's `html.UnescapeString`
+  (`26e5453`).
+- **The FTW server** handles requests as Go's CRS harness does (`41a911b`).
+
+FTW: the first full run passed 5,053 of 5,231; after these fixes, 5,185 (99.1%).
+
+---
+
+## Phase 15: Performance ✅ COMPLETE (2026-10-15 to 10-16, in PRs #4 to #7)
+
+- `@rx` and `@pm` use the pattern compiled at load time when it has no macro (`add1b77`, PR #4): a plain `GET` cost
+  464 ms over CRS's rules, and now under 1 ms.
+- `benches/crs.rs` ports Go Coraza's four CRS benchmarks, on divan (`efcf176`, PR #5).
+- The SecLang parser on winnow (`aaa71d8`, PR #6), and fewer allocations per rule (`c84a324`): `GET` 925 to 649 µs,
+  form `POST` 1,110 to 823 µs, 10 KB `POST` 4,583 to 3,615 µs, with about half the allocations.
+- Byte searches with memchr, in the operators (`1cd291d`) and the parser (`e9cd3a7`), in PR #7.
+
+Against Go Coraza on the same machine, in the [README](README.md): a request takes 2.6 to 31 times less time, and
+compiling CRS 2.7 times more.
+
+---
+
+## Phase 16: Phase Evaluation and Byte Values ✅ COMPLETE (2026-10-15 to 10-16, PRs #7 and #8)
+
+- **Phases as Go runs them.** Phase evaluation moves into the transaction (`484de04`, `src/transaction/phase.rs`). The
+  rule engine mode is read when a disruptive action runs, so a `ctl:ruleEngine` applies to the next rule
+  (`ea69f9b`); phases run in Go's order, each once, a body phase only right after its headers phase (`cc565f9`);
+  with the rule engine `Off`, no rules run (`8c341ff`); `skip` ends with its phase (`eadfecd`); a `DetectionOnly`
+  transaction is audit-logged by its would-be interruption (`390cf25`); `process_request_body` returns an `Option`,
+  as it never fails (`2615824`).
+- **Operators only read the transaction**, handing captures back through `Outputs` (`3cdc896`).
+- **Values are bytes** (`92d77c9`, `7476bb5`, `4447016`): `?param=%c0%af` puts the bytes C0 AF in `ARGS:param`, not
+  two U+FFFD, and `@validateUtf8Encoding`, which always returned false, works. FTW: 5,193 of 5,231 (`d6f0a4b`).
+- **[CONTEXT.md](CONTEXT.md)**, the project's domain language (`fef95e5`).
+- **PR #8.** `ctl` id ranges: rejected when malformed (`04ff8cd`), taken by `ruleRemoveTargetById` (`a2e9d86`), and
+  kept as ranges (`9f7541f`: `10-20000000` took 20 s). A transaction without a WAF has a default WAF's settings
+  (`b1240f9`). Uploads are stored in `SecUploadDir` and removed with the transaction (`5a01290`). The sync FTW server
+  runs phase 2 and logging on every request (`4f873d4`). Stale notes fixed (`351b6d2`).
+
+---
+
+## Phase 17: The Connector's Interface ✅ COMPLETE (2026-10-16, PRs #9 to #13)
+
+### Goal
+Deepen the modules an architecture review found shallow, so that a connector uses the crate only through SecLang,
+the WAF, a transaction's input and phase calls, and the error log, as Go Coraza's connectors do.
+
+- **#9.** A connector writes variables only through the input calls (`process_connection`, `process_uri`,
+  `add_request_header`, ...), which keep derived variables such as `ARGS` consistent, and reads them as rules do
+  (`bd5d089`).
+- **#10.** Body processors are private: a body is inspected only through the phase calls (`43d4151`). Uploads are
+  stored readable by their owner only, never replacing a file, as Go's `os.CreateTemp` stores them (`030ce72`).
+- **#11.** Rules are built only from SecLang: `WafBuilder` and the rule builders are crate-private, and
+  `tests/crs_compatibility.rs`, which only checked hand-built rules could be added, is gone (`a8d0132`). The public
+  surface is what a connector uses (`558c0d8`).
+- **#12.** `Parser::on_error_log` hands each matched rule with `log` to the connector, as Go's `WithErrorCallback`
+  does, and the logging phase runs exactly once, on drop if not called (`0fe42f2`).
+- **#13.** One copy of the settings a transaction takes from its WAF, `Transaction::with_config` the one constructor
+  (`ee1d995`).
+
+FTW unchanged: 5,193 of 5,231 at `0fe42f2`.
+
+---
+
+## Phase 18: Body Processing ✅ COMPLETE (2026-10-16, branch `body-parsing`)
+
+### Goal
+Process bodies as Go Coraza does, as compared at `ee1d995` (`2382230`).
+
+- **Multipart.** `FILES` holds both names of a file named twice (`filename` and `filename*`), as Go keeps both
+  (`1c17e7e`); `FILES`, `FILES_NAMES` and `FILES_TMPNAMES` have no keys (`989b398`).
+- **Uploads.** `SecUploadDir` must name a writable directory (`1a542ad`); a file that can't be stored fails the body
+  (`917fe52`); without `SecUploadDir`, uploads go to the system's temporary directory (`ffde0f5`); keeping uploads
+  needs `SecUploadDir` (`b222f27`).
+- **XML.** A port of the part of Go's `encoding/xml` decoder that Go Coraza uses, in place of quick-xml
+  (`25a795e`): it fails where Go fails (invalid UTF-8, a NUL, an end tag closing nothing open, an invalid name), and
+  keeps what quick-xml dropped (unquoted, valueless and repeated attributes, unknown entities). HTML 4's entities are
+  replaced, as Go Coraza has them replaced (`62872e3`). On 200,000 generated inputs, it reads each as Go Coraza's
+  `readXML` does, with the same error messages but for an invalid name that isn't UTF-8.
+
+FTW unchanged: 5,193 of 5,231 at `b222f27` and `62872e3`. [GAPS.md](GAPS.md) now lists only what is still open.
