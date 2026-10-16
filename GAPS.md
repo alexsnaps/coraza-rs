@@ -426,3 +426,31 @@ Found at `ee1d995`, comparing with Go Coraza at `3fc3ae2`: by reading `internal/
   - If the directory is gone when a file is uploaded, Go fails the body (`MULTIPART_STRICT_ERROR`,
     `REQBODY_ERROR`); this crate's `save_to_temp` creates it.
     - Done: as in Go, a file that can't be stored fails the body, and the directory isn't made.
+- [ ] **`SecUploadKeepFiles RelevantOnly` is rejected.** Found at `62872e3`. Go takes `On`, `Off` and `RelevantOnly`,
+  which keeps a transaction's uploaded files only when a rule that logs (one without `nolog`) matched
+  (`Transaction.Close`); this crate takes `On` and `Off` only, so a configuration with `RelevantOnly` fails to load.
+- [ ] **Body processor error messages have an extra prefix.** Found at `62872e3`. Go's `REQBODY_ERROR_MSG` is the
+  processor's name and its error (`XML: XML syntax error on line 1: ...`), and `REQBODY_PROCESSOR_ERROR_MSG` the
+  error alone; this crate puts the error's kind before the error in both (`XML: malformed xml: XML syntax error ...`),
+  from `BodyProcessorError`'s `Display`, for every processor (`malformed json: `, `invalid multipart encoding: `),
+  and in `RES_BODY_ERROR_MSG` and `RES_BODY_PROCESSOR_ERROR_MSG` too. Whether the rest of the JSON and multipart
+  messages is Go's is unverified.
+
+FTW at `62872e3`, after these fixes: 5,193 of 5,231 passed, and the same 38 failed as before them (`0fe42f2`) and
+before the XML fix (`b222f27`).
+
+## 8. Checks to run
+
+Go Coraza's own suites that haven't been run against this crate, found at `62872e3`. Go Coraza's `main` is 8 commits
+past `3fc3ae2`, at `f4bca98` (2026-10-16); only `a66ffcf` (#1682) changes behaviour, in a cache of transformation
+results this crate doesn't have. The rest are documentation, dependency updates and refactors.
+
+- [ ] **Go's operator tests.** `internal/operators/testdata`: 3,934 cases in 29 JSON files, to run as Go's
+  transformation tests were (section 6).
+- [ ] **Go's engine profiles.** `testing/engine`: 89 tests in 138 stages, each a request with the rules it must and
+  must not trigger, on `ctl`, chains across phases, `setvar`, macro expansion, `skip`, and JSON, XML, multipart and
+  response bodies. They're Go values (`profile.RegisterProfile`); a Go program can write them out as JSON for a Rust
+  test to run.
+- [ ] **The JSON body processor against Go's.** As the XML one was (section 7): the same inputs to Go Coraza's JSON
+  processor (gjson) and to this crate's (serde_json). They may differ in how keys are named, numbers written, and
+  duplicate keys and bytes that aren't UTF-8 read (unverified).

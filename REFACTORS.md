@@ -154,3 +154,19 @@ probed bugs.
 
 - With `multiMatch`, all transformed values are joined with `"|"` and matched once (`src/rules/rule.rs:263`). **Done:** each value is
   now tested on its own, with non-disruptive actions run per matching value.
+
+## Follow-ups
+
+Noticed at `62872e3`.
+
+- [ ] **The FTW server is untested, and never sets the connection.** `examples/ftw_server_async.rs` has no tests, and
+  never calls `Transaction::process_connection`, so `REMOTE_ADDR` and the rest stay empty: each of its error log lines
+  reads `[client ""]`.
+- [ ] **75 `doc_*` unit tests.** The doc examples of the items `558c0d8` made internal, kept as unit tests. Several
+  repeat the module's own tests (`doc_eq_type` and `test_eq_valid_values` in `src/operators/simple.rs` both check
+  leading zeros); keep each case once.
+- [ ] **Stale docs.**
+  - `FTW_INTEGRATION_STATUS.md:323` lists `Waf::add_rule`; rules now come only from SecLang.
+  - `FTW_INTEGRATION_PLAN.md` has the server write ModSecurity audit logs for go-ftw, which reads Go Coraza's error
+    log lines instead, as the server now writes them.
+  - `cargo doc` warns of an unclosed HTML tag, `<KeyValue>`, at `src/collection/map.rs:29`.
