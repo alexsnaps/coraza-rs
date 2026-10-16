@@ -117,6 +117,7 @@ impl BodyProcessorKind {
         match self {
             Self::Multipart => multipart::process_request(body, tx),
             Self::Json => json::process_request(body, tx),
+            Self::Xml => xml::process_request(body, tx),
             // Any body parses as these
             Self::Raw => {
                 raw::process_request(body, tx);
@@ -124,10 +125,6 @@ impl BodyProcessorKind {
             }
             Self::UrlEncoded => {
                 urlencoded::process_request(body, tx);
-                Ok(())
-            }
-            Self::Xml => {
-                xml::process_request(body, tx);
                 Ok(())
             }
         }

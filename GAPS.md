@@ -398,6 +398,10 @@ Found at `ee1d995`, comparing with Go Coraza at `3fc3ae2`: by reading `internal/
   - Go keeps what this crate drops: the value of an unquoted attribute (`<a attr=unquoted>`), a text node with an
     unknown entity (`&unknown; entity`, kept as written), every value of a repeated attribute (`b="1" b="2"`). A
     payload in any of these never reaches rules on `REQUEST_XML` or `XML`.
+  - Done: the processor reads XML with a port of Go's decoder (`src/body_processors/xml/decoder.rs`), set up as Go
+    Coraza sets it up, in place of quick-xml. Of 200,000 generated inputs, it reads each as Go Coraza's `readXML`
+    does, and fails on the same ones, with the same message but for an invalid name that isn't UTF-8 (lossy here).
+    Still to do: the HTML entities Go Coraza replaces too (`&copy;`).
 - [x] **`FILES` holds one of a file's two names.** For a part with both `filename` and `filename*` naming different
   files, Go adds both to `FILES` and `FILES_SIZES`, "so a rule catches whichever one a given backend actually
   resolves" (`TestMultipartFilenameStar`); this crate adds the `filename*` one, and the other only to

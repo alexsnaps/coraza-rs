@@ -2449,3 +2449,80 @@ fn uploads_are_stored_in_the_temp_dir_without_an_upload_dir() {
     drop(tx);
     assert!(!stored.exists());
 }
+
+/// A transaction whose request body `body` the XML processor read.
+fn xml_request(body: &[u8]) -> Transaction {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule REQUEST_HEADERS:Content-Type "^application/xml" "id:200000,phase:1,pass,nolog,ctl:requestBodyProcessor=XML"
+    "#);
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "application/xml");
+    tx.process_request_headers();
+    tx.process_request_body(body);
+    tx
+}
+
+/// REQUEST_XML's attribute values and text: its `//@*` and `/*`.
+fn request_xml(tx: &Transaction) -> (Vec<String>, Vec<String>) {
+    (
+        values(tx, RuleVariable::RequestXML, "//@*"),
+        values(tx, RuleVariable::RequestXML, "/*"),
+    )
+}
+
+#[test]
+fn xml_bodies_go_rejects_are_body_errors() {
+    // As Go Coraza's encoding/xml decoder, even with Strict off
+    let bodies: [&[u8]; 4] = [
+        b"<a>bad utf8 \xff here</a>",
+        b"<a>nul \x00 here</a>",
+        b"<a></b>",
+        b"<a><1bad>name</1bad></a>",
+    ];
+    for body in bodies {
+        let tx = xml_request(body);
+        let error = tx.get_variable(RuleVariable::ReqbodyError, None);
+        assert_eq!(error.as_deref(), Some("1"), "{body:?}");
+        assert_eq!(request_xml(&tx), (vec![], vec![]), "{body:?}");
+    }
+}
+
+#[test]
+fn xml_attributes_are_read_as_go_reads_them() {
+    // Unquoted, without a value (its name then) and repeated, as Go Coraza's decoder
+    let tx = xml_request(br#"<a attr=unquoted checked b="1" b="2">text</a>"#);
+    assert_eq!(request_xml(&tx).0, ["unquoted", "checked", "1", "2"]);
+}
+
+#[test]
+fn xml_text_with_an_unknown_entity_is_kept_as_written() {
+    let tx = xml_request(b"<a>&unknown; entity</a>");
+    assert_eq!(request_xml(&tx).1, ["&unknown; entity"]);
+}
+
+#[test]
+fn xml_names_are_those_go_reads() {
+    // Characters Go's name tables give as ranges of a stride other than 1
+    let tx = xml_request("<\u{0AE0}\u{3005}>x</\u{0AE0}\u{3005}>".as_bytes());
+    let error = tx.get_variable(RuleVariable::ReqbodyError, None);
+    assert_eq!(error.as_deref(), Some("0"));
+    assert_eq!(request_xml(&tx).1, ["x"]);
+}
+
+#[test]
+fn xml_html_elements_that_are_always_empty_close_where_they_open() {
+    // As Go's decoder, with HTMLAutoClose: an end tag after their text closes nothing,
+    // whatever its case, the Kelvin sign for k included
+    let tx = xml_request(b"<p>one<br>two</p>");
+    assert_eq!(request_xml(&tx).1, ["one", "two"]);
+    for body in [
+        "<br>text</br>",
+        "<BR>text</br>",
+        "<lin\u{212A}>text</lin\u{212A}>",
+    ] {
+        let tx = xml_request(body.as_bytes());
+        let error = tx.get_variable(RuleVariable::ReqbodyError, None);
+        assert_eq!(error.as_deref(), Some("1"), "{body}");
+    }
+}

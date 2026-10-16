@@ -1,82 +1,66 @@
 // Copyright 2022 Juan Pablo Tosso and the OWASP Coraza contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! XML body processor (application/xml, text/xml).
-//!
-//! Parses XML bodies and extracts attribute values and text content.
-//! This is a lenient parser that handles malformed/incomplete XML gracefully.
+//! XML body processor (application/xml, text/xml), as Go Coraza's: its attribute values
+//! and text, as Go's `encoding/xml` decoder reads them.
 
+mod decoder;
+mod tables;
+
+use super::BodyProcessorError;
 use crate::transaction::Transaction;
-use quick_xml::Reader;
-use quick_xml::events::Event;
+use decoder::{Decoder, Token};
 
 /// Parses a request body's attribute values into REQUEST_XML `//@*`, and its text into
-/// REQUEST_XML `/*`, leniently: parsing stops at the first error.
-pub(super) fn process_request(body: &[u8], tx: &mut Transaction) {
-    let (attrs, contents) = parse_xml(body);
-    for attr in attrs {
-        tx.request_xml.add("//@*", &attr);
+/// REQUEST_XML `/*`.
+///
+/// # Errors
+///
+/// If Go's decoder rejects the body, which leaves REQUEST_XML alone. A body cut short isn't
+/// rejected, but read as far as it goes.
+pub(super) fn process_request(body: &[u8], tx: &mut Transaction) -> Result<(), BodyProcessorError> {
+    let document = Document::read(body)
+        .map_err(|e| BodyProcessorError::Malformed("xml".to_string(), e.to_string()))?;
+    for value in document.attribute_values {
+        tx.request_xml.add("//@*", value);
     }
-    for content in contents {
-        tx.request_xml.add("/*", &content);
+    for text in document.text {
+        tx.request_xml.add("/*", text);
     }
+    Ok(())
 }
 
-/// Parse XML and extract attribute values and text content
-///
-/// This is a lenient parser that:
-/// - Extracts all attribute values from XML elements
-/// - Extracts all text content (trimmed of whitespace)
-/// - Handles malformed/incomplete XML gracefully (doesn't error on unexpected EOF)
-///
-/// # Arguments
-///
-/// * `xml_data` - The raw XML bytes
-///
-/// # Returns
-///
-/// A tuple of (attribute_values, text_contents)
-fn parse_xml(xml_data: &[u8]) -> (Vec<String>, Vec<String>) {
-    let mut attrs = Vec::new();
-    let mut contents = Vec::new();
+/// What the XML body processor reads of a document
+#[derive(Debug, Default)]
+struct Document {
+    /// The values of the elements' attributes, in order
+    attribute_values: Vec<String>,
+    /// The text between tags, in order, each piece trimmed, and empty ones left out
+    text: Vec<String>,
+}
 
-    let mut reader = Reader::from_reader(xml_data);
-    reader.config_mut().check_end_names = false; // Lenient mode
-    reader.config_mut().trim_text(true); // Trim whitespace
-
-    let mut buf = Vec::new();
-
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                // Extract attribute values
-                for attr in e.attributes().flatten() {
-                    if let Ok(value) = attr.decode_and_unescape_value(reader.decoder()) {
-                        attrs.push(value.to_string());
+impl Document {
+    /// Reads `xml` as Go Coraza's `readXML` does: a document cut short as far as it goes.
+    fn read(xml: &[u8]) -> Result<Self, decoder::Error> {
+        let mut decoder = Decoder::new(xml);
+        let mut document = Self::default();
+        loop {
+            match decoder.token() {
+                Ok(Some(Token::Start {
+                    attribute_values, ..
+                })) => document.attribute_values.extend(attribute_values),
+                Ok(Some(Token::CharData(text))) => {
+                    let text = text.trim();
+                    if !text.is_empty() {
+                        document.text.push(text.to_string());
                     }
                 }
+                Ok(Some(Token::End(_) | Token::Other)) => {}
+                Ok(None) | Err(decoder::Error::UnexpectedEof { .. }) => return Ok(document),
+                Err(e) => return Err(e),
             }
-            Ok(Event::Text(e)) => {
-                // Extract text content (already trimmed by config)
-                if let Ok(text) = e.unescape() {
-                    let text_str = text.trim();
-                    if !text_str.is_empty() {
-                        contents.push(text_str.to_string());
-                    }
-                }
-            }
-            Ok(Event::Eof) => break,
-            Err(_) => {
-                // Lenient mode - ignore errors (including unexpected EOF)
-                // Just stop parsing when we hit an error
-                break;
-            }
-            _ => {} // Ignore other events (comments, declarations, etc.)
         }
-        buf.clear();
     }
-
-    (attrs, contents)
 }
 
 #[cfg(test)]
@@ -106,7 +90,10 @@ mod tests {
 
 </bookstore>"#;
 
-        let (attrs, contents) = parse_xml(xml_doc);
+        let Document {
+            attribute_values: attrs,
+            text: contents,
+        } = Document::read(xml_doc).unwrap();
 
         // Should have 3 attributes: "en", "value", "en"
         assert_eq!(attrs.len(), 3, "Expected 3 attributes, got {}", attrs.len());
@@ -159,7 +146,7 @@ mod tests {
 			<body>Don't forget me this weekend!
 		</note>"#;
 
-        let (_, contents) = parse_xml(xml_doc);
+        let contents = Document::read(xml_doc).unwrap().text;
 
         assert_eq!(
             contents.len(),
@@ -188,7 +175,7 @@ mod tests {
 			<heading>Reminder</heading>
 			<body>Don't forget"#;
 
-        let (_, contents) = parse_xml(xml_doc);
+        let contents = Document::read(xml_doc).unwrap().text;
 
         let expected = ["Tove", "Jani", "Reminder", "Don't forget"];
         assert_eq!(
@@ -217,7 +204,7 @@ mod tests {
 			<heading>Reminder</heading>
 			<bod"#;
 
-        let (_, contents) = parse_xml(xml_doc);
+        let contents = Document::read(xml_doc).unwrap().text;
 
         let expected = ["Tove", "Jani", "Reminder"];
         assert_eq!(
@@ -245,7 +232,7 @@ mod tests {
 			<from>Jani</from>
 			<heading>Reminder</heading"#;
 
-        let (_, contents) = parse_xml(xml_doc);
+        let contents = Document::read(xml_doc).unwrap().text;
 
         let expected = ["Tove", "Jani", "Reminder"];
         assert_eq!(
