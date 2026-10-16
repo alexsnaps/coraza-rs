@@ -2526,3 +2526,15 @@ fn xml_html_elements_that_are_always_empty_close_where_they_open() {
         assert_eq!(error.as_deref(), Some("1"), "{body}");
     }
 }
+
+#[test]
+fn xml_bodies_have_html_4_entities_replaced() {
+    // As Go Coraza's decoder, with Go's HTMLEntity: in attribute values too, and HTML5's
+    // (&check;) kept as written
+    let tx = xml_request(r#"<a t="&nbsp;x">&copy; &eacute;&euro; &check; &#65;</a>"#.as_bytes());
+    let expected = (
+        vec!["\u{A0}x".to_string()],
+        vec!["© é€ &check; A".to_string()],
+    );
+    assert_eq!(request_xml(&tx), expected);
+}

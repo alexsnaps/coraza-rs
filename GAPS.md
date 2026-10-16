@@ -389,7 +389,7 @@ Found at `ee1d995`, comparing with Go Coraza at `3fc3ae2`: by reading `internal/
 - [x] **`RESPONSE_XML` is never set.** Not a gap: Go declares it but never writes it either, and its XML processor's
   `ProcessResponse` does nothing. As in Go, a response body with a processor (`ctl:responseBodyProcessor=XML`) is
   not kept in `RESPONSE_BODY` either.
-- [ ] **The XML processor reads XML differently from Go's.** `parse_xml` (`src/body_processors/xml.rs`) stops at its
+- [x] **The XML processor reads XML differently from Go's.** `parse_xml` (`src/body_processors/xml.rs`) stops at its
   first error and never fails; Go's non-strict `encoding/xml` decoder fails on what it can't read, which sets
   `REQBODY_ERROR`, and reads some input quick-xml drops. 7 of 14 probe inputs differ:
   - Go fails where this crate keeps what it read before the error, without `REQBODY_ERROR`: invalid UTF-8, a NUL
@@ -399,9 +399,9 @@ Found at `ee1d995`, comparing with Go Coraza at `3fc3ae2`: by reading `internal/
     unknown entity (`&unknown; entity`, kept as written), every value of a repeated attribute (`b="1" b="2"`). A
     payload in any of these never reaches rules on `REQUEST_XML` or `XML`.
   - Done: the processor reads XML with a port of Go's decoder (`src/body_processors/xml/decoder.rs`), set up as Go
-    Coraza sets it up, in place of quick-xml. Of 200,000 generated inputs, it reads each as Go Coraza's `readXML`
-    does, and fails on the same ones, with the same message but for an invalid name that isn't UTF-8 (lossy here).
-    Still to do: the HTML entities Go Coraza replaces too (`&copy;`).
+    Coraza sets it up, HTML 4's entities (`&copy;`) included, in place of quick-xml. Of 200,000 generated inputs, it
+    reads each as Go Coraza's `readXML` does, and fails on the same ones, with the same message but for an invalid
+    name that isn't UTF-8 (lossy here).
 - [x] **`FILES` holds one of a file's two names.** For a part with both `filename` and `filename*` naming different
   files, Go adds both to `FILES` and `FILES_SIZES`, "so a rule catches whichever one a given backend actually
   resolves" (`TestMultipartFilenameStar`); this crate adds the `filename*` one, and the other only to

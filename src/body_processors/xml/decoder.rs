@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 //! The part of Go's `encoding/xml` `Decoder` (`src/encoding/xml/xml.go`) that Go
-//! Coraza's XML body processor uses, set up as it sets it up: `Strict` off, and
-//! `AutoClose` with the HTML elements. Name spaces aren't translated, since the body
-//! processor reads no names.
+//! Coraza's XML body processor uses, set up as it sets it up: `Strict` off, `AutoClose`
+//! with the HTML elements, and `Entity` with HTML's. Name spaces aren't translated, since
+//! the body processor reads no names.
 
-use super::tables::{AUTO_CLOSE, FIRST, SECOND};
+use super::tables::{AUTO_CLOSE, FIRST, HTML_ENTITIES, SECOND};
 use std::fmt;
 
 /// An element's name as written: `prefix:local`, or `local` alone
@@ -424,7 +424,7 @@ impl<'a> Decoder<'a> {
     }
 
     /// Reads text up to `end`, past it for a quote or `]]>`. Outside CDATA sections, the
-    /// entities `lt`, `gt`, `amp`, `apos` and `quot` and numeric character references are
+    /// entities XML predefines and HTML 4's, and numeric character references, are
     /// replaced, and others kept as written (not `Strict`); `\r\n` and `\r` read as `\n`.
     /// Text that reaches the end of the input ends there, but for a CDATA section's.
     fn text(&mut self, end: TextEnd) -> Result<String, Error> {
@@ -634,7 +634,7 @@ impl<'a> Decoder<'a> {
     }
 }
 
-/// What the entity `name` stands for, of the ones XML predefines.
+/// What the entity `name` stands for, of the ones XML predefines, or else of HTML 4's.
 fn entity(name: &[u8]) -> Option<char> {
     match name {
         b"lt" => Some('<'),
@@ -642,7 +642,10 @@ fn entity(name: &[u8]) -> Option<char> {
         b"amp" => Some('&'),
         b"apos" => Some('\''),
         b"quot" => Some('"'),
-        _ => None,
+        _ => HTML_ENTITIES
+            .binary_search_by(|(html, _)| html.as_bytes().cmp(name))
+            .ok()
+            .map(|i| HTML_ENTITIES[i].1),
     }
 }
 
@@ -743,4 +746,14 @@ fn in_table(table: &[(u16, u16, u16)], c: char) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn html_entities_are_sorted_for_their_binary_search() {
+        assert!(HTML_ENTITIES.windows(2).all(|pair| pair[0].0 < pair[1].0));
+    }
 }
