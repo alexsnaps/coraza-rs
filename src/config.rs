@@ -139,7 +139,8 @@ pub struct WafConfig {
     /// Directory for persistent data (`SecDataDir`).
     pub data_dir: String,
 
-    /// Directory where uploaded files are stored (`SecUploadDir`).
+    /// Directory where uploaded files are stored (`SecUploadDir`); empty for the system's
+    /// temporary directory (`std::env::temp_dir`), as in Go Coraza.
     pub upload_dir: String,
 
     /// Maximum number of uploaded files processed per transaction (`SecUploadFileLimit`).
@@ -193,7 +194,7 @@ impl Default for WafConfig {
             server_signature: String::new(),
             component_names: Vec::new(),
             data_dir: String::new(),
-            upload_dir: "/tmp".to_string(),
+            upload_dir: String::new(),
             upload_file_limit: 100,
             upload_file_mode: 0o600,
             upload_keep_files: false,

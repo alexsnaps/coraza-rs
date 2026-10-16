@@ -2431,3 +2431,21 @@ fn an_upload_dir_that_is_gone_fails_the_body() {
         assert_eq!(flag.as_deref(), Some("1"), "{variable:?}");
     }
 }
+
+#[test]
+fn uploads_are_stored_in_the_temp_dir_without_an_upload_dir() {
+    // As in Go Coraza, and removed when the transaction ends
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule FILES_TMPNAMES "@rx ." "id:1,phase:2,pass,nolog,setvar:tx.stored=%{MATCHED_VAR}"
+    "#);
+
+    let tx = upload(&waf);
+
+    let stored = tx_var(&tx, "stored").expect("the upload is stored");
+    let stored = std::path::Path::new(&stored);
+    assert_eq!(stored.parent(), Some(std::env::temp_dir().as_path()));
+    assert_eq!(std::fs::read(stored).unwrap(), b"hello");
+    drop(tx);
+    assert!(!stored.exists());
+}
