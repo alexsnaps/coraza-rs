@@ -5,6 +5,7 @@
 
 use crate::operators::{Operator, Outputs};
 use crate::transaction::Transaction;
+use crate::transformations::text_of;
 
 /// Unconditional match operator.
 ///
@@ -29,14 +30,14 @@ use crate::transaction::Transaction;
 /// let op = unconditional_match();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "any input", &mut out));
-/// assert!(op.evaluate(&tx, "", &mut out));
+/// assert!(op.evaluate(&tx, "any input".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct UnconditionalMatch;
 
 impl Operator for UnconditionalMatch {
-    fn evaluate(&self, _tx: &Transaction, _input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, _tx: &Transaction, _input: &[u8], _out: &mut Outputs) -> bool {
         true
     }
 }
@@ -51,7 +52,7 @@ impl Operator for UnconditionalMatch {
 /// let op = unconditional_match();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "test", &mut out));
+/// assert!(op.evaluate(&tx, "test".as_bytes(), &mut out));
 /// ```
 pub fn unconditional_match() -> UnconditionalMatch {
     UnconditionalMatch
@@ -80,14 +81,14 @@ pub fn unconditional_match() -> UnconditionalMatch {
 /// let op = no_match();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(!op.evaluate(&tx, "any input", &mut out));
-/// assert!(!op.evaluate(&tx, "", &mut out));
+/// assert!(!op.evaluate(&tx, "any input".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct NoMatch;
 
 impl Operator for NoMatch {
-    fn evaluate(&self, _tx: &Transaction, _input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, _tx: &Transaction, _input: &[u8], _out: &mut Outputs) -> bool {
         false
     }
 }
@@ -102,7 +103,7 @@ impl Operator for NoMatch {
 /// let op = no_match();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(!op.evaluate(&tx, "test", &mut out));
+/// assert!(!op.evaluate(&tx, "test".as_bytes(), &mut out));
 /// ```
 pub fn no_match() -> NoMatch {
     NoMatch
@@ -132,12 +133,12 @@ pub fn no_match() -> NoMatch {
 /// let op = validate_byte_range("32-126").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(!op.evaluate(&tx, "Hello World", &mut out)); // Valid
-/// assert!(op.evaluate(&tx, "Hello\x00World", &mut out)); // Invalid (null byte)
+/// assert!(!op.evaluate(&tx, "Hello World".as_bytes(), &mut out)); // Valid
+/// assert!(op.evaluate(&tx, "Hello\x00World".as_bytes(), &mut out)); // Invalid (null byte)
 ///
 /// // Allow printable ASCII plus newline/tab
 /// let op = validate_byte_range("10,13,32-126").unwrap();
-/// assert!(!op.evaluate(&tx, "Hello\nWorld", &mut out));
+/// assert!(!op.evaluate(&tx, "Hello\nWorld".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct ValidateByteRange {
@@ -207,13 +208,13 @@ impl ValidateByteRange {
 }
 
 impl Operator for ValidateByteRange {
-    fn evaluate(&self, _tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, _tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         if input.is_empty() {
             return false; // Empty input is valid
         }
 
         // Check each byte - return true (violation) if any byte is invalid
-        for &byte in input.as_bytes() {
+        for &byte in input {
             if !self.valid_bytes[byte as usize] {
                 return true; // Violation detected
             }
@@ -233,7 +234,7 @@ impl Operator for ValidateByteRange {
 /// let op = validate_byte_range("32-126").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(!op.evaluate(&tx, "valid ASCII", &mut out));
+/// assert!(!op.evaluate(&tx, "valid ASCII".as_bytes(), &mut out));
 /// ```
 pub fn validate_byte_range(ranges: &str) -> Result<ValidateByteRange, String> {
     ValidateByteRange::new(ranges)
@@ -263,25 +264,25 @@ pub fn validate_byte_range(ranges: &str) -> Result<ValidateByteRange, String> {
 /// // Valid encodings
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(!op.evaluate(&tx, "/path", &mut out));
-/// assert!(!op.evaluate(&tx, "/path%20with%20spaces", &mut out));
-/// assert!(!op.evaluate(&tx, "%2Fpath%3Ftest", &mut out));
+/// assert!(!op.evaluate(&tx, "/path".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "/path%20with%20spaces".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "%2Fpath%3Ftest".as_bytes(), &mut out));
 ///
 /// // Invalid encodings
-/// assert!(op.evaluate(&tx, "/path%2", &mut out)); // Incomplete
-/// assert!(op.evaluate(&tx, "/path%ZZ", &mut out)); // Non-hex
-/// assert!(op.evaluate(&tx, "/path%2G", &mut out)); // Non-hex
+/// assert!(op.evaluate(&tx, "/path%2".as_bytes(), &mut out)); // Incomplete
+/// assert!(op.evaluate(&tx, "/path%ZZ".as_bytes(), &mut out)); // Non-hex
+/// assert!(op.evaluate(&tx, "/path%2G".as_bytes(), &mut out)); // Non-hex
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct ValidateUrlEncoding;
 
 impl Operator for ValidateUrlEncoding {
-    fn evaluate(&self, _tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, _tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         if input.is_empty() {
             return false; // Empty input is valid
         }
 
-        let bytes = input.as_bytes();
+        let bytes = input;
         let len = bytes.len();
         let mut i = 0;
 
@@ -320,8 +321,8 @@ impl Operator for ValidateUrlEncoding {
 /// let op = validate_url_encoding();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(!op.evaluate(&tx, "/valid%20path", &mut out));
-/// assert!(op.evaluate(&tx, "/invalid%2", &mut out));
+/// assert!(!op.evaluate(&tx, "/valid%20path".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "/invalid%2".as_bytes(), &mut out));
 /// ```
 pub fn validate_url_encoding() -> ValidateUrlEncoding {
     ValidateUrlEncoding
@@ -351,10 +352,10 @@ pub fn validate_url_encoding() -> ValidateUrlEncoding {
 /// // Valid UTF-8 (Rust &str is always valid UTF-8)
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(!op.evaluate(&tx, "Hello", &mut out));
-/// assert!(!op.evaluate(&tx, "Hello 世界", &mut out));
-/// assert!(!op.evaluate(&tx, "", &mut out));
-/// assert!(!op.evaluate(&tx, "🦀", &mut out));
+/// assert!(!op.evaluate(&tx, "Hello".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "Hello 世界".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "🦀".as_bytes(), &mut out));
 ///
 /// // Note: Cannot test invalid UTF-8 with &str since Rust guarantees &str is valid UTF-8
 /// ```
@@ -362,7 +363,7 @@ pub fn validate_url_encoding() -> ValidateUrlEncoding {
 pub struct ValidateUtf8Encoding;
 
 impl Operator for ValidateUtf8Encoding {
-    fn evaluate(&self, _tx: &Transaction, _input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, _tx: &Transaction, _input: &[u8], _out: &mut Outputs) -> bool {
         // In Rust, &str is guaranteed to be valid UTF-8, so this always returns false
         // However, if we receive input from C FFI or unsafe code, we should check
         // For now, since our input is &str, it's always valid UTF-8
@@ -389,7 +390,7 @@ impl Operator for ValidateUtf8Encoding {
 /// let op = validate_utf8_encoding();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(!op.evaluate(&tx, "valid UTF-8 ✓", &mut out));
+/// assert!(!op.evaluate(&tx, "valid UTF-8 ✓".as_bytes(), &mut out));
 /// ```
 pub fn validate_utf8_encoding() -> ValidateUtf8Encoding {
     ValidateUtf8Encoding
@@ -416,9 +417,10 @@ enum NidKind {
 }
 
 impl Operator for ValidateNid {
-    fn evaluate(&self, _tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
+    fn evaluate(&self, _tx: &Transaction, input: &[u8], out: &mut Outputs) -> bool {
+        let input = text_of(input);
         let mut valid = false;
-        for (index, found) in self.regex.find_iter(input).take(10).enumerate() {
+        for (index, found) in self.regex.find_iter(&input).take(10).enumerate() {
             let nid = found.as_str();
             let checks = match self.kind {
                 NidKind::Cl => is_rut(nid),
@@ -426,7 +428,7 @@ impl Operator for ValidateNid {
             };
             if checks {
                 valid = true;
-                out.capture(index, nid);
+                out.capture(index, nid.as_bytes());
             }
         }
         valid

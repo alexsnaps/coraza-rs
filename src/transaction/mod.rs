@@ -6,6 +6,7 @@
 mod phase;
 pub mod variables;
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use phase::FlowState;
@@ -21,7 +22,7 @@ use crate::collection::{Map, MatchData, Single};
 use crate::config::WafConfig;
 use crate::operators::Outputs;
 use crate::rules::RuleGroup;
-use crate::transformations::text_from_bytes;
+use crate::transformations::{text_from_bytes, text_of};
 use crate::types::{
     AuditEngineStatus, AuditLogPart, AuditLogParts, BodyLimitAction, RuleEngineStatus, RulePhase,
     RuleSeverity,
@@ -786,6 +787,11 @@ fn request_uri_path(uri: &str) -> Option<&str> {
         .then_some(path)
 }
 
+/// `value` as text, invalid UTF-8 replaced with U+FFFD, as logs show values.
+fn lossy(value: &[u8]) -> String {
+    text_of(value).into_owned()
+}
+
 /// `path` with its `%`-escapes, all valid, decoded; `+` stays, as in a URL's path.
 fn decode_path(path: &str) -> String {
     let bytes = path.as_bytes();
@@ -1002,8 +1008,8 @@ impl Transaction {
         // Computed here rather than kept up to date: anything may have added an argument
         let combined_size: usize = [&self.args_get, &self.args_post]
             .into_iter()
-            .flat_map(|args| args.find_all())
-            .map(|arg| arg.key.len() + arg.value.len())
+            .flat_map(|args| args.iter())
+            .map(|(key, value)| key.len() + value.len())
             .sum();
         self.args_combined_size.set(combined_size.to_string());
 
@@ -1020,7 +1026,7 @@ impl Transaction {
             format!("{}:{}", matched.variable.name(), matched.key)
         };
         self.matched_vars.add(&name, &matched.value);
-        self.matched_var.set(matched.value.as_str());
+        self.matched_var.set(matched.value_text());
         self.matched_var_name.set(name);
     }
 
@@ -1041,7 +1047,7 @@ impl Transaction {
     ) {
         // Each value replaced in place, as Go's SetIndex does: this runs for every rule
         // evaluated, and rebuilding the entries cost a fifth of a simple GET with CRS
-        self.rule.set_index("id", 0, &id.to_string());
+        self.rule.set_index("id", 0, id.to_string());
         if let Some(msg) = msg {
             self.rule.set_index("msg", 0, &msg);
         }
@@ -1302,7 +1308,8 @@ impl Transaction {
     /// Once ARGS_GET holds the argument limit's worth of values (`SecArgumentsLimit`),
     /// counting each value of a repeated key, the argument is dropped and
     /// ARGUMENTS_LIMIT_REACHED set to 1.
-    pub fn add_get_argument(&mut self, key: &str, value: &str) {
+    pub fn add_get_argument(&mut self, key: &str, value: impl AsRef<[u8]>) {
+        let value = value.as_ref();
         if self.within_argument_limit(self.args_get.value_count()) {
             self.args_get.add(key, value);
             self.args.add(key, value);
@@ -1311,7 +1318,8 @@ impl Transaction {
 
     /// Adds a request body argument to ARGS_POST and ARGS, within the argument limit as
     /// [`Transaction::add_get_argument`] does.
-    pub fn add_post_argument(&mut self, key: &str, value: &str) {
+    pub fn add_post_argument(&mut self, key: &str, value: impl AsRef<[u8]>) {
+        let value = value.as_ref();
         if self.within_argument_limit(self.args_post.value_count()) {
             self.args_post.add(key, value);
             self.args.add(key, value);
@@ -1321,7 +1329,8 @@ impl Transaction {
     /// Adds an argument the connector took from the URL path (e.g. `/users/{id}`) to
     /// ARGS_PATH and ARGS, within the argument limit as [`Transaction::add_get_argument`]
     /// does.
-    pub fn add_path_argument(&mut self, key: &str, value: &str) {
+    pub fn add_path_argument(&mut self, key: &str, value: impl AsRef<[u8]>) {
+        let value = value.as_ref();
         if self.within_argument_limit(self.args_path.value_count()) {
             self.args_path.add(key, value);
             self.args.add(key, value);
@@ -1345,7 +1354,8 @@ impl Transaction {
 
     /// Adds a response body argument to RESPONSE_ARGS, within the argument limit as
     /// [`Transaction::add_get_argument`] does.
-    pub fn add_response_argument(&mut self, key: &str, value: &str) {
+    pub fn add_response_argument(&mut self, key: &str, value: impl AsRef<[u8]>) {
+        let value = value.as_ref();
         if self.within_argument_limit(self.response_args.value_count()) {
             self.response_args.add(key, value);
         }
@@ -1999,9 +2009,8 @@ impl Transaction {
                 length: self.full_request_length.get().parse().unwrap_or(0),
                 args: self
                     .args
-                    .find_all()
-                    .into_iter()
-                    .map(|arg| (arg.key, arg.value))
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), lossy(value)))
                     .collect(),
                 ..AuditRequest::default()
             },
@@ -2021,17 +2030,19 @@ impl Transaction {
         if has(AuditLogPart::UploadedFiles) {
             transaction.request.files = Some(
                 self.files
-                    .find_all()
-                    .into_iter()
-                    .map(|file| AuditFile {
-                        size: self
-                            .files_sizes
-                            .get(&file.value)
-                            .first()
-                            .and_then(|size| size.parse().ok())
-                            .unwrap_or(0),
-                        mime: mime_type_of(&file.value).to_string(),
-                        name: file.value,
+                    .iter()
+                    .map(|(_, name)| {
+                        let name = lossy(name);
+                        AuditFile {
+                            size: self
+                                .files_sizes
+                                .get(&name)
+                                .first()
+                                .and_then(|size| size.parse().ok())
+                                .unwrap_or(0),
+                            mime: mime_type_of(&name).to_string(),
+                            name,
+                        }
                     })
                     .collect(),
             );
@@ -2120,19 +2131,22 @@ impl Transaction {
     /// single-value variable (with `key` `None`), or the first value of `key` in a
     /// collection. `None` if the variable isn't set or not available.
     pub fn get_variable(&self, variable: RuleVariable, key: Option<&str>) -> Option<String> {
-        self.variable_value(variable, key).map(str::to_string)
+        self.variable_value(variable, key).map(Cow::into_owned)
     }
 
-    /// [`Transaction::get_variable`], borrowing the value.
+    /// [`Transaction::get_variable`], borrowing the value when it is UTF-8; invalid UTF-8
+    /// is replaced with U+FFFD.
     pub(crate) fn variable_value<'a>(
         &'a self,
         variable: RuleVariable,
         key: Option<&'a str>,
-    ) -> Option<&'a str> {
+    ) -> Option<Cow<'a, str>> {
         match (self.collection(variable)?, key) {
-            (VariableCollection::Single(single), None) => Some(single.get()),
-            (VariableCollection::Map(map), Some(key)) => map.first(key),
-            (VariableCollection::Names(_, map), Some(key)) => map.first(key).map(|_| key),
+            (VariableCollection::Single(single), None) => Some(Cow::Borrowed(single.get())),
+            (VariableCollection::Map(map), Some(key)) => map.first(key).map(text_of),
+            (VariableCollection::Names(_, map), Some(key)) => {
+                map.first(key).map(|_| Cow::Borrowed(key))
+            }
             _ => None,
         }
     }
@@ -2224,8 +2238,8 @@ mod tests {
     fn test_operator_outputs_are_stored_in_tx_and_args_path() {
         let mut tx = Transaction::new("tx-006");
         let mut outputs = Outputs::new(true);
-        outputs.capture(0, "match1");
-        outputs.capture(5, "match6"); // Sparse indexing
+        outputs.capture(0, b"match1");
+        outputs.capture(5, b"match6"); // Sparse indexing
         outputs.add_path_argument("id", "42");
 
         tx.store_operator_outputs(&mut outputs);
@@ -2237,7 +2251,7 @@ mod tests {
 
         // Outputs not asking for captures drop them
         let mut outputs = Outputs::new(false);
-        outputs.capture(1, "ignored");
+        outputs.capture(1, b"ignored");
         tx.store_operator_outputs(&mut outputs);
         assert!(tx.tx.get("1").is_empty());
     }
@@ -2316,9 +2330,8 @@ mod tests {
         );
         let mut cookies: Vec<(String, String)> = tx
             .request_cookies
-            .find_all()
-            .into_iter()
-            .map(|cookie| (cookie.key, cookie.value))
+            .iter()
+            .map(|(name, value)| (name.to_string(), lossy(value)))
             .collect();
         cookies.sort();
         let pair = |name: &str, value: &str| (name.to_string(), value.to_string());
@@ -2415,7 +2428,7 @@ mod tests {
         tx.add_request_header("", "value");
 
         // Should not add header with empty key
-        assert!(tx.request_headers().find_all().is_empty());
+        assert!(tx.request_headers().is_empty());
     }
 
     #[test]
@@ -2449,7 +2462,7 @@ mod tests {
         tx.add_response_header("", "value");
 
         // Should not add header with empty key
-        assert!(tx.response_headers().find_all().is_empty());
+        assert!(tx.response_headers().is_empty());
     }
 
     #[test]

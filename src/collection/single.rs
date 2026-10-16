@@ -51,7 +51,7 @@ impl Single {
 
     /// The value as match data, with no key.
     pub fn find_all(&self) -> Vec<MatchData> {
-        vec![MatchData::without_key(self.variable, self.data.clone())]
+        vec![MatchData::without_key(self.variable, self.data.as_bytes())]
     }
 
     /// Name of the variable this value holds (e.g. `REQUEST_URI`).
@@ -101,7 +101,7 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].variable, RuleVariable::RequestURI);
         assert_eq!(matches[0].key, "");
-        assert_eq!(matches[0].value, "/api/users");
+        assert_eq!(matches[0].value, b"/api/users");
     }
 
     #[test]

@@ -148,8 +148,8 @@ fn a_rule_matches_a_value_its_operator_accepts() {
     let matches = &tx.matched_rules()[0].matches;
     assert_eq!(matches.len(), 1);
     assert_eq!(
-        (matches[0].key.as_str(), matches[0].value.as_str()),
-        ("test", "0")
+        (matches[0].key.as_str(), matches[0].value.as_slice()),
+        ("test", &b"0"[..])
     );
 }
 
@@ -185,7 +185,7 @@ fn transformations_are_applied_in_turn() {
     tx.process_request_headers();
 
     let matches = &tx.matched_rules()[0].matches;
-    assert_eq!(matches[0].value, "HELLO");
+    assert_eq!(matches[0].value, b"HELLO");
 }
 
 #[test]
@@ -1845,6 +1845,18 @@ fn audit_log_entries_can_be_ocsf() {
     assert_eq!(event["message"], "Evil");
     // Zero values are left out, as protobuf's JSON tags do in Go
     assert!(event["http_request"].get("length").is_none(), "{event}");
+}
+
+#[test]
+fn audit_log_entries_list_the_arguments() {
+    let dir = tempfile::tempdir().unwrap();
+    let waf = audited_waf(dir.path(), "SecAuditLogFormat OCSF");
+
+    audit_request(&waf, "tx-evil", "evil");
+
+    let log = std::fs::read_to_string(dir.path().join("audit.log")).unwrap();
+    let event: serde_json::Value = serde_json::from_str(log.trim_end()).unwrap();
+    assert_eq!(event["http_request"]["args"], "q=evil,");
 }
 
 #[test]

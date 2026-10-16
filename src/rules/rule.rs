@@ -371,7 +371,7 @@ mod tests {
         // Should match the ARGS:test with value "value"
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].key, "test");
-        assert_eq!(matches[0].value, "value");
+        assert_eq!(matches[0].value, b"value");
     }
 
     #[test]
@@ -426,7 +426,7 @@ mod tests {
 
         // Should match after lowercase transformation
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].value, "hello");
+        assert_eq!(matches[0].value, b"hello");
     }
 
     // Ported from: coraza/internal/corazawaf/rule_test.go - Chain tests

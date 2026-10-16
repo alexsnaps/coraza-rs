@@ -53,7 +53,7 @@ pub trait Operator {
     ///
     /// Returns true if the operator matches the input value according to its
     /// configured parameter (after macro expansion).
-    fn evaluate(&self, tx: &Transaction, input: &str, out: &mut Outputs) -> bool;
+    fn evaluate(&self, tx: &Transaction, input: &[u8], out: &mut Outputs) -> bool;
 }
 
 /// What operators hand back to their rule for a value: its captures, if the rule asked for
@@ -66,7 +66,7 @@ pub struct Outputs {
     /// Whether the rule asked for captures
     capturing: bool,
     /// Captures by index, 0 to 9, in the order the operator made them
-    captures: Vec<(usize, String)>,
+    captures: Vec<(usize, Vec<u8>)>,
     /// Path arguments, as key and value
     path_arguments: Vec<(String, String)>,
 }
@@ -87,9 +87,9 @@ impl Outputs {
     }
 
     /// Captures `value` as capture `index` (0 to 9), if the rule asked for captures.
-    pub fn capture(&mut self, index: usize, value: &str) {
+    pub fn capture(&mut self, index: usize, value: &[u8]) {
         if self.capturing {
-            self.captures.push((index, value.to_string()));
+            self.captures.push((index, value.to_vec()));
         }
     }
 
@@ -100,7 +100,7 @@ impl Outputs {
     }
 
     /// The captures, by index and in the order they were made, leaving none.
-    pub(crate) fn take_captures(&mut self) -> std::vec::Drain<'_, (usize, String)> {
+    pub(crate) fn take_captures(&mut self) -> std::vec::Drain<'_, (usize, Vec<u8>)> {
         self.captures.drain(..)
     }
 
@@ -113,13 +113,17 @@ impl Outputs {
 /// `matches(input)` for tests: evaluates an operator in an empty transaction, without captures.
 #[cfg(test)]
 pub(crate) trait Matches {
-    fn matches(&self, input: &str) -> bool;
+    fn matches(&self, input: impl AsRef<[u8]>) -> bool;
 }
 
 #[cfg(test)]
 impl<O: Operator> Matches for O {
-    fn matches(&self, input: &str) -> bool {
-        self.evaluate(&Transaction::default(), input, &mut Outputs::default())
+    fn matches(&self, input: impl AsRef<[u8]>) -> bool {
+        self.evaluate(
+            &Transaction::default(),
+            input.as_ref(),
+            &mut Outputs::default(),
+        )
     }
 }
 
@@ -129,13 +133,21 @@ impl<O: Operator> Matches for O {
 pub(crate) fn evaluate_in(
     op: &impl Operator,
     tx: &mut Transaction,
-    input: &str,
+    input: impl AsRef<[u8]>,
     capturing: bool,
 ) -> bool {
     let mut out = Outputs::new(capturing);
-    let matched = op.evaluate(tx, input, &mut out);
+    let matched = op.evaluate(tx, input.as_ref(), &mut out);
     tx.store_operator_outputs(&mut out);
     matched
+}
+
+/// Whether `needle` occurs in `haystack`; an empty `needle` occurs in every haystack.
+pub(crate) fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    needle.is_empty()
+        || haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
 }
 
 /// Named lists of items (`SecDataset`), for `@pmFromDataset` and `@ipMatchFromDataset`.
@@ -212,7 +224,7 @@ macro_rules! operators {
             }
 
             /// Evaluates the wrapped operator; see [`Operator::evaluate`].
-            pub fn evaluate(&self, tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
+            pub fn evaluate(&self, tx: &Transaction, input: &[u8], out: &mut Outputs) -> bool {
                 match self {
                     $(Self::$variant(op) => op.evaluate(tx, input, out),)+
                 }
@@ -280,7 +292,11 @@ mod tests {
     #[test]
     fn new_reaches_every_operator_in_the_table() {
         let op = OperatorEnum::new("noMatch", "").unwrap();
-        assert!(!op.evaluate(&Transaction::default(), "anything", &mut Outputs::default()));
+        assert!(!op.evaluate(
+            &Transaction::default(),
+            b"anything",
+            &mut Outputs::default()
+        ));
 
         let err = OperatorEnum::new("ipMatchFromFile", "/nonexistent").unwrap_err();
         assert!(!err.contains("unknown operator"), "{}", err);

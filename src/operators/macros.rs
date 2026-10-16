@@ -8,6 +8,7 @@
 
 use crate::transaction::Transaction;
 use crate::types::RuleVariable;
+use std::borrow::Cow;
 use std::fmt;
 
 /// A macro that can expand variable references at runtime.
@@ -109,18 +110,18 @@ impl Macro {
         // Rules' msg and logdata are expanded for every rule evaluated
         let mut result = String::with_capacity(self.original.len());
         for token in &self.tokens {
-            result.push_str(Self::expand_token(tx, token));
+            result.push_str(&Self::expand_token(tx, token));
         }
         result
     }
 
     /// The token's text, or the value of its variable if that is set.
-    fn expand_token<'a>(tx: &'a Transaction, token: &'a MacroToken) -> &'a str {
+    fn expand_token<'a>(tx: &'a Transaction, token: &'a MacroToken) -> Cow<'a, str> {
         match token.variable {
             Some(variable) => tx
                 .variable_value(variable, token.key.as_deref())
-                .unwrap_or(&token.text),
-            None => &token.text,
+                .unwrap_or(Cow::Borrowed(&token.text)),
+            None => Cow::Borrowed(&token.text),
         }
     }
 

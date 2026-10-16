@@ -48,16 +48,18 @@ impl BodyProcessor for UrlencodedBodyProcessor {
 }
 
 /// Decoded `key=value` pairs of an `application/x-www-form-urlencoded` string (a query
-/// string or a form body), in order. Empty pairs are skipped; a key without `=` has an
-/// empty value.
-pub(crate) fn parse_query(query: &str) -> impl Iterator<Item = (String, String)> + '_ {
+/// string or a form body), in order: keys as text, values as bytes. Empty pairs are
+/// skipped; a key without `=` has an empty value.
+pub(crate) fn parse_query(query: &str) -> impl Iterator<Item = (String, Vec<u8>)> + '_ {
     query
         .split('&')
         .filter(|pair| !pair.is_empty())
         .map(|pair| {
             let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-            let decode = |text: &str| text_from_bytes(url_decode(text.as_bytes()).0);
-            (decode(key), decode(value))
+            let key = text_from_bytes(url_decode(key.as_bytes()).0);
+            // For now, as when values were text, invalid UTF-8 is replaced with U+FFFD
+            let value = text_from_bytes(url_decode(value.as_bytes()).0).into_bytes();
+            (key, value)
         })
 }
 
@@ -169,7 +171,7 @@ mod tests {
             .unwrap();
 
         // Empty body should result in no ARGS_POST entries
-        assert!(tx.args_post().find_all().is_empty());
+        assert!(tx.args_post().is_empty());
         assert_eq!(tx.request_body.get(), "");
         assert_eq!(tx.request_body_length.get(), "0");
     }
@@ -205,7 +207,7 @@ mod tests {
     #[test]
     fn test_parse_query() {
         let result: Vec<_> = parse_query("a=1&&b=2&c&a=3").collect();
-        let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+        let pair = |k: &str, v: &str| (k.to_string(), v.as_bytes().to_vec());
         assert_eq!(
             result,
             vec![
@@ -220,7 +222,7 @@ mod tests {
     #[test]
     fn test_parse_query_with_encoding() {
         let result: Vec<_> = parse_query("name=John+Doe&city=New%20York&e=%C3%A9").collect();
-        let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+        let pair = |k: &str, v: &str| (k.to_string(), v.as_bytes().to_vec());
         assert_eq!(
             result,
             vec![

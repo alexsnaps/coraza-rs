@@ -111,13 +111,13 @@ impl BodyProcessor for MultipartBodyProcessor {
 
                 // Populate FILES collections (keyed by field name)
                 tx.files.add(&part.name, filename);
-                tx.files_sizes.set_index(filename, 0, &size.to_string());
+                tx.files_sizes.set_index(filename, 0, size.to_string());
                 tx.files_names.add(&part.name, &part.name);
             } else {
                 // Regular form field
                 let value = String::from_utf8_lossy(&part.data);
                 total_size += part.data.len() as u64;
-                tx.add_post_argument(&part.name, &value);
+                tx.add_post_argument(&part.name, value.as_bytes());
             }
         }
 
@@ -260,16 +260,12 @@ Content of a.txt.\r
         assert_eq!(tx.args_post().get("text"), vec!["text default"]);
 
         // Check that file was parsed
-        let all_files = tx.files.find_all();
-        assert_eq!(all_files.len(), 1);
-        let files: Vec<_> = all_files.iter().map(|m| m.value.as_str()).collect();
-        assert!(files.contains(&"a.txt"));
+        let files: Vec<_> = tx.files.iter().map(|(_, name)| name).collect();
+        assert_eq!(files, [b"a.txt"]);
 
         // Check FILES_NAMES
-        let all_names = tx.files_names.find_all();
-        assert_eq!(all_names.len(), 1);
-        let names: Vec<_> = all_names.iter().map(|m| m.value.as_str()).collect();
-        assert!(names.contains(&"file1"));
+        let names: Vec<_> = tx.files_names.iter().map(|(_, name)| name).collect();
+        assert_eq!(names, [b"file1"]);
 
         // Check multipart strict error not set on success
         assert_eq!(tx.multipart_strict_error.get(), "");
@@ -402,8 +398,11 @@ Test file content\r
             .unwrap();
 
         // Check that temp file was created
-        let all_temp_files = tx.files_tmp_names.find_all();
-        let temp_files: Vec<_> = all_temp_files.iter().map(|m| m.value.as_str()).collect();
+        let temp_files: Vec<_> = tx
+            .files_tmp_names
+            .iter()
+            .map(|(_, path)| String::from_utf8_lossy(path).into_owned())
+            .collect();
         assert_eq!(temp_files.len(), 1);
 
         // Verify file exists
@@ -495,8 +494,8 @@ value\r
             .unwrap();
 
         // Should have no files or fields
-        assert!(tx.files.find_all().is_empty());
-        assert!(tx.args_post().find_all().is_empty());
+        assert!(tx.files.is_empty());
+        assert!(tx.args_post().is_empty());
         assert_eq!(tx.files_combined_size.get(), "0");
     }
 

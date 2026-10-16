@@ -33,21 +33,21 @@ use std::str::FromStr;
 /// let op = ip_match("192.168.1.100,192.168.1.50,10.10.50.0/24").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "192.168.1.100", &mut out));
-/// assert!(op.evaluate(&tx, "10.10.50.25", &mut out));
-/// assert!(!op.evaluate(&tx, "192.168.1.101", &mut out));
+/// assert!(op.evaluate(&tx, "192.168.1.100".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "10.10.50.25".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "192.168.1.101".as_bytes(), &mut out));
 ///
 /// // Match internal network
 /// let op = ip_match("10.0.0.0/8,172.16.0.0/12").unwrap();
-/// assert!(op.evaluate(&tx, "10.5.10.20", &mut out));
-/// assert!(op.evaluate(&tx, "172.16.0.1", &mut out));
-/// assert!(!op.evaluate(&tx, "192.168.1.1", &mut out));
+/// assert!(op.evaluate(&tx, "10.5.10.20".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "172.16.0.1".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "192.168.1.1".as_bytes(), &mut out));
 ///
 /// // IPv6 support
 /// let op = ip_match("::1,2001:db8::/32").unwrap();
-/// assert!(op.evaluate(&tx, "::1", &mut out));
-/// assert!(op.evaluate(&tx, "2001:db8::1", &mut out));
-/// assert!(!op.evaluate(&tx, "::2", &mut out));
+/// assert!(op.evaluate(&tx, "::1".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "2001:db8::1".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "::2".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct IpMatch {
@@ -111,11 +111,11 @@ impl IpMatch {
 }
 
 impl Operator for IpMatch {
-    fn evaluate(&self, _tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, _tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         // Parse the input IP address
-        let ip = match IpAddr::from_str(input) {
-            Ok(ip) => ip,
-            Err(_) => return false,
+        let ip = match std::str::from_utf8(input).map(IpAddr::from_str) {
+            Ok(Ok(ip)) => ip,
+            _ => return false,
         };
 
         // Check if the IP is contained in any of the configured subnets
@@ -143,7 +143,7 @@ impl Operator for IpMatch {
 /// let op = ip_match("192.168.1.0/24").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "192.168.1.100", &mut out));
+/// assert!(op.evaluate(&tx, "192.168.1.100".as_bytes(), &mut out));
 /// ```
 pub fn ip_match(ips: &str) -> Result<IpMatch, String> {
     IpMatch::new(ips)
@@ -158,7 +158,7 @@ pub struct IpMatchFromDataset {
 }
 
 impl Operator for IpMatchFromDataset {
-    fn evaluate(&self, tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], out: &mut Outputs) -> bool {
         self.ips.evaluate(tx, input, out)
     }
 }
@@ -211,7 +211,7 @@ pub fn ip_match_from_dataset(
 /// let op = ip_match_from_file("/etc/coraza/blocked-ips.txt").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "10.0.0.1", &mut out));
+/// assert!(op.evaluate(&tx, "10.0.0.1".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct IpMatchFromFile {
@@ -286,11 +286,11 @@ impl IpMatchFromFile {
 }
 
 impl Operator for IpMatchFromFile {
-    fn evaluate(&self, _tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, _tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         // Parse input IP address
-        let ip = match IpAddr::from_str(input) {
-            Ok(ip) => ip,
-            Err(_) => return false,
+        let ip = match std::str::from_utf8(input).map(IpAddr::from_str) {
+            Ok(Ok(ip)) => ip,
+            _ => return false,
         };
 
         // Check if IP is in any of the subnets

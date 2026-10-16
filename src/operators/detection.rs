@@ -30,22 +30,22 @@ use crate::transaction::Transaction;
 /// // SQL injection patterns
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "1' OR '1'='1", &mut out));
-/// assert!(op.evaluate(&tx, "admin'--", &mut out));
-/// assert!(op.evaluate(&tx, "1 UNION SELECT", &mut out));
+/// assert!(op.evaluate(&tx, "1' OR '1'='1".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "admin'--".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "1 UNION SELECT".as_bytes(), &mut out));
 ///
 /// // Normal input
-/// assert!(!op.evaluate(&tx, "hello world", &mut out));
+/// assert!(!op.evaluate(&tx, "hello world".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct DetectSQLi;
 
 impl Operator for DetectSQLi {
-    fn evaluate(&self, _tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
-        let Some(fingerprint) = libperfusion::sqli(input.as_bytes()) else {
+    fn evaluate(&self, _tx: &Transaction, input: &[u8], out: &mut Outputs) -> bool {
+        let Some(fingerprint) = libperfusion::sqli(input) else {
             return false;
         };
-        out.capture(0, fingerprint.as_str());
+        out.capture(0, fingerprint.as_bytes());
         true
     }
 }
@@ -60,7 +60,7 @@ impl Operator for DetectSQLi {
 /// let op = detect_sqli();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "1' OR '1'='1", &mut out));
+/// assert!(op.evaluate(&tx, "1' OR '1'='1".as_bytes(), &mut out));
 /// ```
 pub fn detect_sqli() -> DetectSQLi {
     DetectSQLi
@@ -89,19 +89,19 @@ pub fn detect_sqli() -> DetectSQLi {
 /// // XSS patterns
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "<script>alert(1)</script>", &mut out));
-/// assert!(op.evaluate(&tx, "<a href=\"javascript:alert(1)\">", &mut out));
-/// assert!(op.evaluate(&tx, "<img src=x onerror=alert(1)>", &mut out));
+/// assert!(op.evaluate(&tx, "<script>alert(1)</script>".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "<a href=\"javascript:alert(1)\">".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "<img src=x onerror=alert(1)>".as_bytes(), &mut out));
 ///
 /// // Normal input
-/// assert!(!op.evaluate(&tx, "hello world", &mut out));
+/// assert!(!op.evaluate(&tx, "hello world".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct DetectXSS;
 
 impl Operator for DetectXSS {
-    fn evaluate(&self, _tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
-        libperfusion::xss(input.as_bytes())
+    fn evaluate(&self, _tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
+        libperfusion::xss(input)
     }
 }
 
@@ -115,7 +115,7 @@ impl Operator for DetectXSS {
 /// let op = detect_xss();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "<script>alert(1)</script>", &mut out));
+/// assert!(op.evaluate(&tx, "<script>alert(1)</script>".as_bytes(), &mut out));
 /// ```
 pub fn detect_xss() -> DetectXSS {
     DetectXSS

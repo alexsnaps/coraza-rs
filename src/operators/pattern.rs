@@ -8,8 +8,9 @@
 
 use std::path::Path;
 
-use crate::operators::{Datasets, Macro, MacroError, Operator, Outputs};
+use crate::operators::{Datasets, Macro, MacroError, Operator, Outputs, contains_bytes};
 use crate::transaction::Transaction;
+use crate::transformations::text_of;
 use crate::utils::strings::x2c;
 use aho_corasick::AhoCorasick;
 use regex::Regex;
@@ -37,12 +38,12 @@ use regex::Regex;
 /// let op = rx("som(.*)ta").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "somedata", &mut out));
-/// assert!(!op.evaluate(&tx, "notdata", &mut out));
+/// assert!(op.evaluate(&tx, "somedata".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "notdata".as_bytes(), &mut out));
 ///
 /// // Unicode support
 /// let op = rx("ハロー").unwrap();
-/// assert!(op.evaluate(&tx, "ハローワールド", &mut out));
+/// assert!(op.evaluate(&tx, "ハローワールド".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Rx {
@@ -71,29 +72,30 @@ impl CompiledRx {
         }
     }
 
-    fn is_match(&self, input: &str) -> bool {
+    /// Whether the pattern matches `input`: as it is for a pattern on bytes, as text
+    /// (invalid UTF-8 replaced with U+FFFD) otherwise.
+    fn is_match(&self, input: &[u8]) -> bool {
         match self {
-            Self::Text(regex) => regex.is_match(input),
-            Self::Bytes(regex) => regex.is_match(input.as_bytes()),
+            Self::Text(regex) => regex.is_match(&text_of(input)),
+            Self::Bytes(regex) => regex.is_match(input),
         }
     }
 
-    /// The first match and its groups, as text, `None` for a group that didn't take
-    /// part; `None` if nothing matches.
-    fn captures(&self, input: &str) -> Option<Vec<Option<String>>> {
+    /// The first match and its groups, `None` for a group that didn't take part; `None`
+    /// if nothing matches. A pattern on text matches `input` as [`CompiledRx::is_match`]
+    /// does.
+    fn captures(&self, input: &[u8]) -> Option<Vec<Option<Vec<u8>>>> {
         match self {
-            Self::Text(regex) => regex.captures(input).map(|captures| {
+            Self::Text(regex) => regex.captures(&text_of(input)).map(|captures| {
                 captures
                     .iter()
-                    .map(|group| group.map(|group| group.as_str().to_string()))
+                    .map(|group| group.map(|group| group.as_str().as_bytes().to_vec()))
                     .collect()
             }),
-            Self::Bytes(regex) => regex.captures(input.as_bytes()).map(|captures| {
+            Self::Bytes(regex) => regex.captures(input).map(|captures| {
                 captures
                     .iter()
-                    .map(|group| {
-                        group.map(|group| String::from_utf8_lossy(group.as_bytes()).into_owned())
-                    })
+                    .map(|group| group.map(|group| group.as_bytes().to_vec()))
                     .collect()
             }),
         }
@@ -170,7 +172,7 @@ fn byte_escape(pattern: &[u8]) -> Option<(u8, usize)> {
 }
 
 impl Operator for Rx {
-    fn evaluate(&self, tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], out: &mut Outputs) -> bool {
         // A pattern with macros is compiled for each value, once expanded
         let expanded;
         let regex = match &self.cached_regex {
@@ -195,7 +197,7 @@ impl Operator for Rx {
         };
         // The full match and up to 9 capturing groups (ModSecurity limit)
         for (i, group) in groups.iter().take(10).enumerate() {
-            out.capture(i, group.as_deref().unwrap_or(""));
+            out.capture(i, group.as_deref().unwrap_or(&[]));
         }
         true
     }
@@ -242,9 +244,9 @@ pub fn rx(pattern: &str) -> Result<Rx, Box<dyn std::error::Error>> {
 /// let op = pm("WebZIP WebCopier Webster").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0", &mut out));
-/// assert!(op.evaluate(&tx, "WEBZIP is here", &mut out)); // Case-insensitive
-/// assert!(!op.evaluate(&tx, "Mozilla/5.0", &mut out));
+/// assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "WEBZIP is here".as_bytes(), &mut out)); // Case-insensitive
+/// assert!(!op.evaluate(&tx, "Mozilla/5.0".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Pm {
@@ -254,7 +256,7 @@ pub struct Pm {
 }
 
 impl Operator for Pm {
-    fn evaluate(&self, tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], out: &mut Outputs) -> bool {
         // Phrases with macros are matched with a matcher built for each value, once expanded
         let expanded;
         let matcher = match &self.cached_matcher {
@@ -348,7 +350,7 @@ pub fn pm(patterns: &str) -> Result<Pm, MacroError> {
 /// let op = pm_from_file("/etc/coraza/bad-user-agents.txt").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0", &mut out));
+/// assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct PmFromFile {
@@ -373,7 +375,7 @@ impl Phrases {
 
     /// Whether a phrase occurs in `input`; when the rule captures, the first 10 occurrences
     /// are its captures, as found in `input`.
-    fn evaluate(&self, _tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
+    fn evaluate(&self, _tx: &Transaction, input: &[u8], out: &mut Outputs) -> bool {
         if !out.wants_captures() {
             return self.matcher.is_match(input);
         }
@@ -437,7 +439,7 @@ impl PmFromFile {
 }
 
 impl Operator for PmFromFile {
-    fn evaluate(&self, tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], out: &mut Outputs) -> bool {
         self.phrases.evaluate(tx, input, out)
     }
 }
@@ -451,7 +453,7 @@ pub struct PmFromDataset {
 }
 
 impl Operator for PmFromDataset {
-    fn evaluate(&self, tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], out: &mut Outputs) -> bool {
         self.phrases.evaluate(tx, input, out)
     }
 }
@@ -504,14 +506,14 @@ pub fn pm_from_file(file_path: impl AsRef<Path>) -> Result<PmFromFile, String> {
 /// let op = within("GET,POST,HEAD").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "GET", &mut out));
-/// assert!(op.evaluate(&tx, "POST", &mut out));
-/// assert!(!op.evaluate(&tx, "DELETE", &mut out));
+/// assert!(op.evaluate(&tx, "GET".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "POST".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "DELETE".as_bytes(), &mut out));
 ///
 /// // Works with any haystack
 /// let op = within("abcdefghij").unwrap();
-/// assert!(op.evaluate(&tx, "def", &mut out));
-/// assert!(!op.evaluate(&tx, "xyz", &mut out));
+/// assert!(op.evaluate(&tx, "def".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "xyz".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Within {
@@ -519,9 +521,9 @@ pub struct Within {
 }
 
 impl Operator for Within {
-    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         let haystack = self.macro_param.expand(tx);
-        haystack.contains(input)
+        contains_bytes(haystack.as_bytes(), input)
     }
 }
 
@@ -551,8 +553,8 @@ pub fn within(haystack: &str) -> Result<Within, MacroError> {
 /// let op = strmatch("WebZIP").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0", &mut out));
-/// assert!(!op.evaluate(&tx, "User-Agent: webzip", &mut out)); // Case-sensitive
+/// assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "User-Agent: webzip".as_bytes(), &mut out)); // Case-sensitive
 /// ```
 #[derive(Debug, Clone)]
 pub struct StrMatch {
@@ -560,9 +562,9 @@ pub struct StrMatch {
 }
 
 impl Operator for StrMatch {
-    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         let needle = self.macro_param.expand(tx);
-        input.contains(&needle)
+        contains_bytes(input, needle.as_bytes())
     }
 }
 
@@ -589,8 +591,9 @@ pub struct RestPath {
 }
 
 impl Operator for RestPath {
-    fn evaluate(&self, _tx: &Transaction, input: &str, out: &mut Outputs) -> bool {
-        let Some(captures) = self.regex.captures(input) else {
+    fn evaluate(&self, _tx: &Transaction, input: &[u8], out: &mut Outputs) -> bool {
+        let input = text_of(input);
+        let Some(captures) = self.regex.captures(&input) else {
             return false;
         };
         for name in self.regex.capture_names().flatten() {

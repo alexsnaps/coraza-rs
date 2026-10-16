@@ -12,7 +12,7 @@
 
 use regex::Regex;
 
-use crate::collection::MatchData;
+use crate::collection::{Map, MatchData};
 use crate::transaction::{Transaction, VariableCollection};
 use crate::types::RuleVariable;
 
@@ -220,37 +220,59 @@ impl VariableSpec {
             return Vec::new();
         };
 
-        let select = |map: &crate::collection::Map| match &self.key {
-            Some(VariableKey::Regex(rx)) => map.find_regex(rx),
-            Some(VariableKey::String(key)) => map.find_string(key),
-            None => map.find_all(),
+        // Keys left out by the variable's exceptions or `ctl:ruleRemoveTarget*`
+        let kept = |key: &str| !self.exceptions.iter().any(|ex| ex.matches(key)) && !removed(key);
+        let mut matches = Vec::new();
+        let mut count = 0;
+        let mut keep = |m: MatchData| {
+            count += 1;
+            if !self.count {
+                matches.push(m);
+            }
         };
-        // Extract matches based on key type; single-value variables have no keys
-        let mut matches = match (collection, &self.key) {
-            (VariableCollection::Map(map), _) => select(map),
-            (VariableCollection::Names(variable, map), _) => select(map)
-                .into_iter()
-                .map(|m| MatchData::new(variable, m.key.clone(), m.key))
-                .collect(),
-            (VariableCollection::Single(single), None) => single.find_all(),
-            (VariableCollection::Single(_), Some(_)) => Vec::new(),
-        };
+        // Single-value variables have no keys
+        match (collection, &self.key) {
+            (VariableCollection::Map(map), _) => self.select(map, |key, value| {
+                if kept(key) {
+                    keep(MatchData::new(map.variable(), key, value));
+                }
+            }),
+            // A names view's values are its keys
+            (VariableCollection::Names(variable, map), _) => self.select(map, |key, _| {
+                if kept(key) {
+                    keep(MatchData::new(variable, key, key));
+                }
+            }),
+            (VariableCollection::Single(single), None) => {
+                for m in single.find_all() {
+                    if kept(&m.key) {
+                        keep(m);
+                    }
+                }
+            }
+            (VariableCollection::Single(_), Some(_)) => {}
+        }
 
-        // Filter out exceptions
-        matches
-            .retain(|m| !self.exceptions.iter().any(|ex| ex.matches(&m.key)) && !removed(&m.key));
-
-        // Return count or values
         if self.count {
-            let count = matches.len();
             let key = match &self.key {
                 Some(VariableKey::String(s)) => s.clone(),
                 _ => String::new(),
             };
-
             vec![MatchData::new(self.variable, key, count.to_string())]
         } else {
             matches
+        }
+    }
+
+    /// Calls `found` with each key and value of `map` the variable selects: those of its
+    /// key, those whose key its regex matches, or all of them for no (or an empty) key.
+    fn select<'a>(&'a self, map: &'a Map, mut found: impl FnMut(&'a str, &'a [u8])) {
+        match &self.key {
+            Some(VariableKey::Regex(rx)) => map.iter_regex(rx).for_each(|(k, v)| found(k, v)),
+            Some(VariableKey::String(key)) if !key.is_empty() => {
+                map.iter_key(key).for_each(|(k, v)| found(k, v))
+            }
+            _ => map.iter().for_each(|(k, v)| found(k, v)),
         }
     }
 
@@ -409,7 +431,7 @@ mod tests {
 
         // Should match "host" header
         assert_eq!(matches.len(), 1, "expected 1 match for /ho.*/");
-        assert_eq!(matches[0].value, "www.test.com:80");
+        assert_eq!(matches[0].value, b"www.test.com:80");
     }
 
     #[test]
@@ -424,7 +446,7 @@ mod tests {
 
         // Should return count as string
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].value, "1");
+        assert_eq!(matches[0].value, b"1");
     }
 
     #[test]
@@ -437,8 +459,17 @@ mod tests {
 
         // Should count all headers
         assert_eq!(matches.len(), 1);
-        let count: usize = matches[0].value.parse().unwrap();
+        let count: usize = matches[0].value_text().parse().unwrap();
         assert_eq!(count, 5, "expected 5 request headers");
+    }
+
+    #[test]
+    fn test_variable_extraction_empty_key_selects_every_key() {
+        let tx = make_transaction();
+
+        let var = VariableSpec::new_string(RuleVariable::RequestHeaders, String::new());
+
+        assert_eq!(var.get_matches(&tx).len(), 5);
     }
 
     #[test]
@@ -450,7 +481,7 @@ mod tests {
         let matches = var.get_matches(&tx);
 
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].value, "123");
+        assert_eq!(matches[0].value, b"123");
     }
 
     #[test]
@@ -465,9 +496,9 @@ mod tests {
         assert_eq!(matches.len(), 2);
 
         // Verify both values are present (order may vary)
-        let values: Vec<&str> = matches.iter().map(|m| m.value.as_str()).collect();
-        assert!(values.contains(&"123"));
-        assert!(values.contains(&"test"));
+        let values: Vec<&[u8]> = matches.iter().map(|m| m.value.as_slice()).collect();
+        assert!(values.contains(&&b"123"[..]));
+        assert!(values.contains(&&b"test"[..]));
     }
 
     // Ported from: TestTxVariablesExceptions
@@ -518,7 +549,7 @@ mod tests {
         let matches = var.get_matches(&tx);
 
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].value, "www.test.com:80");
+        assert_eq!(matches[0].value, b"www.test.com:80");
     }
 
     #[test]
@@ -560,7 +591,7 @@ mod tests {
         // Should match only "name"
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].key, "name");
-        assert_eq!(matches[0].value, "test");
+        assert_eq!(matches[0].value, b"test");
     }
 
     #[test]
@@ -574,6 +605,6 @@ mod tests {
 
         // Should count only non-excepted values
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].value, "1"); // Only "name" counted
+        assert_eq!(matches[0].value, b"1"); // Only "name" counted
     }
 }

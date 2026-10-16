@@ -6,8 +6,16 @@
 //! This module implements basic comparison and string matching operators
 //! with macro expansion support.
 
-use crate::operators::{Macro, MacroError, Operator, Outputs};
+use crate::operators::{Macro, MacroError, Operator, Outputs, contains_bytes};
 use crate::transaction::Transaction;
+
+/// `input` as an integer; 0 if it isn't one, as Go's `strconv.Atoi` failing gives.
+fn as_int(input: &[u8]) -> i32 {
+    std::str::from_utf8(input)
+        .ok()
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(0)
+}
 
 /// Numeric equality operator.
 ///
@@ -25,9 +33,9 @@ use crate::transaction::Transaction;
 /// let op = eq("15").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "15", &mut out));
-/// assert!(op.evaluate(&tx, "015", &mut out)); // Leading zeros ignored
-/// assert!(!op.evaluate(&tx, "16", &mut out));
+/// assert!(op.evaluate(&tx, "15".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "015".as_bytes(), &mut out)); // Leading zeros ignored
+/// assert!(!op.evaluate(&tx, "16".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Eq {
@@ -35,10 +43,10 @@ pub struct Eq {
 }
 
 impl Operator for Eq {
-    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         let param_value = self.macro_param.expand(tx);
         let param_int = param_value.parse::<i32>().unwrap_or(0);
-        let input_int = input.parse::<i32>().unwrap_or(0);
+        let input_int = as_int(input);
         param_int == input_int
     }
 }
@@ -69,9 +77,9 @@ pub fn eq(parameter: &str) -> Result<Eq, MacroError> {
 /// let op = gt("10").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "15", &mut out));
-/// assert!(!op.evaluate(&tx, "10", &mut out));
-/// assert!(!op.evaluate(&tx, "5", &mut out));
+/// assert!(op.evaluate(&tx, "15".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "10".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "5".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Gt {
@@ -79,10 +87,10 @@ pub struct Gt {
 }
 
 impl Operator for Gt {
-    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         let param_value = self.macro_param.expand(tx);
         let param_int = param_value.parse::<i32>().unwrap_or(0);
-        let input_int = input.parse::<i32>().unwrap_or(0);
+        let input_int = as_int(input);
         input_int > param_int
     }
 }
@@ -112,9 +120,9 @@ pub fn gt(parameter: &str) -> Result<Gt, MacroError> {
 /// let op = ge("10").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "15", &mut out));
-/// assert!(op.evaluate(&tx, "10", &mut out));
-/// assert!(!op.evaluate(&tx, "5", &mut out));
+/// assert!(op.evaluate(&tx, "15".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "10".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "5".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Ge {
@@ -122,10 +130,10 @@ pub struct Ge {
 }
 
 impl Operator for Ge {
-    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         let param_value = self.macro_param.expand(tx);
         let param_int = param_value.parse::<i32>().unwrap_or(0);
-        let input_int = input.parse::<i32>().unwrap_or(0);
+        let input_int = as_int(input);
         input_int >= param_int
     }
 }
@@ -155,9 +163,9 @@ pub fn ge(parameter: &str) -> Result<Ge, MacroError> {
 /// let op = lt("10").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "5", &mut out));
-/// assert!(!op.evaluate(&tx, "10", &mut out));
-/// assert!(!op.evaluate(&tx, "15", &mut out));
+/// assert!(op.evaluate(&tx, "5".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "10".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "15".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Lt {
@@ -165,10 +173,10 @@ pub struct Lt {
 }
 
 impl Operator for Lt {
-    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         let param_value = self.macro_param.expand(tx);
         let param_int = param_value.parse::<i32>().unwrap_or(0);
-        let input_int = input.parse::<i32>().unwrap_or(0);
+        let input_int = as_int(input);
         input_int < param_int
     }
 }
@@ -198,9 +206,9 @@ pub fn lt(parameter: &str) -> Result<Lt, MacroError> {
 /// let op = le("10").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "5", &mut out));
-/// assert!(op.evaluate(&tx, "10", &mut out));
-/// assert!(!op.evaluate(&tx, "15", &mut out));
+/// assert!(op.evaluate(&tx, "5".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "10".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "15".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Le {
@@ -208,10 +216,10 @@ pub struct Le {
 }
 
 impl Operator for Le {
-    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         let param_value = self.macro_param.expand(tx);
         let param_int = param_value.parse::<i32>().unwrap_or(0);
-        let input_int = input.parse::<i32>().unwrap_or(0);
+        let input_int = as_int(input);
         input_int <= param_int
     }
 }
@@ -242,9 +250,9 @@ pub fn le(parameter: &str) -> Result<Le, MacroError> {
 /// let op = streq("POST").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "POST", &mut out));
-/// assert!(!op.evaluate(&tx, "post", &mut out));
-/// assert!(!op.evaluate(&tx, "GET", &mut out));
+/// assert!(op.evaluate(&tx, "POST".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "post".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "GET".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct StrEq {
@@ -252,9 +260,9 @@ pub struct StrEq {
 }
 
 impl Operator for StrEq {
-    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         let param_value = self.macro_param.expand(tx);
-        input == param_value
+        input == param_value.as_bytes()
     }
 }
 
@@ -283,9 +291,9 @@ pub fn streq(parameter: &str) -> Result<StrEq, MacroError> {
 /// let op = contains(".php").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "/index.php", &mut out));
-/// assert!(op.evaluate(&tx, "test.php?id=1", &mut out));
-/// assert!(!op.evaluate(&tx, "/index.html", &mut out));
+/// assert!(op.evaluate(&tx, "/index.php".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "test.php?id=1".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "/index.html".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct Contains {
@@ -293,9 +301,9 @@ pub struct Contains {
 }
 
 impl Operator for Contains {
-    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         let param_value = self.macro_param.expand(tx);
-        input.contains(&param_value)
+        contains_bytes(input, param_value.as_bytes())
     }
 }
 
@@ -324,8 +332,8 @@ pub fn contains(parameter: &str) -> Result<Contains, MacroError> {
 /// let op = begins_with("GET").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "GET /index.html HTTP/1.1", &mut out));
-/// assert!(!op.evaluate(&tx, "POST /index.html HTTP/1.1", &mut out));
+/// assert!(op.evaluate(&tx, "GET /index.html HTTP/1.1".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "POST /index.html HTTP/1.1".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct BeginsWith {
@@ -333,9 +341,9 @@ pub struct BeginsWith {
 }
 
 impl Operator for BeginsWith {
-    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         let param_value = self.macro_param.expand(tx);
-        input.starts_with(&param_value)
+        input.starts_with(param_value.as_bytes())
     }
 }
 
@@ -364,9 +372,9 @@ pub fn begins_with(parameter: &str) -> Result<BeginsWith, MacroError> {
 /// let op = ends_with(".exe").unwrap();
 /// let tx = coraza::transaction::Transaction::default();
 /// let mut out = coraza::operators::Outputs::default();
-/// assert!(op.evaluate(&tx, "malware.exe", &mut out));
-/// assert!(op.evaluate(&tx, "C:\\Windows\\system32\\cmd.exe", &mut out));
-/// assert!(!op.evaluate(&tx, "document.pdf", &mut out));
+/// assert!(op.evaluate(&tx, "malware.exe".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "C:\\Windows\\system32\\cmd.exe".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "document.pdf".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct EndsWith {
@@ -374,9 +382,9 @@ pub struct EndsWith {
 }
 
 impl Operator for EndsWith {
-    fn evaluate(&self, tx: &Transaction, input: &str, _out: &mut Outputs) -> bool {
+    fn evaluate(&self, tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         let param_value = self.macro_param.expand(tx);
-        input.ends_with(&param_value)
+        input.ends_with(param_value.as_bytes())
     }
 }
 

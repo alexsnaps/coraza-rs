@@ -32,6 +32,11 @@ _Avoid_: flow control, runtime state
 read when an action needs it rather than once per phase.
 _Avoid_: engine status, enforcement mode, `rule_engine_on`
 
+**Value**:
+What a variable holds for a key: in collections such as `ARGS`, the bytes the request sent,
+whether or not they are UTF-8; keys, and single-value variables such as `REQUEST_URI`, are text.
+_Avoid_: string, text (for values)
+
 **Operator**:
 The test a rule applies to each value it inspects (`@rx`, `@streq`, `@detectSQLi`, ...); it reads
 the transaction's variables but never changes the transaction.

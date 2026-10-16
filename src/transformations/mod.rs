@@ -52,6 +52,17 @@ pub(crate) fn text_from_bytes(bytes: Vec<u8>) -> String {
         .unwrap_or_else(|invalid| String::from_utf8_lossy(invalid.as_bytes()).into_owned())
 }
 
+/// `bytes` as text, as [`text_from_bytes`] gives it, borrowed when `bytes` are UTF-8.
+///
+/// It checks the bytes with `str::from_utf8` first: `String::from_utf8_lossy` alone, which
+/// decodes them chunk by chunk, is several times slower on the common, valid case.
+pub(crate) fn text_of(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => std::borrow::Cow::Borrowed(text),
+        Err(_) => String::from_utf8_lossy(bytes),
+    }
+}
+
 /// `text` with each byte that isn't part of a UTF-8 sequence replaced by U+FFFD, as Go
 /// does when it reads a string as characters (`for range`, `strings.Map`).
 fn chars_lossy(text: &[u8]) -> String {
