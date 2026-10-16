@@ -1101,6 +1101,28 @@ fn json_bodies_deeper_than_the_limit_are_body_errors() {
 }
 
 #[test]
+fn json_response_bodies_deeper_than_the_limit_are_body_errors() {
+    let waf = waf(r#"
+        SecResponseBodyAccess On
+        SecResponseBodyMimeType application/json
+        SecResponseBodyJsonDepthLimit 2
+        SecRule RESPONSE_HEADERS:Content-Type "@beginsWith application/json" "id:100,phase:3,pass,nolog,ctl:responseBodyProcessor=JSON"
+        SecRule RES_BODY_ERROR "@eq 1" "id:1,phase:4,deny,status:500"
+    "#);
+
+    for (body, too_deep) in [
+        (r#"{"a": {"b": 1}}"#, false),
+        (r#"{"a": [{"b": 1}]}"#, true),
+    ] {
+        let mut tx = waf.new_transaction();
+        tx.add_response_header("Content-Type", "application/json");
+        tx.process_response_headers(200, "HTTP/1.1");
+        let interruption = tx.process_response_body(body.as_bytes());
+        assert_eq!(interruption.is_some(), too_deep, "{body}");
+    }
+}
+
+#[test]
 fn only_response_bodies_of_listed_types_are_inspected() {
     let waf = waf(r#"
         SecResponseBodyAccess On

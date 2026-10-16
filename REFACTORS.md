@@ -98,8 +98,9 @@ probed bugs.
     `RuleOperator`.
   - Body processors: global `LazyLock<RwLock<HashMap>>` (`src/body_processors/mod.rs:172`), reached via
     content-type → string → lookup (`src/transaction/mod.rs:1070`). An enum of the five kinds would do;
-    `BodyProcessorOptions` upload fields are always `Default`. **Done:** `BodyProcessorKind` replaces the registry;
-    still open: the upload options are not wired from `WafConfig` (needs config plumbed into the transaction).
+    `BodyProcessorOptions` upload fields are always `Default`. **Done:** `BodyProcessorKind` replaces the registry.
+    Since then, `BodyProcessorOptions` is gone: each processor reads the WAF's config through the transaction.
+    `SecUploadFileLimit` and `SecUploadFileMode` are still ignored (GAPS.md section 2).
   - Transformations: no lookup at all (see item 2). **Done** in item 2 (`transformations::by_name`).
 - [x] **Remove `actions::register`.** Public, and always panics with `todo!()` (`src/actions/mod.rs:502`).
 - [x] **Parse `ctl` once.** `CtlAction` validates its value, stores the raw string, and re-parses it in `evaluate`

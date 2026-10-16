@@ -7,42 +7,19 @@
 //! the ARGS_POST collection. This is the standard format for HTML form
 //! submissions.
 
-use super::{BodyProcessor, BodyProcessorError, BodyProcessorOptions};
 use crate::transaction::Transaction;
 use crate::transformations::{text_from_bytes, text_of, url_decode};
 
-/// URL-encoded body processor for form data
-pub struct UrlencodedBodyProcessor;
-
-impl BodyProcessor for UrlencodedBodyProcessor {
-    fn process_request(
-        &self,
-        body: &[u8],
-        tx: &mut Transaction,
-        _options: &BodyProcessorOptions,
-    ) -> Result<(), BodyProcessorError> {
-        // As in Go Coraza, argument values keep the body's bytes
-        for (key, value) in parse_query(body) {
-            tx.add_post_argument(&key, &value);
-        }
-
-        // Store REQUEST_BODY (as text) and REQUEST_BODY_LENGTH
-        let body_len = body.len();
-        tx.request_body.set(text_of(body));
-        tx.request_body_length.set(body_len.to_string());
-
-        Ok(())
+/// Parses a request body's arguments into ARGS_POST (and ARGS), and stores it in
+/// REQUEST_BODY (as text) and its length in REQUEST_BODY_LENGTH.
+pub(super) fn process_request(body: &[u8], tx: &mut Transaction) {
+    // As in Go Coraza, argument values keep the body's bytes
+    for (key, value) in parse_query(body) {
+        tx.add_post_argument(&key, &value);
     }
 
-    fn process_response(
-        &self,
-        _body: &[u8],
-        _tx: &mut Transaction,
-        _options: &BodyProcessorOptions,
-    ) -> Result<(), BodyProcessorError> {
-        // URL-encoded processor doesn't process response bodies
-        Ok(())
-    }
+    tx.request_body.set(text_of(body));
+    tx.request_body_length.set(body.len().to_string());
 }
 
 /// Decoded `key=value` pairs of an `application/x-www-form-urlencoded` string (a query
@@ -66,18 +43,16 @@ pub(crate) fn parse_query(query: &[u8]) -> impl Iterator<Item = (String, Vec<u8>
 
 #[cfg(test)]
 mod tests {
+    use super::super::{BodyProcessorKind, inspect_request};
     use super::*;
     use crate::RuleVariable;
-    use crate::body_processors::BodyProcessorKind;
+
+    const FORM: &str = "application/x-www-form-urlencoded";
+
     #[test]
     fn test_urlencoded_basic() {
-        let processor = UrlencodedBodyProcessor;
-        let mut tx = Transaction::new("test-1");
-
         let body = b"a=1&b=2&c=3";
-        processor
-            .process_request(body, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_request(BodyProcessorKind::UrlEncoded, FORM, body);
 
         // Check ARGS_POST
         assert_eq!(tx.variable_map(RuleVariable::ArgsPost).get("a"), vec!["1"]);
@@ -91,13 +66,8 @@ mod tests {
 
     #[test]
     fn test_urlencoded_with_encoding() {
-        let processor = UrlencodedBodyProcessor;
-        let mut tx = Transaction::new("test-2");
-
         let body = b"username=admin&password=secret%20pass";
-        processor
-            .process_request(body, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_request(BodyProcessorKind::UrlEncoded, FORM, body);
 
         assert_eq!(
             tx.variable_map(RuleVariable::ArgsPost).get("username"),
@@ -111,13 +81,8 @@ mod tests {
 
     #[test]
     fn test_urlencoded_plus_to_space() {
-        let processor = UrlencodedBodyProcessor;
-        let mut tx = Transaction::new("test-3");
-
         let body = b"text=hello+world";
-        processor
-            .process_request(body, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_request(BodyProcessorKind::UrlEncoded, FORM, body);
 
         assert_eq!(
             tx.variable_map(RuleVariable::ArgsPost).get("text"),
@@ -127,13 +92,8 @@ mod tests {
 
     #[test]
     fn test_urlencoded_duplicate_keys() {
-        let processor = UrlencodedBodyProcessor;
-        let mut tx = Transaction::new("test-4");
-
         let body = b"id=1&id=2&id=3";
-        processor
-            .process_request(body, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_request(BodyProcessorKind::UrlEncoded, FORM, body);
 
         let ids = tx.variable_map(RuleVariable::ArgsPost).get("id");
         assert_eq!(ids.len(), 3);
@@ -144,13 +104,8 @@ mod tests {
 
     #[test]
     fn test_urlencoded_empty_value() {
-        let processor = UrlencodedBodyProcessor;
-        let mut tx = Transaction::new("test-5");
-
         let body = b"key1=&key2=value";
-        processor
-            .process_request(body, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_request(BodyProcessorKind::UrlEncoded, FORM, body);
 
         assert_eq!(
             tx.variable_map(RuleVariable::ArgsPost).get("key1"),
@@ -164,13 +119,8 @@ mod tests {
 
     #[test]
     fn test_urlencoded_no_value() {
-        let processor = UrlencodedBodyProcessor;
-        let mut tx = Transaction::new("test-6");
-
         let body = b"key1&key2=value";
-        processor
-            .process_request(body, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_request(BodyProcessorKind::UrlEncoded, FORM, body);
 
         // Key without = gets empty value
         assert_eq!(
@@ -185,45 +135,19 @@ mod tests {
 
     #[test]
     fn test_urlencoded_empty_body() {
-        let processor = UrlencodedBodyProcessor;
-        let mut tx = Transaction::new("test-7");
-
         let body = b"";
-        processor
-            .process_request(body, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_request(BodyProcessorKind::UrlEncoded, FORM, body);
 
-        // Empty body should result in no ARGS_POST entries
+        // As in Go Coraza, an empty body reaches no processor
         assert!(tx.variable_map(RuleVariable::ArgsPost).is_empty());
         assert_eq!(tx.request_body.get(), "");
         assert_eq!(tx.request_body_length.get(), "0");
     }
 
     #[test]
-    fn test_urlencoded_from_registry() {
-        let processor = BodyProcessorKind::UrlEncoded;
-        let mut tx = Transaction::new("test-8");
-
-        let body = b"test=value";
-        processor
-            .process_request(body, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
-
-        assert_eq!(
-            tx.variable_map(RuleVariable::ArgsPost).get("test"),
-            vec!["value"]
-        );
-    }
-
-    #[test]
     fn test_urlencoded_populates_args() {
-        let processor = UrlencodedBodyProcessor;
-        let mut tx = Transaction::new("test-9");
-
         let body = b"username=admin&password=secret";
-        processor
-            .process_request(body, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_request(BodyProcessorKind::UrlEncoded, FORM, body);
 
         // Should also populate ARGS collection (not just ARGS_POST)
         assert_eq!(

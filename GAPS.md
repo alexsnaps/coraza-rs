@@ -114,6 +114,9 @@ Suggested order: 1 → 2 → 3 → 6, then 4 and 5. The first three items of 1 a
     interrupts the transaction (413 for a request, 500 for a response, outside any rule) before that phase's rules,
     and `ProcessPartial` inspects only the first `limit` bytes. Go counts a body exactly at the limit as reaching
     it, and so does this.
+- [ ] **`SecUploadFileLimit` and `SecUploadFileMode` are not enforced.** Both are parsed into `WafConfig`
+  (`upload_file_limit`, `upload_file_mode`), and nothing reads them: a multipart body stores any number of files in
+  `SecUploadDir`, with the process's default permissions, and `MULTIPART_FILE_LIMIT_EXCEEDED` is never set.
 
 ## 3. Variables that parse but are never set
 

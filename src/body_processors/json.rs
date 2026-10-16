@@ -6,56 +6,49 @@
 //! Parses JSON bodies and flattens them into dot-notation keys in ARGS_POST.
 //! For example: `{"user": {"name": "admin"}}` becomes `json.user.name` = "admin"
 
-use super::{BodyProcessor, BodyProcessorError, BodyProcessorOptions};
+use super::BodyProcessorError;
 use crate::transaction::Transaction;
 use serde_json::Value;
 use std::collections::HashMap;
 
-/// JSON body processor
-pub struct JsonBodyProcessor;
-
-impl BodyProcessor for JsonBodyProcessor {
-    fn process_request(
-        &self,
-        body: &[u8],
-        tx: &mut Transaction,
-        options: &BodyProcessorOptions,
-    ) -> Result<(), BodyProcessorError> {
-        // Convert body to string
-        let body_str = String::from_utf8_lossy(body).to_string();
-
-        let json_value = parse_json(&body_str, options.json_depth_limit)?;
-
-        // Flatten JSON into dot-notation map
-        let flattened = flatten_json(&json_value);
-
-        for (key, value) in &flattened {
-            tx.add_post_argument(key, value);
-        }
-
-        Ok(())
+/// Parses a JSON request body into ARGS_POST (and ARGS), flattened, nesting at most
+/// `SecRequestBodyJsonDepthLimit` deep.
+///
+/// # Errors
+///
+/// If the body isn't JSON, or nests deeper.
+pub(super) fn process_request(body: &[u8], tx: &mut Transaction) -> Result<(), BodyProcessorError> {
+    let depth_limit = tx.config().request_body_json_depth_limit;
+    for (key, value) in &flattened(body, depth_limit)? {
+        tx.add_post_argument(key, value);
     }
+    Ok(())
+}
 
-    fn process_response(
-        &self,
-        body: &[u8],
-        tx: &mut Transaction,
-        options: &BodyProcessorOptions,
-    ) -> Result<(), BodyProcessorError> {
-        // Parse JSON response
-        let body_str = String::from_utf8_lossy(body).to_string();
-
-        let json_value = parse_json(&body_str, options.json_depth_limit)?;
-
-        // Flatten JSON into dot-notation map
-        let flattened = flatten_json(&json_value);
-
-        for (key, value) in &flattened {
-            tx.add_response_argument(key, value);
-        }
-
-        Ok(())
+/// Parses a JSON response body into RESPONSE_ARGS, flattened, nesting at most
+/// `SecResponseBodyJsonDepthLimit` deep.
+///
+/// # Errors
+///
+/// If the body isn't JSON, or nests deeper.
+pub(super) fn process_response(
+    body: &[u8],
+    tx: &mut Transaction,
+) -> Result<(), BodyProcessorError> {
+    let depth_limit = tx.config().response_body_json_depth_limit;
+    for (key, value) in &flattened(body, depth_limit)? {
+        tx.add_response_argument(key, value);
     }
+    Ok(())
+}
+
+/// A JSON body nesting at most `depth_limit` deep, flattened as [`flatten_json`] does.
+fn flattened(
+    body: &[u8],
+    depth_limit: usize,
+) -> Result<HashMap<String, String>, BodyProcessorError> {
+    let json_value = parse_json(&String::from_utf8_lossy(body), depth_limit)?;
+    Ok(flatten_json(&json_value))
 }
 
 /// Parses a JSON body whose objects and arrays nest at most `depth_limit` deep.
@@ -168,9 +161,17 @@ fn flatten_value(value: &Value, key_buffer: &mut Vec<u8>, result: &mut HashMap<S
 
 #[cfg(test)]
 mod tests {
+    use super::super::{
+        BodyProcessorKind, inspect_request, inspect_response, request_error, response_error,
+    };
     use super::*;
     use crate::RuleVariable;
-    use crate::body_processors::BodyProcessorKind;
+
+    /// A transaction whose JSON request body the JSON processor inspected.
+    fn inspect_json(body: &[u8]) -> Transaction {
+        inspect_request(BodyProcessorKind::Json, "application/json", body)
+    }
+
     #[test]
     fn test_json_map() {
         let json = r#"
@@ -309,13 +310,8 @@ mod tests {
 
     #[test]
     fn test_json_processor_basic() {
-        let processor = JsonBodyProcessor;
-        let mut tx = Transaction::new("test-1");
-
         let body = br#"{"username": "admin", "password": "secret"}"#;
-        processor
-            .process_request(body, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_json(body);
 
         // Check ARGS_POST populated
         assert_eq!(
@@ -334,44 +330,17 @@ mod tests {
 
     #[test]
     fn test_json_processor_invalid_json() {
-        let processor = JsonBodyProcessor;
-        let mut tx = Transaction::new("test-2");
-
-        let body = b"{invalid json";
-        let result = processor.process_request(body, &mut tx, &BodyProcessorOptions::default());
+        let tx = inspect_json(b"{invalid json");
 
         // Should fail with malformed error
-        assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(e.to_string().contains("malformed"));
-        }
-    }
-
-    #[test]
-    fn test_json_from_registry() {
-        let processor = BodyProcessorKind::Json;
-        let mut tx = Transaction::new("test-3");
-
-        let body = br#"{"test": "value"}"#;
-        processor
-            .process_request(body, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
-
-        assert_eq!(
-            tx.variable_map(RuleVariable::ArgsPost).get("json.test"),
-            vec!["value"]
-        );
+        let error = request_error(&tx).expect("an invalid body fails");
+        assert!(error.contains("malformed"), "{error}");
     }
 
     #[test]
     fn test_json_nested_arrays() {
-        let processor = JsonBodyProcessor;
-        let mut tx = Transaction::new("test-4");
-
         let body = br#"{"items": [{"id": 1}, {"id": 2}]}"#;
-        processor
-            .process_request(body, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_json(body);
 
         assert_eq!(
             tx.variable_map(RuleVariable::ArgsPost).get("json.items"),
@@ -391,13 +360,8 @@ mod tests {
 
     #[test]
     fn test_json_empty_body() {
-        let processor = JsonBodyProcessor;
-        let mut tx = Transaction::new("test-5");
-
         let body = b"{}";
-        processor
-            .process_request(body, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_json(body);
 
         // Empty object - no ARGS_POST entries
         // Note: We can't check if collection is empty easily, but we can check specific keys don't exist
@@ -410,13 +374,8 @@ mod tests {
 
     #[test]
     fn test_json_response_processing() {
-        let processor = JsonBodyProcessor;
-        let mut tx = Transaction::new("test-6");
-
         let body = br#"{"status":"success","data":{"id":123,"name":"admin"}}"#;
-        processor
-            .process_response(body, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_response(BodyProcessorKind::Json, body);
 
         // Check RESPONSE_ARGS populated
         assert_eq!(
@@ -438,13 +397,8 @@ mod tests {
 
     #[test]
     fn test_json_response_array() {
-        let processor = JsonBodyProcessor;
-        let mut tx = Transaction::new("test-7");
-
         let body = br#"{"items":[{"id":1},{"id":2}]}"#;
-        processor
-            .process_response(body, &mut tx, &BodyProcessorOptions::default())
-            .unwrap();
+        let tx = inspect_response(BodyProcessorKind::Json, body);
 
         // Check RESPONSE_ARGS populated
         assert_eq!(
@@ -466,13 +420,10 @@ mod tests {
 
     #[test]
     fn test_json_response_invalid() {
-        let processor = JsonBodyProcessor;
-        let mut tx = Transaction::new("test-8");
-
-        let body = b"{invalid json}";
-        let result = processor.process_response(body, &mut tx, &BodyProcessorOptions::default());
+        let tx = inspect_response(BodyProcessorKind::Json, b"{invalid json}");
 
         // Should fail with malformed error
-        assert!(result.is_err());
+        let error = response_error(&tx).expect("an invalid body fails");
+        assert!(error.contains("malformed"), "{error}");
     }
 }
