@@ -27,11 +27,11 @@
 //! chain.add("lowercase", lowercase);
 //! chain.add("urlDecode", url_decode);
 //!
-//! let (result, errors) = chain.apply("HELLO%20WORLD");
-//! assert_eq!(result, "hello world");
+//! let (result, errors) = chain.apply(b"HELLO%20WORLD");
+//! assert_eq!(result, b"hello world");
 //! ```
 
-use crate::transformations::{Transformation, TransformationError, text_from_bytes};
+use crate::transformations::{Transformation, TransformationError};
 
 /// A transformation in the chain with its name for identification.
 #[derive(Debug, Clone)]
@@ -55,8 +55,8 @@ struct NamedTransformation {
 /// let mut chain = TransformationChain::new();
 /// chain.add("lowercase", lowercase);
 ///
-/// let (result, errors) = chain.apply("HELLO");
-/// assert_eq!(result, "hello");
+/// let (result, errors) = chain.apply(b"HELLO");
+/// assert_eq!(result, b"hello");
 /// assert!(errors.is_empty());
 /// ```
 #[derive(Debug, Clone)]
@@ -180,16 +180,16 @@ impl TransformationChain {
     /// let mut chain = TransformationChain::new();
     /// chain.add("lowercase", lowercase).unwrap();
     ///
-    /// let (result, errors) = chain.apply("HELLO");
-    /// assert_eq!(result, "hello");
+    /// let (result, errors) = chain.apply(b"HELLO");
+    /// assert_eq!(result, b"hello");
     /// assert!(errors.is_empty());
     /// ```
-    pub fn apply(&self, input: &str) -> (String, Vec<TransformationError>) {
+    pub fn apply(&self, input: &[u8]) -> (Vec<u8>, Vec<TransformationError>) {
         if self.transformations.is_empty() {
-            return (input.to_string(), Vec::new());
+            return (input.to_vec(), Vec::new());
         }
 
-        let mut value = input.as_bytes().to_vec();
+        let mut value = input.to_vec();
         let mut errors = Vec::new();
 
         for t in &self.transformations {
@@ -201,7 +201,7 @@ impl TransformationChain {
             value = transformed;
         }
 
-        (text_from_bytes(value), errors)
+        (value, errors)
     }
 
     /// Apply all transformations in multi-match mode.
@@ -229,20 +229,20 @@ impl TransformationChain {
     /// let mut chain = TransformationChain::new();
     /// chain.add("lowercase", lowercase).unwrap();
     ///
-    /// let (values, errors) = chain.apply_multimatch("HELLO");
-    /// assert_eq!(values, vec!["HELLO", "hello"]);
+    /// let (values, errors) = chain.apply_multimatch(b"HELLO");
+    /// assert_eq!(values, vec![b"HELLO".to_vec(), b"hello".to_vec()]);
     /// assert!(errors.is_empty());
     /// ```
-    pub fn apply_multimatch(&self, input: &str) -> (Vec<String>, Vec<TransformationError>) {
+    pub fn apply_multimatch(&self, input: &[u8]) -> (Vec<Vec<u8>>, Vec<TransformationError>) {
         // Always include the original value
-        let mut values = vec![input.to_string()];
+        let mut values = vec![input.to_vec()];
         let mut errors = Vec::new();
 
         if self.transformations.is_empty() {
             return (values, errors);
         }
 
-        let mut value = input.as_bytes().to_vec();
+        let mut value = input.to_vec();
 
         for t in &self.transformations {
             let (transformed, changed, err) = (t.function)(&value);
@@ -253,7 +253,7 @@ impl TransformationChain {
 
             // Only collect values that changed
             if changed {
-                values.push(text_from_bytes(transformed.clone()));
+                values.push(transformed.clone());
                 value = transformed;
             }
         }
@@ -333,9 +333,9 @@ mod tests {
         chain.add("AppendA", append_a).unwrap();
         chain.add("AppendB", append_b).unwrap();
 
-        let (result, errors) = chain.apply("input");
+        let (result, errors) = chain.apply(b"input");
 
-        assert_eq!(result, "inputAB");
+        assert_eq!(result, b"inputAB");
         assert!(errors.is_empty());
     }
 
@@ -346,7 +346,7 @@ mod tests {
         chain.add("AppendA", error_a).unwrap();
         chain.add("AppendB", error_b).unwrap();
 
-        let (_result, errors) = chain.apply("arg");
+        let (_result, errors) = chain.apply(b"arg");
 
         assert_eq!(errors.len(), 2);
         assert_eq!(errors[0].message(), "errorA");
@@ -360,30 +360,30 @@ mod tests {
         chain.add("AppendA", append_a).unwrap();
         chain.add("AppendB", append_b).unwrap();
 
-        let (values, errors) = chain.apply_multimatch("input");
+        let (values, errors) = chain.apply_multimatch(b"input");
 
         assert!(errors.is_empty());
         assert_eq!(values.len(), 3);
-        assert_eq!(values[0], "input");
-        assert_eq!(values[1], "inputA");
-        assert_eq!(values[2], "inputAB");
+        assert_eq!(values[0], b"input");
+        assert_eq!(values[1], b"inputA");
+        assert_eq!(values[2], b"inputAB");
     }
 
     #[test]
     fn test_empty_chain_apply() {
         let chain = TransformationChain::new();
-        let (result, errors) = chain.apply("test");
+        let (result, errors) = chain.apply(b"test");
 
-        assert_eq!(result, "test");
+        assert_eq!(result, b"test");
         assert!(errors.is_empty());
     }
 
     #[test]
     fn test_empty_chain_multimatch() {
         let chain = TransformationChain::new();
-        let (values, errors) = chain.apply_multimatch("test");
+        let (values, errors) = chain.apply_multimatch(b"test");
 
-        assert_eq!(values, vec!["test"]);
+        assert_eq!(values, vec![b"test".to_vec()]);
         assert!(errors.is_empty());
     }
 
@@ -393,9 +393,9 @@ mod tests {
         chain.add("uppercase", uppercase).unwrap();
         chain.add("lowercase", lowercase).unwrap();
 
-        let (result, errors) = chain.apply("HeLLo");
+        let (result, errors) = chain.apply(b"HeLLo");
 
-        assert_eq!(result, "hello");
+        assert_eq!(result, b"hello");
         assert!(errors.is_empty());
     }
 
@@ -411,15 +411,15 @@ mod tests {
         chain.add("nochange", no_change).unwrap();
         chain.add("append2", append_b).unwrap();
 
-        let (values, errors) = chain.apply_multimatch("input");
+        let (values, errors) = chain.apply_multimatch(b"input");
 
         assert!(errors.is_empty());
         // Should have: original "input", changed "inputA", changed "inputAB"
         // The no_change transformation doesn't add a value since changed=false
         assert_eq!(values.len(), 3);
-        assert_eq!(values[0], "input");
-        assert_eq!(values[1], "inputA");
-        assert_eq!(values[2], "inputAB");
+        assert_eq!(values[0], b"input");
+        assert_eq!(values[1], b"inputA");
+        assert_eq!(values[2], b"inputAB");
     }
 
     #[test]
@@ -429,10 +429,10 @@ mod tests {
         chain.add("Error", error_a).unwrap();
         chain.add("AppendB", append_b).unwrap();
 
-        let (result, errors) = chain.apply("input");
+        let (result, errors) = chain.apply(b"input");
 
         // Chain should continue despite error
-        assert_eq!(result, "inputAB");
+        assert_eq!(result, b"inputAB");
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].message(), "errorA");
     }
@@ -460,18 +460,18 @@ mod tests {
         let mut chain = TransformationChain::new();
         chain.add("sha1", sha1_hash).unwrap();
         chain.add("hexEncode", hex_encode).unwrap();
-        let (result, errors) = chain.apply("hello");
-        assert_eq!(result, "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
+        let (result, errors) = chain.apply(b"hello");
+        assert_eq!(result, b"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
         assert!(errors.is_empty());
 
         let mut chain = TransformationChain::new();
         chain.add("urlDecode", url_decode).unwrap();
         chain.add("hexEncode", hex_encode).unwrap();
-        assert_eq!(chain.apply("%ff").0, "ff");
-        // The operator gets text
+        assert_eq!(chain.apply(b"%ff").0, b"ff");
+        // The operator gets each value's bytes, UTF-8 or not, as in Go Coraza
         assert_eq!(
-            chain.apply_multimatch("%ff").0,
-            vec!["%ff", "\u{FFFD}", "ff"]
+            chain.apply_multimatch(b"%ff").0,
+            vec![b"%ff".to_vec(), vec![0xff], b"ff".to_vec()]
         );
     }
 }

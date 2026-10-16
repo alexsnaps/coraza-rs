@@ -3,7 +3,7 @@
 //! Both detect attacks with libperfusion, a port of libinjection, as Coraza does with
 //! libinjection-go.
 
-use crate::operators::Operator;
+use crate::operators::{Operator, Outputs};
 use crate::transaction::Transaction;
 
 /// SQL injection detection operator.
@@ -28,24 +28,24 @@ use crate::transaction::Transaction;
 /// let op = detect_sqli();
 ///
 /// // SQL injection patterns
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "1' OR '1'='1"));
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "admin'--"));
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "1 UNION SELECT"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "1' OR '1'='1".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "admin'--".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "1 UNION SELECT".as_bytes(), &mut out));
 ///
 /// // Normal input
-/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "hello world"));
+/// assert!(!op.evaluate(&tx, "hello world".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct DetectSQLi;
 
 impl Operator for DetectSQLi {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        let Some(fingerprint) = libperfusion::sqli(input.as_bytes()) else {
+    fn evaluate(&self, _tx: &Transaction, input: &[u8], out: &mut Outputs) -> bool {
+        let Some(fingerprint) = libperfusion::sqli(input) else {
             return false;
         };
-        if let Some(tx) = tx {
-            tx.capture_field(0, fingerprint.as_str());
-        }
+        out.capture(0, fingerprint.as_bytes());
         true
     }
 }
@@ -58,7 +58,9 @@ impl Operator for DetectSQLi {
 /// # use coraza::operators::detection::detect_sqli;
 /// # use coraza::operators::Operator;
 /// let op = detect_sqli();
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "1' OR '1'='1"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "1' OR '1'='1".as_bytes(), &mut out));
 /// ```
 pub fn detect_sqli() -> DetectSQLi {
     DetectSQLi
@@ -85,19 +87,21 @@ pub fn detect_sqli() -> DetectSQLi {
 /// let op = detect_xss();
 ///
 /// // XSS patterns
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "<script>alert(1)</script>"));
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "<a href=\"javascript:alert(1)\">"));
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "<img src=x onerror=alert(1)>"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "<script>alert(1)</script>".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "<a href=\"javascript:alert(1)\">".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "<img src=x onerror=alert(1)>".as_bytes(), &mut out));
 ///
 /// // Normal input
-/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "hello world"));
+/// assert!(!op.evaluate(&tx, "hello world".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct DetectXSS;
 
 impl Operator for DetectXSS {
-    fn evaluate(&self, _tx: Option<&mut Transaction>, input: &str) -> bool {
-        libperfusion::xss(input.as_bytes())
+    fn evaluate(&self, _tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
+        libperfusion::xss(input)
     }
 }
 
@@ -109,7 +113,9 @@ impl Operator for DetectXSS {
 /// # use coraza::operators::detection::detect_xss;
 /// # use coraza::operators::Operator;
 /// let op = detect_xss();
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "<script>alert(1)</script>"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "<script>alert(1)</script>".as_bytes(), &mut out));
 /// ```
 pub fn detect_xss() -> DetectXSS {
     DetectXSS
@@ -118,6 +124,7 @@ pub fn detect_xss() -> DetectXSS {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::operators::{Matches, evaluate_in};
     use crate::transaction::Transaction;
 
     #[test]
@@ -125,15 +132,15 @@ mod tests {
         let op = detect_sqli();
 
         // SQL injection patterns
-        assert!(op.evaluate(None::<&mut Transaction>, "1' OR '1'='1"));
-        assert!(op.evaluate(None::<&mut Transaction>, "admin'--"));
-        assert!(op.evaluate(None::<&mut Transaction>, "1 UNION SELECT"));
-        assert!(op.evaluate(None::<&mut Transaction>, "1; DROP TABLE users"));
+        assert!(op.matches("1' OR '1'='1"));
+        assert!(op.matches("admin'--"));
+        assert!(op.matches("1 UNION SELECT"));
+        assert!(op.matches("1; DROP TABLE users"));
 
         // Normal input
-        assert!(!op.evaluate(None::<&mut Transaction>, "hello world"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "test@example.com"));
-        assert!(!op.evaluate(None::<&mut Transaction>, ""));
+        assert!(!op.matches("hello world"));
+        assert!(!op.matches("test@example.com"));
+        assert!(!op.matches(""));
     }
 
     #[test]
@@ -141,11 +148,8 @@ mod tests {
         let op = detect_sqli();
         let mut tx = Transaction::default();
 
-        // Enable capturing
-        tx.set_capturing(true);
-
         // Detect SQL injection and capture fingerprint
-        assert!(op.evaluate(Some(&mut tx), "1' OR '1'='1"));
+        assert!(evaluate_in(&op, &mut tx, "1' OR '1'='1", true));
 
         // The fingerprint is captured into TX.0
         assert_eq!(
@@ -160,18 +164,18 @@ mod tests {
         let op = detect_xss();
 
         // XSS patterns (HTML context)
-        assert!(op.evaluate(None::<&mut Transaction>, "<script>alert(1)</script>"));
-        assert!(op.evaluate(None::<&mut Transaction>, "<img src=x onerror=alert(1)>"));
-        assert!(op.evaluate(None::<&mut Transaction>, "<svg/onload=alert(1)>"));
+        assert!(op.matches("<script>alert(1)</script>"));
+        assert!(op.matches("<img src=x onerror=alert(1)>"));
+        assert!(op.matches("<svg/onload=alert(1)>"));
 
         // Normal input
-        assert!(!op.evaluate(None::<&mut Transaction>, "hello world"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "<p>Normal HTML</p>"));
-        assert!(!op.evaluate(None::<&mut Transaction>, ""));
+        assert!(!op.matches("hello world"));
+        assert!(!op.matches("<p>Normal HTML</p>"));
+        assert!(!op.matches(""));
 
         // A javascript: URL is only flagged as the value of an attribute that takes a URL
-        assert!(!op.evaluate(None::<&mut Transaction>, "javascript:alert(1)"));
-        assert!(op.evaluate(None::<&mut Transaction>, "<a href=\"javascript:alert(1)\">"));
+        assert!(!op.matches("javascript:alert(1)"));
+        assert!(op.matches("<a href=\"javascript:alert(1)\">"));
     }
 
     #[test]
@@ -179,11 +183,11 @@ mod tests {
         let op = detect_xss();
 
         // More sophisticated XSS
-        assert!(op.evaluate(None::<&mut Transaction>, "<body onload=alert(1)>"));
-        assert!(op.evaluate(None::<&mut Transaction>, "<iframe src=javascript:alert(1)>"));
+        assert!(op.matches("<body onload=alert(1)>"));
+        assert!(op.matches("<iframe src=javascript:alert(1)>"));
 
         // Not XSS
-        assert!(!op.evaluate(None::<&mut Transaction>, "test"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "a < b && c > d"));
+        assert!(!op.matches("test"));
+        assert!(!op.matches("a < b && c > d"));
     }
 }

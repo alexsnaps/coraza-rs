@@ -3,7 +3,7 @@
 //! This module provides operators for matching IP addresses against CIDR blocks
 //! and IP ranges, compatible with ModSecurity's @ipMatch family of operators.
 
-use crate::operators::{Datasets, Operator};
+use crate::operators::{Datasets, Operator, Outputs};
 use crate::transaction::Transaction;
 use ipnet::IpNet;
 use std::net::IpAddr;
@@ -31,21 +31,23 @@ use std::str::FromStr;
 /// # use coraza::operators::Operator;
 /// // Block specific IPs and ranges
 /// let op = ip_match("192.168.1.100,192.168.1.50,10.10.50.0/24").unwrap();
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "192.168.1.100"));
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "10.10.50.25"));
-/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "192.168.1.101"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "192.168.1.100".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "10.10.50.25".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "192.168.1.101".as_bytes(), &mut out));
 ///
 /// // Match internal network
 /// let op = ip_match("10.0.0.0/8,172.16.0.0/12").unwrap();
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "10.5.10.20"));
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "172.16.0.1"));
-/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "192.168.1.1"));
+/// assert!(op.evaluate(&tx, "10.5.10.20".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "172.16.0.1".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "192.168.1.1".as_bytes(), &mut out));
 ///
 /// // IPv6 support
 /// let op = ip_match("::1,2001:db8::/32").unwrap();
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "::1"));
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "2001:db8::1"));
-/// assert!(!op.evaluate(None::<&mut coraza::transaction::Transaction>, "::2"));
+/// assert!(op.evaluate(&tx, "::1".as_bytes(), &mut out));
+/// assert!(op.evaluate(&tx, "2001:db8::1".as_bytes(), &mut out));
+/// assert!(!op.evaluate(&tx, "::2".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct IpMatch {
@@ -109,11 +111,11 @@ impl IpMatch {
 }
 
 impl Operator for IpMatch {
-    fn evaluate(&self, _tx: Option<&mut Transaction>, input: &str) -> bool {
+    fn evaluate(&self, _tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         // Parse the input IP address
-        let ip = match IpAddr::from_str(input) {
-            Ok(ip) => ip,
-            Err(_) => return false,
+        let ip = match std::str::from_utf8(input).map(IpAddr::from_str) {
+            Ok(Ok(ip)) => ip,
+            _ => return false,
         };
 
         // Check if the IP is contained in any of the configured subnets
@@ -139,7 +141,9 @@ impl Operator for IpMatch {
 /// # use coraza::operators::ip::ip_match;
 /// # use coraza::operators::Operator;
 /// let op = ip_match("192.168.1.0/24").unwrap();
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "192.168.1.100"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "192.168.1.100".as_bytes(), &mut out));
 /// ```
 pub fn ip_match(ips: &str) -> Result<IpMatch, String> {
     IpMatch::new(ips)
@@ -154,8 +158,8 @@ pub struct IpMatchFromDataset {
 }
 
 impl Operator for IpMatchFromDataset {
-    fn evaluate(&self, tx: Option<&mut Transaction>, input: &str) -> bool {
-        self.ips.evaluate(tx, input)
+    fn evaluate(&self, tx: &Transaction, input: &[u8], out: &mut Outputs) -> bool {
+        self.ips.evaluate(tx, input, out)
     }
 }
 
@@ -205,7 +209,9 @@ pub fn ip_match_from_dataset(
 /// # use coraza::operators::ip::ip_match_from_file;
 /// # use coraza::operators::Operator;
 /// let op = ip_match_from_file("/etc/coraza/blocked-ips.txt").unwrap();
-/// assert!(op.evaluate(None::<&mut coraza::transaction::Transaction>, "10.0.0.1"));
+/// let tx = coraza::transaction::Transaction::default();
+/// let mut out = coraza::operators::Outputs::default();
+/// assert!(op.evaluate(&tx, "10.0.0.1".as_bytes(), &mut out));
 /// ```
 #[derive(Debug, Clone)]
 pub struct IpMatchFromFile {
@@ -280,11 +286,11 @@ impl IpMatchFromFile {
 }
 
 impl Operator for IpMatchFromFile {
-    fn evaluate(&self, _tx: Option<&mut Transaction>, input: &str) -> bool {
+    fn evaluate(&self, _tx: &Transaction, input: &[u8], _out: &mut Outputs) -> bool {
         // Parse input IP address
-        let ip = match IpAddr::from_str(input) {
-            Ok(ip) => ip,
-            Err(_) => return false,
+        let ip = match std::str::from_utf8(input).map(IpAddr::from_str) {
+            Ok(Ok(ip)) => ip,
+            _ => return false,
         };
 
         // Check if IP is in any of the subnets
@@ -312,15 +318,15 @@ pub fn ip_match_from_file(file_path: impl AsRef<Path>) -> Result<IpMatchFromFile
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transaction::Transaction;
+    use crate::operators::Matches;
 
     #[test]
     fn test_ip_match_single_address() {
         // Test from Go: TestOneAddress
         let op = ip_match("127.0.0.1/32").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, "127.0.0.1"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "127.0.0.2"));
+        assert!(op.matches("127.0.0.1"));
+        assert!(!op.matches("127.0.0.2"));
     }
 
     #[test]
@@ -331,21 +337,13 @@ mod tests {
         // Should match
         let addrs_ok = ["127.0.0.1", "192.168.0.1", "192.168.0.253"];
         for addr in &addrs_ok {
-            assert!(
-                op.evaluate(None::<&mut Transaction>, addr),
-                "Expected {} to match",
-                addr
-            );
+            assert!(op.matches(addr), "Expected {} to match", addr);
         }
 
         // Should not match
         let addrs_fail = ["127.0.0.2", "192.168.1.1"];
         for addr in &addrs_fail {
-            assert!(
-                !op.evaluate(None::<&mut Transaction>, addr),
-                "Expected {} to not match",
-                addr
-            );
+            assert!(!op.matches(addr), "Expected {} to not match", addr);
         }
     }
 
@@ -354,8 +352,8 @@ mod tests {
         // Test auto-adding /32 for IPv4 without CIDR
         let op = ip_match("192.168.1.100").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, "192.168.1.100"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "192.168.1.101"));
+        assert!(op.matches("192.168.1.100"));
+        assert!(!op.matches("192.168.1.101"));
     }
 
     #[test]
@@ -363,17 +361,17 @@ mod tests {
         // Test auto-adding /128 for IPv6 without CIDR
         let op = ip_match("::1").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, "::1"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "::2"));
+        assert!(op.matches("::1"));
+        assert!(!op.matches("::2"));
     }
 
     #[test]
     fn test_ip_match_ipv6_with_cidr() {
         let op = ip_match("2001:db8::/32").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, "2001:db8::1"));
-        assert!(op.evaluate(None::<&mut Transaction>, "2001:db8:ffff::1"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "2001:db9::1"));
+        assert!(op.matches("2001:db8::1"));
+        assert!(op.matches("2001:db8:ffff::1"));
+        assert!(!op.matches("2001:db9::1"));
     }
 
     #[test]
@@ -381,16 +379,16 @@ mod tests {
         let op = ip_match("127.0.0.1, ::1, 192.168.0.0/24, 2001:db8::/32").unwrap();
 
         // IPv4
-        assert!(op.evaluate(None::<&mut Transaction>, "127.0.0.1"));
-        assert!(op.evaluate(None::<&mut Transaction>, "192.168.0.50"));
+        assert!(op.matches("127.0.0.1"));
+        assert!(op.matches("192.168.0.50"));
 
         // IPv6
-        assert!(op.evaluate(None::<&mut Transaction>, "::1"));
-        assert!(op.evaluate(None::<&mut Transaction>, "2001:db8::1"));
+        assert!(op.matches("::1"));
+        assert!(op.matches("2001:db8::1"));
 
         // Should not match
-        assert!(!op.evaluate(None::<&mut Transaction>, "127.0.0.2"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "::2"));
+        assert!(!op.matches("127.0.0.2"));
+        assert!(!op.matches("::2"));
     }
 
     #[test]
@@ -398,9 +396,9 @@ mod tests {
         let op = ip_match("192.168.1.0/24").unwrap();
 
         // Invalid IP addresses should return false
-        assert!(!op.evaluate(None::<&mut Transaction>, "not-an-ip"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "999.999.999.999"));
-        assert!(!op.evaluate(None::<&mut Transaction>, ""));
+        assert!(!op.matches("not-an-ip"));
+        assert!(!op.matches("999.999.999.999"));
+        assert!(!op.matches(""));
     }
 
     #[test]
@@ -419,8 +417,8 @@ mod tests {
         // Should skip invalid entries and continue (matches Go behavior)
         let op = ip_match("invalid, 192.168.1.0/24, also-invalid").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, "192.168.1.100"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "10.0.0.1"));
+        assert!(op.matches("192.168.1.100"));
+        assert!(!op.matches("10.0.0.1"));
     }
 
     #[test]
@@ -428,8 +426,8 @@ mod tests {
         // Should handle whitespace properly
         let op = ip_match("  192.168.1.100  ,  10.0.0.0/8  ").unwrap();
 
-        assert!(op.evaluate(None::<&mut Transaction>, "192.168.1.100"));
-        assert!(op.evaluate(None::<&mut Transaction>, "10.5.10.20"));
+        assert!(op.matches("192.168.1.100"));
+        assert!(op.matches("10.5.10.20"));
     }
 
     #[test]
@@ -438,19 +436,19 @@ mod tests {
         let op = ip_match("10.0.0.0/8,172.16.0.0/12,192.168.0.0/16").unwrap();
 
         // Class A private
-        assert!(op.evaluate(None::<&mut Transaction>, "10.0.0.1"));
-        assert!(op.evaluate(None::<&mut Transaction>, "10.255.255.254"));
+        assert!(op.matches("10.0.0.1"));
+        assert!(op.matches("10.255.255.254"));
 
         // Class B private
-        assert!(op.evaluate(None::<&mut Transaction>, "172.16.0.1"));
-        assert!(op.evaluate(None::<&mut Transaction>, "172.31.255.254"));
+        assert!(op.matches("172.16.0.1"));
+        assert!(op.matches("172.31.255.254"));
 
         // Class C private
-        assert!(op.evaluate(None::<&mut Transaction>, "192.168.0.1"));
-        assert!(op.evaluate(None::<&mut Transaction>, "192.168.255.254"));
+        assert!(op.matches("192.168.0.1"));
+        assert!(op.matches("192.168.255.254"));
 
         // Public IP should not match
-        assert!(!op.evaluate(None::<&mut Transaction>, "8.8.8.8"));
+        assert!(!op.matches("8.8.8.8"));
     }
 
     #[test]
@@ -470,13 +468,13 @@ mod tests {
         let op = ip_match_from_file(temp_file.path().to_str().unwrap()).unwrap();
 
         // Should match IPs from file
-        assert!(op.evaluate(None::<&mut Transaction>, "192.168.1.100"));
-        assert!(op.evaluate(None::<&mut Transaction>, "10.0.0.1"));
-        assert!(op.evaluate(None::<&mut Transaction>, "172.16.50.25"));
+        assert!(op.matches("192.168.1.100"));
+        assert!(op.matches("10.0.0.1"));
+        assert!(op.matches("172.16.50.25"));
 
         // Should not match other IPs
-        assert!(!op.evaluate(None::<&mut Transaction>, "192.168.2.1"));
-        assert!(!op.evaluate(None::<&mut Transaction>, "8.8.8.8"));
+        assert!(!op.matches("192.168.2.1"));
+        assert!(!op.matches("8.8.8.8"));
     }
 
     #[test]

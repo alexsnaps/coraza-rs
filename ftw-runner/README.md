@@ -132,15 +132,15 @@ See [go-ftw documentation](https://github.com/coreruleset/go-ftw) for test forma
 
 ## Results
 
-CRS v4.30.0's regression tests, run with go-ftw v2.1.0 and the `crs-test.conf` above: **5,185 of 5,231 pass
-(99.1%)**.
+CRS v4.30.0's regression tests, run with go-ftw v2.1.0 and the `crs-test.conf` above: **5,193 of 5,231 pass
+(99.3%)**.
 
 | Rule file                                       | Tests | Passed |
 |-------------------------------------------------|------:|-------:|
 | REQUEST-901-INITIALIZATION                      |    18 |     18 |
 | REQUEST-911-METHOD-ENFORCEMENT                  |     8 |      8 |
 | REQUEST-913-SCANNER-DETECTION                   |     9 |      9 |
-| REQUEST-920-PROTOCOL-ENFORCEMENT                |   428 |    414 |
+| REQUEST-920-PROTOCOL-ENFORCEMENT                |   428 |    418 |
 | REQUEST-921-PROTOCOL-ATTACK                     |   117 |    114 |
 | REQUEST-922-MULTIPART-ATTACK                    |    47 |     47 |
 | REQUEST-930-APPLICATION-ATTACK-LFI              |    83 |     82 |
@@ -148,10 +148,10 @@ CRS v4.30.0's regression tests, run with go-ftw v2.1.0 and the `crs-test.conf` a
 | REQUEST-932-APPLICATION-ATTACK-RCE              |  1089 |   1082 |
 | REQUEST-933-APPLICATION-ATTACK-PHP              |   442 |    442 |
 | REQUEST-934-APPLICATION-ATTACK-GENERIC          |   282 |    275 |
-| REQUEST-941-APPLICATION-ATTACK-XSS              |   263 |    256 |
+| REQUEST-941-APPLICATION-ATTACK-XSS              |   263 |    259 |
 | REQUEST-942-APPLICATION-ATTACK-SQLI             |  1032 |   1029 |
 | REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION |    47 |     46 |
-| REQUEST-944-APPLICATION-ATTACK-JAVA             |  1176 |   1175 |
+| REQUEST-944-APPLICATION-ATTACK-JAVA             |  1176 |   1176 |
 | REQUEST-949-BLOCKING-EVALUATION                 |     5 |      3 |
 | RESPONSE-950-DATA-LEAKAGES                      |    14 |     14 |
 | RESPONSE-951-DATA-LEAKAGES-SQL                  |    22 |     22 |
@@ -164,14 +164,12 @@ CRS v4.30.0's regression tests, run with go-ftw v2.1.0 and the `crs-test.conf` a
 | RESPONSE-980-CORRELATION                        |     3 |      3 |
 | REQUEST-999-COMMON-EXCEPTIONS-AFTER             |    38 |     38 |
 
-Of the 46 that fail:
+Of the 38 that fail, none is the engine's:
 - **9 are tests Go Coraza's CI sets aside too.** It ignores 920100-5, 920430-5 and 920610-2 (`.ftw.yml`), and
   changes the expected result of 920100-8, 920270-4, 920274-1, 920290-1, 920430-8 and 920620-1
   (`.ftw-overrides.yml`); all but 920290-1 and 920430-8 meet Go's changed expectation.
 - **29 are the test server's.** hyper rejects 28 request lines for their URI (see above), so the WAF never sees
   them, and rewrites 920100-16's absolute-form `http://localhost` URI.
-- **8 are the engine's:** 920250-1 to 4, 941310-1, 12 and 13, and 944200-1. They send bytes that aren't UTF-8,
-  which the engine's collections hold as text.
 
 Go Coraza's CI runs 5,260 tests, with go-ftw v2.5.0.
 
@@ -201,5 +199,4 @@ tail -f /tmp/coraza-ftw-audit.log
 ## Next Steps
 
 1. Read requests with a parser that accepts the request lines hyper rejects (29 tests; see `../GAPS.md`)
-2. Keep collection values as bytes (8 tests; see `../GAPS.md`)
-3. Integrate into CI/CD pipeline
+2. Integrate into CI/CD pipeline

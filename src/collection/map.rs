@@ -6,8 +6,8 @@
 //! Provides key-value storage with optional case-insensitive keys.
 //! Multiple values per key are supported.
 
-use super::MatchData;
 use crate::RuleVariable;
+use crate::transformations::text_of;
 use regex::Regex;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -50,13 +50,45 @@ pub struct Map {
 
 /// Internal storage for a key-value pair.
 ///
-/// Preserves the original key casing even when the map is case-insensitive.
+/// Preserves the original key casing even when the map is case-insensitive. Values are read
+/// and written as bytes; only this type knows how they are stored.
 #[derive(Debug, Clone)]
 struct KeyValue {
     /// Original key (with original casing)
     key: String,
     /// Value
-    value: String,
+    value: Vec<u8>,
+}
+
+impl KeyValue {
+    fn new(key: &str, value: &[u8]) -> Self {
+        Self {
+            key: key.to_string(),
+            value: Self::stored(value),
+        }
+    }
+
+    /// How `value` is stored.
+    fn stored(value: &[u8]) -> Vec<u8> {
+        value.to_vec()
+    }
+
+    fn value(&self) -> &[u8] {
+        &self.value
+    }
+
+    /// The value as text, invalid UTF-8 replaced with U+FFFD.
+    fn text(&self) -> Cow<'_, str> {
+        text_of(self.value())
+    }
+
+    /// Replaces the key and value, reusing their buffers.
+    fn replace(&mut self, key: &str, value: &[u8]) {
+        self.key.clear();
+        self.key.push_str(key);
+        self.value.clear();
+        self.value.extend_from_slice(value);
+    }
 }
 
 impl Map {
@@ -94,19 +126,31 @@ impl Map {
 }
 
 impl Map {
-    /// All key-value pairs, in no particular order.
-    pub fn find_all(&self) -> Vec<MatchData> {
-        let mut result = Vec::new();
-        for values in self.data.values() {
-            for kv in values {
-                result.push(MatchData::new(
-                    self.variable,
-                    kv.key.clone(),
-                    kv.value.clone(),
-                ));
-            }
-        }
-        result
+    /// Every key, with its original casing, and value, in no particular order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &[u8])> + '_ {
+        self.data
+            .values()
+            .flatten()
+            .map(|kv| (kv.key.as_str(), kv.value()))
+    }
+
+    /// The keys and values stored under `key` (whatever its case, in a case-insensitive map).
+    pub fn iter_key(&self, key: &str) -> impl Iterator<Item = (&str, &[u8])> + '_ {
+        let lookup = self.lookup_key(key);
+        self.data
+            .get(lookup.as_ref())
+            .into_iter()
+            .flatten()
+            .map(|kv| (kv.key.as_str(), kv.value()))
+    }
+
+    /// The keys and values whose (lookup) key matches `regex`.
+    pub fn iter_regex<'a>(&'a self, regex: &'a Regex) -> impl Iterator<Item = (&'a str, &'a [u8])> {
+        self.data
+            .iter()
+            .filter(|(lookup_key, _)| regex.is_match(lookup_key))
+            .flat_map(|(_, values)| values)
+            .map(|kv| (kv.key.as_str(), kv.value()))
     }
 
     /// Name of the variable this map holds (e.g. `ARGS`).
@@ -114,64 +158,35 @@ impl Map {
         self.variable.name()
     }
 
-    /// All values for `key`; empty if the key is absent.
+    /// The variable this map holds.
+    pub fn variable(&self) -> RuleVariable {
+        self.variable
+    }
+
+    /// The values of `key`; none if the key is absent.
+    pub fn values(&self, key: &str) -> impl Iterator<Item = &[u8]> + '_ {
+        self.iter_key(key).map(|(_, value)| value)
+    }
+
+    /// All values for `key` as text, invalid UTF-8 replaced with U+FFFD; empty if the key
+    /// is absent. [`Map::values`] gives them as they are.
     pub fn get(&self, key: &str) -> Vec<String> {
         let lookup = self.lookup_key(key);
         self.data
             .get(lookup.as_ref())
-            .map(|values| values.iter().map(|kv| kv.value.clone()).collect())
+            .map(|values| values.iter().map(|kv| kv.text().into_owned()).collect())
             .unwrap_or_default()
     }
 
     /// The first value of `key`; `None` if the key is absent.
-    pub fn first(&self, key: &str) -> Option<&str> {
-        let lookup = self.lookup_key(key);
-        let values = self.data.get(lookup.as_ref())?;
-        values.first().map(|kv| kv.value.as_str())
-    }
-
-    /// All key-value pairs whose (lookup) key matches `regex`.
-    pub fn find_regex(&self, regex: &Regex) -> Vec<MatchData> {
-        let mut result = Vec::new();
-        for (lookup_key, values) in &self.data {
-            if regex.is_match(lookup_key) {
-                for kv in values {
-                    result.push(MatchData::new(
-                        self.variable,
-                        kv.key.clone(),
-                        kv.value.clone(),
-                    ));
-                }
-            }
-        }
-        result
-    }
-
-    /// All key-value pairs for `key`; every pair if `key` is empty.
-    pub fn find_string(&self, key: &str) -> Vec<MatchData> {
-        if key.is_empty() {
-            return self.find_all();
-        }
-
-        let lookup = self.lookup_key(key);
-        self.data
-            .get(lookup.as_ref())
-            .map(|values| {
-                values
-                    .iter()
-                    .map(|kv| MatchData::new(self.variable, kv.key.clone(), kv.value.clone()))
-                    .collect()
-            })
-            .unwrap_or_default()
+    pub fn first(&self, key: &str) -> Option<&[u8]> {
+        self.values(key).next()
     }
 
     /// Appends `value` to the values of `key`.
-    pub fn add(&mut self, key: &str, value: &str) {
+    pub fn add(&mut self, key: &str, value: impl AsRef<[u8]>) {
         let lookup = self.lookup_key(key);
-        let kv = KeyValue {
-            key: key.to_string(),
-            value: value.to_string(),
-        };
+        let kv = KeyValue::new(key, value.as_ref());
         match self.data.get_mut(lookup.as_ref()) {
             Some(values) => values.push(kv),
             None => {
@@ -181,38 +196,27 @@ impl Map {
     }
 
     /// Replaces the values of `key`.
-    pub fn set(&mut self, key: &str, values: Vec<String>) {
+    pub fn set<V: AsRef<[u8]>>(&mut self, key: &str, values: impl IntoIterator<Item = V>) {
         let lookup = self.lookup_key(key);
         let key_values: Vec<KeyValue> = values
             .into_iter()
-            .map(|value| KeyValue {
-                key: key.to_string(),
-                value,
-            })
+            .map(|value| KeyValue::new(key, value.as_ref()))
             .collect();
         self.data.insert(lookup.into_owned(), key_values);
     }
 
     /// Replaces the value at `index` of `key`, or appends it if `index` is past the end.
-    pub fn set_index(&mut self, key: &str, index: usize, value: &str) {
+    pub fn set_index(&mut self, key: &str, index: usize, value: impl AsRef<[u8]>) {
         let lookup = self.lookup_key(key);
-        let new = || KeyValue {
-            key: key.to_string(),
-            value: value.to_string(),
-        };
+        let value = value.as_ref();
 
         match self.data.get_mut(lookup.as_ref()) {
             // Rewritten in its buffers: RULE's values are set this way for every rule evaluated
-            Some(values) if index < values.len() => {
-                let kv = &mut values[index];
-                kv.key.clear();
-                kv.key.push_str(key);
-                kv.value.clear();
-                kv.value.push_str(value);
-            }
-            Some(values) => values.push(new()),
+            Some(values) if index < values.len() => values[index].replace(key, value),
+            Some(values) => values.push(KeyValue::new(key, value)),
             None => {
-                self.data.insert(lookup.into_owned(), vec![new()]);
+                self.data
+                    .insert(lookup.into_owned(), vec![KeyValue::new(key, value)]);
             }
         }
     }
@@ -233,12 +237,13 @@ impl Map {
         self.data.len()
     }
 
-    /// Every key, lowercase in a case-insensitive map, with its values, sorted by key.
+    /// Every key, lowercase in a case-insensitive map, with its values as text (as
+    /// [`Map::get`] gives them), sorted by key.
     pub fn entries(&self) -> std::collections::BTreeMap<String, Vec<String>> {
         self.data
             .iter()
             .map(|(key, values)| {
-                let values = values.iter().map(|kv| kv.value.clone()).collect();
+                let values = values.iter().map(|kv| kv.text().into_owned()).collect();
                 (key.clone(), values)
             })
             .collect()
@@ -265,7 +270,7 @@ impl std::fmt::Display for Map {
                     if i > 0 {
                         write!(f, ",")?;
                     }
-                    write!(f, "{}", kv.value)?;
+                    write!(f, "{}", kv.text())?;
                 }
                 writeln!(f)?;
             }
@@ -287,11 +292,11 @@ mod tests {
 
         assert_eq!(map.get("user"), vec!["value"]);
         assert_eq!(map.get("USER"), vec!["value"]); // Case-insensitive
-        assert!(!map.find_all().is_empty());
-        assert!(map.find_string("a").is_empty());
+        assert!(map.iter().next().is_some());
+        assert!(map.iter_key("a").next().is_none());
 
         let regex = Regex::new("user.*").unwrap();
-        assert_eq!(map.find_regex(&regex).len(), 2);
+        assert_eq!(map.iter_regex(&regex).count(), 2);
 
         map.add("user-agent", "value3");
         assert_eq!(map.get("user-agent").len(), 2);
@@ -308,11 +313,11 @@ mod tests {
 
         assert_eq!(map.get("key"), vec!["value"]);
         assert!(map.get("KEY").is_empty()); // Case-sensitive
-        assert!(!map.find_all().is_empty());
-        assert!(map.find_string("a").is_empty());
+        assert!(map.iter().next().is_some());
+        assert!(map.iter_key("a").next().is_none());
 
         let regex = Regex::new("k.*").unwrap();
-        assert_eq!(map.find_regex(&regex).len(), 2);
+        assert_eq!(map.iter_regex(&regex).count(), 2);
 
         map.add("key2", "value3");
         assert_eq!(map.get("key2").len(), 2);
@@ -329,7 +334,7 @@ mod tests {
 
         map.reset();
         assert_eq!(map.len(), 0);
-        assert!(map.find_all().is_empty());
+        assert!(map.iter().next().is_none());
     }
 
     #[test]
@@ -363,9 +368,12 @@ mod tests {
         let mut map = Map::new(RuleVariable::RequestHeaders);
         map.add("Über", "value");
 
-        assert_eq!(map.first("über"), Some("value"));
-        assert_eq!(map.first("Über"), Some("value"));
-        assert_eq!(map.find_string("über")[0].key, "Über");
+        assert_eq!(map.first("über"), Some(&b"value"[..]));
+        assert_eq!(map.first("Über"), Some(&b"value"[..]));
+        assert_eq!(
+            map.iter_key("über").next().map(|(key, _)| key),
+            Some("Über")
+        );
         map.remove("Über");
         assert!(map.is_empty());
     }
@@ -377,7 +385,7 @@ mod tests {
 
         map.add("Key", "value1");
         map.add("KEY", "value2");
-        assert_eq!(map.first("key"), Some("value1"));
+        assert_eq!(map.first("key"), Some(&b"value1"[..]));
     }
 
     #[test]
@@ -391,7 +399,7 @@ mod tests {
             map.get("msg"),
             vec!["a longer message than before", "second"]
         );
-        assert_eq!(map.find_string("msg")[0].key, "MSG");
+        assert_eq!(map.iter_key("msg").next().map(|(key, _)| key), Some("MSG"));
     }
 
     #[test]
@@ -404,16 +412,5 @@ mod tests {
         let values = map.get("id");
         assert_eq!(values.len(), 3);
         assert_eq!(values, vec!["123", "456", "789"]);
-    }
-
-    #[test]
-    fn test_find_string_empty_key() {
-        let mut map = Map::new(RuleVariable::RequestHeaders);
-        map.add("key1", "value1");
-        map.add("key2", "value2");
-
-        // Empty key should return all values
-        let results = map.find_string("");
-        assert_eq!(results.len(), 2);
     }
 }

@@ -280,9 +280,10 @@ fn test_transaction_phase_progression() {
 
     // Process URI (Phase 1)
     tx.process_uri("/test", "GET", "HTTP/1.1");
-    // Note: process_uri doesn't update last_phase, only process_request_body and later do
+    // Note: process_uri doesn't update last_phase, only the phase methods do
 
-    // Process request body (Phase 2)
+    // Process request headers (Phase 1), then the request body (Phase 2)
+    tx.process_request_headers();
     let _ = tx.process_request_body(b"test=value");
     assert_eq!(tx.last_phase(), Some(RulePhase::RequestBody));
 
@@ -305,6 +306,7 @@ fn test_phase_idempotency() {
     let mut tx = waf.new_transaction();
 
     // Process request body twice
+    tx.process_request_headers();
     let _ = tx.process_request_body(b"test=value");
     let phase1 = tx.last_phase();
 
@@ -437,10 +439,11 @@ fn test_waf_handles_invalid_body_gracefully() {
 
     // Invalid JSON should not crash
     tx.add_request_header("Content-Type", "application/json");
+    tx.process_request_headers();
     let result = tx.process_request_body(b"{invalid json}");
 
-    // Should return Ok (error logged but not fatal)
-    assert!(result.is_ok());
+    // Not an interruption: rules see the error in REQBODY_ERROR
+    assert!(result.is_none());
 }
 
 #[test]

@@ -249,7 +249,7 @@ mod tests {
         assert!(t(&mut rule, "urlDecode").is_ok());
 
         assert_eq!(rule.transformations.names(), vec!["lowercase", "urlDecode"]);
-        assert_eq!(rule.transformations.apply("A%42").0, "aB");
+        assert_eq!(rule.transformations.apply(b"A%42").0, b"aB");
     }
 
     #[test]

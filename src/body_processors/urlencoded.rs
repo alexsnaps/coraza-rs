@@ -9,7 +9,7 @@
 
 use super::{BodyProcessor, BodyProcessorError, BodyProcessorOptions};
 use crate::transaction::Transaction;
-use crate::transformations::{text_from_bytes, url_decode};
+use crate::transformations::{text_from_bytes, text_of, url_decode};
 
 /// URL-encoded body processor for form data
 pub struct UrlencodedBodyProcessor;
@@ -21,16 +21,14 @@ impl BodyProcessor for UrlencodedBodyProcessor {
         tx: &mut Transaction,
         _options: &BodyProcessorOptions,
     ) -> Result<(), BodyProcessorError> {
-        // Convert body to string
-        let body_str = String::from_utf8_lossy(body).to_string();
-        let body_len = body.len();
-
-        for (key, value) in parse_query(&body_str) {
+        // As in Go Coraza, argument values keep the body's bytes
+        for (key, value) in parse_query(body) {
             tx.add_post_argument(&key, &value);
         }
 
-        // Store REQUEST_BODY and REQUEST_BODY_LENGTH
-        tx.request_body.set(body_str);
+        // Store REQUEST_BODY (as text) and REQUEST_BODY_LENGTH
+        let body_len = body.len();
+        tx.request_body.set(text_of(body));
         tx.request_body_length.set(body_len.to_string());
 
         Ok(())
@@ -48,16 +46,21 @@ impl BodyProcessor for UrlencodedBodyProcessor {
 }
 
 /// Decoded `key=value` pairs of an `application/x-www-form-urlencoded` string (a query
-/// string or a form body), in order. Empty pairs are skipped; a key without `=` has an
-/// empty value.
-pub(crate) fn parse_query(query: &str) -> impl Iterator<Item = (String, String)> + '_ {
+/// string or a form body), in order: keys as text, values as bytes. Empty pairs are
+/// skipped; a key without `=` has an empty value.
+pub(crate) fn parse_query(query: &[u8]) -> impl Iterator<Item = (String, Vec<u8>)> + '_ {
     query
-        .split('&')
+        .split(|&byte| byte == b'&')
         .filter(|pair| !pair.is_empty())
         .map(|pair| {
-            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-            let decode = |text: &str| text_from_bytes(url_decode(text.as_bytes()).0);
-            (decode(key), decode(value))
+            let (key, value) = match pair.iter().position(|&byte| byte == b'=') {
+                Some(equals) => (&pair[..equals], &pair[equals + 1..]),
+                None => (pair, &b""[..]),
+            };
+            let key = text_from_bytes(url_decode(key).0);
+            // As in Go Coraza, a value keeps the bytes it decodes to, UTF-8 or not
+            let value = url_decode(value).0;
+            (key, value)
         })
 }
 
@@ -169,7 +172,7 @@ mod tests {
             .unwrap();
 
         // Empty body should result in no ARGS_POST entries
-        assert!(tx.args_post().find_all().is_empty());
+        assert!(tx.args_post().is_empty());
         assert_eq!(tx.request_body.get(), "");
         assert_eq!(tx.request_body_length.get(), "0");
     }
@@ -204,8 +207,8 @@ mod tests {
 
     #[test]
     fn test_parse_query() {
-        let result: Vec<_> = parse_query("a=1&&b=2&c&a=3").collect();
-        let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+        let result: Vec<_> = parse_query(b"a=1&&b=2&c&a=3").collect();
+        let pair = |k: &str, v: &str| (k.to_string(), v.as_bytes().to_vec());
         assert_eq!(
             result,
             vec![
@@ -219,8 +222,8 @@ mod tests {
 
     #[test]
     fn test_parse_query_with_encoding() {
-        let result: Vec<_> = parse_query("name=John+Doe&city=New%20York&e=%C3%A9").collect();
-        let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+        let result: Vec<_> = parse_query(b"name=John+Doe&city=New%20York&e=%C3%A9").collect();
+        let pair = |k: &str, v: &str| (k.to_string(), v.as_bytes().to_vec());
         assert_eq!(
             result,
             vec![

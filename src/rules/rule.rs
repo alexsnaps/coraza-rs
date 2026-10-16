@@ -13,9 +13,8 @@
 use crate::RulePhase;
 use crate::actions::{Action, ActionType, RuleMetadata};
 use crate::collection::MatchData;
-use crate::rules::{
-    RuleOperator, VariableSpec, execute_flow_and_disruptive_actions, execute_nondisruptive_actions,
-};
+use crate::operators::Outputs;
+use crate::rules::{RuleOperator, VariableSpec};
 use crate::transaction::Transaction;
 
 /// Core rule for WAF evaluation.
@@ -184,25 +183,11 @@ impl Rule {
     ///
     /// Non-disruptive actions of each rule in the chain run for every value it
     /// matches, even if a later link fails. Only when every link matches are the
-    /// match recorded and this rule's flow and disruptive actions run (disruptive
-    /// ones only if `rule_engine_on`).
+    /// match recorded and this rule's flow and disruptive actions run; the transaction
+    /// decides whether a disruptive one takes effect.
     ///
     /// Returns the match data of this rule and its chain; empty if any link didn't match.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::rules::Rule;
-    /// use coraza::transaction::Transaction;
-    ///
-    /// let rule = Rule::new().with_id(1);
-    /// let mut tx = Transaction::new("test");
-    ///
-    /// // Evaluate rule (no operator = always matches)
-    /// let matches = rule.evaluate(&mut tx, true);
-    /// assert_eq!(matches.len(), 1);
-    /// ```
-    pub fn evaluate(&self, tx: &mut Transaction, rule_engine_on: bool) -> Vec<MatchData> {
+    pub(crate) fn evaluate(&self, tx: &mut Transaction) -> Vec<MatchData> {
         let id = self.metadata.id;
         let mut matched_values = self.match_values(tx, id);
         if matched_values.is_empty() {
@@ -247,16 +232,25 @@ impl Rule {
             tx.raise_highest_severity(severity);
         }
 
-        execute_flow_and_disruptive_actions(&self.actions, &self.metadata, tx, rule_engine_on);
+        self.run_actions(tx, |action_type| action_type != ActionType::Nondisruptive);
 
         matched_values
+    }
+
+    /// Runs, in order, this rule's actions whose type `runs` accepts.
+    fn run_actions(&self, tx: &mut Transaction, runs: impl Fn(ActionType) -> bool) {
+        for action in &self.actions {
+            if runs(action.action_type()) {
+                action.evaluate(&self.metadata, tx);
+            }
+        }
     }
 
     /// This rule's `msg` and `logdata`, expanded now; empty when unset.
     fn describe_match(&self, tx: &Transaction) -> (String, String) {
         let expand = |text: &Option<crate::operators::Macro>| {
             text.as_ref()
-                .map(|text| text.expand(Some(tx)))
+                .map(|text| text.expand(tx))
                 .unwrap_or_default()
         };
         (expand(&self.metadata.msg), expand(&self.metadata.log_data))
@@ -269,7 +263,7 @@ impl Rule {
     /// A rule without an operator (SecAction, SecMarker) always matches once.
     fn match_values(&self, tx: &mut Transaction, id: i32) -> Vec<MatchData> {
         let expand = |text: &Option<crate::operators::Macro>, tx: &Transaction| {
-            text.as_ref().map(|text| text.expand(Some(tx)))
+            text.as_ref().map(|text| text.expand(tx))
         };
         let msg = expand(&self.metadata.msg, tx);
         let log_data = expand(&self.metadata.log_data, tx);
@@ -280,15 +274,15 @@ impl Rule {
             // As in Go Coraza, an operator-less rule matches an empty, unknown variable
             let mut matched = MatchData::new_empty();
             tx.record_matched_variable(&matched);
-            execute_nondisruptive_actions(&self.actions, &self.metadata, tx);
+            self.run_actions(tx, |action_type| action_type == ActionType::Nondisruptive);
             if self.chain.is_empty() {
                 (matched.message, matched.data) = self.describe_match(tx);
             }
             return vec![matched];
         };
 
-        // Operators store regex groups in TX.0-TX.9 only for rules with `capture`
-        tx.set_capturing(self.metadata.capture);
+        // Operators capture, for TX.0-TX.9, only for rules with `capture`
+        let mut outputs = Outputs::new(self.metadata.capture);
 
         let mut matched_values = Vec::new();
         for var_spec in &self.variables {
@@ -306,11 +300,17 @@ impl Rule {
                 };
 
                 for value in values {
-                    if operator.evaluate(Some(tx), &value) {
+                    let operator_matched = operator.evaluate(tx, &value, &mut outputs);
+                    // As in Go Coraza, what the operator handed back is stored whether or not
+                    // the rule matches (a negated operator may have captured)
+                    tx.store_operator_outputs(&mut outputs);
+                    if operator_matched {
                         let mut matched =
                             MatchData::new(var_match.variable, var_match.key.clone(), value);
                         tx.record_matched_variable(&matched);
-                        execute_nondisruptive_actions(&self.actions, &self.metadata, tx);
+                        self.run_actions(tx, |action_type| {
+                            action_type == ActionType::Nondisruptive
+                        });
                         // The first rule of a chain describes its matches once the chain matched
                         if self.chain.is_empty() {
                             (matched.message, matched.data) = self.describe_match(tx);
@@ -343,7 +343,7 @@ mod tests {
         let rule = Rule::new().with_id(1);
 
         let mut tx = Transaction::new("test");
-        let matches = rule.evaluate(&mut tx, true);
+        let matches = rule.evaluate(&mut tx);
 
         // Operator-less rules always match (SecAction behavior)
         assert_eq!(matches.len(), 1);
@@ -366,12 +366,12 @@ mod tests {
         let mut tx = Transaction::new("test");
         tx.args_mut().add("test", "value");
 
-        let matches = rule.evaluate(&mut tx, true);
+        let matches = rule.evaluate(&mut tx);
 
         // Should match the ARGS:test with value "value"
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].key, "test");
-        assert_eq!(matches[0].value, "value");
+        assert_eq!(matches[0].value, b"value");
     }
 
     #[test]
@@ -391,7 +391,7 @@ mod tests {
         let mut tx = Transaction::new("test");
         tx.args_mut().add("test", "different");
 
-        let matches = rule.evaluate(&mut tx, true);
+        let matches = rule.evaluate(&mut tx);
 
         // Should not match
         assert!(matches.is_empty());
@@ -422,11 +422,11 @@ mod tests {
         let mut tx = Transaction::new("test");
         tx.args_mut().add("test", "HELLO");
 
-        let matches = rule.evaluate(&mut tx, true);
+        let matches = rule.evaluate(&mut tx);
 
         // Should match after lowercase transformation
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].value, "hello");
+        assert_eq!(matches[0].value, b"hello");
     }
 
     // Ported from: coraza/internal/corazawaf/rule_test.go - Chain tests
@@ -461,7 +461,7 @@ mod tests {
         tx.args_mut().add("first", "value1");
         tx.args_mut().add("second", "value2");
 
-        let matches = rule.evaluate(&mut tx, true);
+        let matches = rule.evaluate(&mut tx);
 
         // Both rules match - should return matches from both
         assert_eq!(matches.len(), 2);
@@ -498,7 +498,7 @@ mod tests {
         tx.args_mut().add("first", "wrong");
         tx.args_mut().add("second", "value2");
 
-        let matches = rule.evaluate(&mut tx, true);
+        let matches = rule.evaluate(&mut tx);
 
         // First rule doesn't match - chain fails
         assert!(matches.is_empty());
@@ -535,7 +535,7 @@ mod tests {
         tx.args_mut().add("first", "value1");
         tx.args_mut().add("second", "wrong");
 
-        let matches = rule.evaluate(&mut tx, true);
+        let matches = rule.evaluate(&mut tx);
 
         // Second rule doesn't match - chain fails
         assert!(matches.is_empty());

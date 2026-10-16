@@ -121,9 +121,9 @@ impl SetvarAction {
         })
     }
 
-    pub fn evaluate(&self, tx: &mut Transaction) {
-        let key = self.key.expand(Some(tx)).to_lowercase();
-        let value = self.value.expand(Some(tx));
+    pub(crate) fn evaluate(&self, tx: &mut Transaction) {
+        let key = self.key.expand(tx).to_lowercase();
+        let value = self.value.expand(tx);
 
         // init() only accepts TX, which is always a map
         let Some(VariableCollection::Map(collection)) = tx.collection_mut(self.collection) else {

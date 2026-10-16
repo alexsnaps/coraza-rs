@@ -208,18 +208,11 @@ fn handle_request(
     }
 
     // Phase 2: Request Body
-    if !body.is_empty() {
-        match tx.process_request_body(&body) {
-            Ok(Some(interruption)) => {
-                write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref())?;
-                return send_blocking_response(stream, &interruption);
-            }
-            Err(e) => {
-                eprintln!("Error processing request body: {}", e);
-                return send_response(stream, 500, "Internal Server Error");
-            }
-            Ok(None) => {}
-        }
+    if !body.is_empty()
+        && let Some(interruption) = tx.process_request_body(&body)
+    {
+        write_audit_log(&logfile, &tx, &interruption, marker_header.as_deref())?;
+        return send_blocking_response(stream, &interruption);
     }
 
     // Simulate response

@@ -33,8 +33,8 @@ pub struct MatchData {
     pub variable: RuleVariable,
     /// The specific key (e.g., "id" for ARGS:id), empty if no key
     pub key: String,
-    /// The value of the variable
-    pub value: String,
+    /// The value of the variable, as bytes
+    pub value: Vec<u8>,
     /// The rule's `msg`, as expanded for this match; empty when not expanded or unset
     pub message: String,
     /// The rule's `logdata`, as expanded for this match; empty when not expanded or unset
@@ -43,7 +43,7 @@ pub struct MatchData {
 
 impl MatchData {
     /// Create a new MatchData instance.
-    pub fn new(variable: RuleVariable, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn new(variable: RuleVariable, key: impl Into<String>, value: impl Into<Vec<u8>>) -> Self {
         Self {
             variable,
             key: key.into(),
@@ -54,8 +54,13 @@ impl MatchData {
     }
 
     /// Create a MatchData instance without a key.
-    pub fn without_key(variable: RuleVariable, value: impl Into<String>) -> Self {
+    pub fn without_key(variable: RuleVariable, value: impl Into<Vec<u8>>) -> Self {
         Self::new(variable, String::new(), value)
+    }
+
+    /// The value as text, invalid UTF-8 replaced with U+FFFD.
+    pub fn value_text(&self) -> std::borrow::Cow<'_, str> {
+        crate::transformations::text_of(&self.value)
     }
 
     /// Create an empty MatchData instance for operator-less rules.

@@ -119,6 +119,164 @@ fn chain_disrupts_only_when_every_link_matches() {
     assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(7));
 }
 
+/// The keys of the values rule `id` matched in `tx`, sorted.
+fn matched_keys(tx: &Transaction, id: i32) -> Vec<String> {
+    let mut keys: Vec<String> = tx
+        .matched_rules()
+        .iter()
+        .filter(|matched| matched.rule.id == id)
+        .flat_map(|matched| matched.matches.iter().map(|data| data.key.clone()))
+        .collect();
+    keys.sort();
+    keys
+}
+
+fn get_request(waf: &Waf, uri: &str) -> Transaction {
+    let mut tx = waf.new_transaction();
+    tx.process_uri(uri, "GET", "HTTP/1.1");
+    tx
+}
+
+// Ported from: coraza/internal/corazawaf/rule_test.go::TestMatchEvaluate
+#[test]
+fn a_rule_matches_a_value_its_operator_accepts() {
+    let waf = waf(r#"SecRule ARGS_GET:test "@eq 0" "id:1,phase:1,pass,nolog""#);
+
+    let mut tx = get_request(&waf, "/?test=0");
+    tx.process_request_headers();
+
+    let matches = &tx.matched_rules()[0].matches;
+    assert_eq!(matches.len(), 1);
+    assert_eq!(
+        (matches[0].key.as_str(), matches[0].value.as_slice()),
+        ("test", &b"0"[..])
+    );
+}
+
+// Ported from: coraza/internal/corazawaf/rule_test.go::TestNoMatchEvaluate
+#[test]
+fn a_rule_does_not_match_a_value_its_operator_rejects() {
+    let waf = waf(r#"SecRule ARGS_GET:test "@eq 1" "id:1,phase:1,pass,nolog""#);
+
+    let mut tx = get_request(&waf, "/?test=999");
+    tx.process_request_headers();
+
+    assert!(tx.matched_rules().is_empty());
+}
+
+// Ported from: coraza/internal/corazawaf/rule_test.go::TestNoMatchEvaluateBecauseOfException
+#[test]
+fn a_rule_does_not_match_a_key_it_excludes() {
+    let waf = waf(r#"SecRule ARGS_GET|!ARGS_GET:test "@eq 0" "id:1,phase:1,pass,nolog""#);
+
+    let mut tx = get_request(&waf, "/?test=0");
+    tx.process_request_headers();
+
+    assert!(tx.matched_rules().is_empty());
+}
+
+#[test]
+fn transformations_are_applied_in_turn() {
+    let waf = waf(
+        r#"SecRule ARGS_GET:data "@streq HELLO" "id:1,phase:1,t:lowercase,t:uppercase,pass,nolog""#,
+    );
+
+    let mut tx = get_request(&waf, "/?data=HeLLo");
+    tx.process_request_headers();
+
+    let matches = &tx.matched_rules()[0].matches;
+    assert_eq!(matches[0].value, b"HELLO");
+}
+
+#[test]
+fn a_chain_does_not_match_when_its_first_rule_does_not() {
+    let waf = waf(r#"
+        SecRule ARGS_GET:username "@streq admin" "id:1,phase:1,deny,status:403,chain"
+            SecRule ARGS_GET:password "@streq secret" ""
+    "#);
+
+    let mut tx = get_request(&waf, "/?username=user&password=secret");
+
+    assert!(tx.process_request_headers().is_none());
+    assert!(tx.matched_rules().is_empty());
+}
+
+#[test]
+fn a_variable_without_a_key_matches_each_of_its_values() {
+    let waf = waf(r#"SecRule ARGS_GET "@streq attack" "id:1,phase:1,pass,nolog""#);
+
+    let mut tx = get_request(&waf, "/?param1=safe&param2=attack&param3=safe");
+    tx.process_request_headers();
+
+    assert_eq!(matched_keys(&tx, 1), ["param2"]);
+}
+
+#[test]
+fn a_regex_key_selects_the_keys_it_matches() {
+    let waf = waf(r#"SecRule ARGS_GET:/id.*/ "@eq 123" "id:1,phase:1,pass,nolog""#);
+
+    let mut tx = get_request(&waf, "/?id=123&id_number=123&name=123");
+    tx.process_request_headers();
+
+    assert_eq!(matched_keys(&tx, 1), ["id", "id_number"]);
+}
+
+#[test]
+fn each_link_of_a_chain_applies_its_own_transformations() {
+    let waf = waf(r#"
+        SecRule ARGS_GET:action "@streq delete" "id:1,phase:1,t:lowercase,deny,status:403,chain"
+            SecRule REQUEST_HEADERS:User-Agent "@streq bot" "t:lowercase"
+    "#);
+
+    let mut tx = get_request(&waf, "/?action=DELETE");
+    tx.add_request_header("User-Agent", "BOT");
+
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+    assert_eq!(tx.matched_rules()[0].matches.len(), 2);
+}
+
+#[test]
+fn a_negated_operator_matches_what_the_operator_rejects() {
+    let waf = waf(r#"SecRule ARGS_GET:user "!@streq admin" "id:1,phase:1,deny,status:403""#);
+
+    let mut tx = get_request(&waf, "/?user=guest");
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+
+    let mut tx = get_request(&waf, "/?user=admin");
+    assert!(tx.process_request_headers().is_none());
+}
+
+#[test]
+fn argument_values_keep_the_bytes_the_request_sent() {
+    let waf = waf(r#"SecRule ARGS "@validateUtf8Encoding" "id:1,phase:1,deny,status:403""#);
+
+    // As in Go Coraza, `%c0%af` decodes to the bytes C0 AF, which aren't UTF-8 (CRS 920250-1)
+    let mut tx = get_request(&waf, "/?param=%c0%af");
+
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+}
+
+#[test]
+fn body_argument_values_keep_the_bytes_the_request_sent() {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecRule ARGS_POST "@validateUtf8Encoding" "id:1,phase:2,deny,status:403"
+    "#);
+    let post = |content_type: &str, body: &[u8]| {
+        let mut tx = waf.new_transaction();
+        tx.process_uri("/post", "POST", "HTTP/1.1");
+        tx.add_request_header("Content-Type", content_type);
+        tx.process_request_headers();
+        tx.process_request_body(body).map(|i| i.rule_id)
+    };
+
+    // CRS 941310-1 sends `\xbc` and `\xbe` raw in a urlencoded body
+    let urlencoded = post("application/x-www-form-urlencoded", b"var=\xbcscript\xbe");
+    assert_eq!(urlencoded, Some(1));
+    let multipart = b"--b\r\nContent-Disposition: form-data; name=\"var\"\r\n\r\n\xbc\r\n--b--\r\n";
+    assert_eq!(post("multipart/form-data; boundary=b", multipart), Some(1));
+}
+
 #[test]
 fn allow_skips_the_rest_of_the_transaction() {
     let waf = waf(r#"
@@ -129,7 +287,7 @@ fn allow_skips_the_rest_of_the_transaction() {
 
     let mut tx = waf.new_transaction();
     assert!(tx.process_request_headers().is_none());
-    assert_eq!(tx.process_request_body(b"").unwrap(), None);
+    assert_eq!(tx.process_request_body(b""), None);
 }
 
 #[test]
@@ -142,10 +300,7 @@ fn allow_phase_skips_only_the_current_phase() {
 
     let mut tx = waf.new_transaction();
     assert!(tx.process_request_headers().is_none());
-    assert_eq!(
-        tx.process_request_body(b"").unwrap().map(|i| i.rule_id),
-        Some(3)
-    );
+    assert_eq!(tx.process_request_body(b"").map(|i| i.rule_id), Some(3));
 }
 
 #[test]
@@ -158,9 +313,258 @@ fn allow_request_skips_the_request_phases_only() {
 
     let mut tx = waf.new_transaction();
     assert!(tx.process_request_headers().is_none());
-    assert_eq!(tx.process_request_body(b"").unwrap(), None);
+    assert_eq!(tx.process_request_body(b""), None);
     let interruption = tx.process_response_headers(200, "HTTP/1.1");
     assert_eq!(interruption.map(|i| i.rule_id), Some(3));
+}
+
+#[test]
+fn rules_run_only_in_their_own_phase() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:2,pass,nolog,setvar:tx.phase2=1"
+        SecAction "id:2,phase:1,pass,nolog,setvar:tx.phase1=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "phase1").as_deref(), Some("1"));
+    assert_eq!(tx_var(&tx, "phase2"), None);
+}
+
+#[test]
+fn skip_skips_the_next_rules_of_the_phase() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,nolog,skip:2"
+        SecAction "id:2,phase:2,pass,nolog,setvar:tx.other_phase=1"
+        SecAction "id:3,phase:1,pass,nolog,setvar:tx.three=1"
+        SecAction "id:4,phase:1,pass,nolog,setvar:tx.four=1"
+        SecAction "id:5,phase:1,pass,nolog,setvar:tx.five=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+
+    // Rules of other phases don't count
+    assert_eq!(tx_var(&tx, "three"), None);
+    assert_eq!(tx_var(&tx, "four"), None);
+    assert_eq!(tx_var(&tx, "five").as_deref(), Some("1"));
+}
+
+#[test]
+fn skip_ends_with_its_phase() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,nolog,skip:1"
+        SecAction "id:2,phase:2,pass,nolog,setvar:tx.phase2=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+    tx.process_request_body(b"");
+
+    // As in Go Coraza, rules left to skip at the end of a phase aren't skipped in the next
+    assert_eq!(tx_var(&tx, "phase2").as_deref(), Some("1"));
+}
+
+#[test]
+fn skip_after_resumes_after_the_marker() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,nolog,skipAfter:END"
+        SecAction "id:2,phase:1,pass,nolog,setvar:tx.skipped=1"
+        SecMarker END
+        SecAction "id:3,phase:1,pass,nolog,setvar:tx.resumed=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "skipped"), None);
+    assert_eq!(tx_var(&tx, "resumed").as_deref(), Some("1"));
+}
+
+#[test]
+fn an_interruption_ends_the_phase_and_the_request() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,deny,status:403"
+        SecAction "id:2,phase:1,pass,nolog,setvar:tx.same_phase=1"
+        SecAction "id:3,phase:2,pass,nolog,setvar:tx.later_phase=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    let interruption = tx.process_request_headers().expect("rule 1 denies");
+    assert_eq!((interruption.rule_id, interruption.status), (1, 403));
+
+    let later = tx.process_request_body(b"");
+    assert_eq!(later.map(|i| i.rule_id), Some(1));
+    assert_eq!(tx_var(&tx, "same_phase"), None);
+    assert_eq!(tx_var(&tx, "later_phase"), None);
+    let rule_1 = &tx.matched_rules()[0];
+    assert_eq!(
+        (rule_1.disruptive_action, rule_1.disruptive),
+        (Some("deny"), true)
+    );
+}
+
+#[test]
+fn logging_phase_rules_run_after_an_interruption() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,deny,status:403"
+        SecAction "id:2,phase:5,pass,nolog,setvar:tx.logged=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+    tx.process_logging().unwrap();
+
+    assert_eq!(tx_var(&tx, "logged").as_deref(), Some("1"));
+}
+
+#[test]
+fn body_phases_run_only_right_after_their_headers_phase() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,nolog,setvar:tx.request_headers=1"
+        SecAction "id:2,phase:2,pass,nolog,setvar:tx.request_body=1"
+        SecAction "id:3,phase:3,pass,nolog,setvar:tx.response_headers=1"
+        SecAction "id:4,phase:4,pass,nolog,setvar:tx.response_body=1"
+    "#);
+
+    // As in Go Coraza, a body phase called too early does nothing, and the phases can
+    // still run in order
+    let mut tx = waf.new_transaction();
+    tx.process_request_body(b"");
+    assert_eq!(tx_var(&tx, "request_body"), None);
+    tx.process_request_headers();
+    tx.process_request_body(b"");
+    assert_eq!(tx_var(&tx, "request_headers").as_deref(), Some("1"));
+    assert_eq!(tx_var(&tx, "request_body").as_deref(), Some("1"));
+
+    tx.process_response_body(b"");
+    assert_eq!(tx_var(&tx, "response_body"), None);
+    tx.process_response_headers(200, "HTTP/1.1");
+    tx.process_response_body(b"");
+    assert_eq!(tx_var(&tx, "response_headers").as_deref(), Some("1"));
+    assert_eq!(tx_var(&tx, "response_body").as_deref(), Some("1"));
+}
+
+#[test]
+fn with_the_rule_engine_off_no_phase_runs() {
+    let waf = waf(r#"
+        SecRuleEngine Off
+        SecRequestBodyAccess On
+        SecAction "id:1,phase:1,pass,nolog,setvar:tx.request_headers=1"
+        SecAction "id:2,phase:2,pass,nolog,setvar:tx.request_body=1"
+        SecAction "id:3,phase:5,pass,nolog,setvar:tx.logging=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+    tx.process_request_headers();
+    tx.process_request_body(b"a=1");
+    tx.process_logging().unwrap();
+
+    // As in Go Coraza, no rule runs, the logging phase's included, and the body isn't read
+    assert_eq!(tx_var(&tx, "request_headers"), None);
+    assert_eq!(tx_var(&tx, "request_body"), None);
+    assert_eq!(tx_var(&tx, "logging"), None);
+    assert!(tx.args_post().get("a").is_empty());
+}
+
+#[test]
+fn a_phase_called_again_returns_the_interruption() {
+    let waf = waf(r#"SecAction "id:1,phase:1,deny,status:403""#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+
+    assert_eq!(tx.process_request_headers().map(|i| i.rule_id), Some(1));
+}
+
+#[test]
+fn an_interrupted_transaction_is_not_inspected_further() {
+    let waf = waf(r#"
+        SecRequestBodyAccess On
+        SecAction "id:1,phase:1,deny,status:403"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+    tx.process_request_headers();
+
+    // As in Go Coraza, the body isn't read, nor the response status recorded
+    assert_eq!(tx.process_request_body(b"a=1").map(|i| i.rule_id), Some(1));
+    assert!(tx.args_post().get("a").is_empty());
+    let response = tx.process_response_headers(200, "HTTP/1.1");
+    assert_eq!(response.map(|i| i.rule_id), Some(1));
+    assert_eq!(tx.response_status(), "");
+}
+
+#[test]
+fn ctl_rule_remove_by_id_skips_rules_for_one_transaction() {
+    let waf = waf(r#"
+        SecRule REQUEST_HEADERS:X-Quiet "@streq yes" "id:1,phase:1,pass,nolog,ctl:ruleRemoveById=10-19"
+        SecAction "id:10,phase:1,pass,nolog,setvar:tx.ten=1"
+        SecAction "id:20,phase:1,pass,nolog,setvar:tx.twenty=1"
+    "#);
+
+    let mut quiet = waf.new_transaction();
+    quiet.add_request_header("X-Quiet", "yes");
+    quiet.process_request_headers();
+    assert_eq!(tx_var(&quiet, "ten"), None);
+    assert_eq!(tx_var(&quiet, "twenty").as_deref(), Some("1"));
+
+    let mut other = waf.new_transaction();
+    other.process_request_headers();
+    assert_eq!(tx_var(&other, "ten").as_deref(), Some("1"));
+}
+
+#[test]
+fn ctl_rule_remove_by_tag_and_msg_skip_the_rules_they_select() {
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,nolog,ctl:ruleRemoveByTag=noisy,ctl:ruleRemoveByMsg=Chatty"
+        SecAction "id:2,phase:1,pass,nolog,tag:noisy,setvar:tx.tagged=1"
+        SecAction "id:3,phase:1,pass,nolog,msg:'Chatty',setvar:tx.messaged=1"
+        SecAction "id:4,phase:1,pass,nolog,setvar:tx.other=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "tagged"), None);
+    assert_eq!(tx_var(&tx, "messaged"), None);
+    assert_eq!(tx_var(&tx, "other").as_deref(), Some("1"));
+}
+
+#[test]
+fn detection_only_records_disruptive_actions_without_interrupting() {
+    let waf = waf(r#"
+        SecRuleEngine DetectionOnly
+        SecAction "id:1,phase:1,deny,status:403"
+        SecAction "id:2,phase:1,pass,nolog,setvar:tx.after=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+
+    assert_eq!(tx.process_request_headers(), None);
+    assert_eq!(tx_var(&tx, "after").as_deref(), Some("1"));
+    let rule_1 = &tx.matched_rules()[0];
+    assert_eq!(
+        (rule_1.disruptive_action, rule_1.disruptive),
+        (Some("deny"), false)
+    );
+}
+
+#[test]
+fn detection_only_does_not_enforce_allow() {
+    let waf = waf(r#"
+        SecRuleEngine DetectionOnly
+        SecAction "id:1,phase:1,allow"
+        SecAction "id:2,phase:1,pass,nolog,setvar:tx.after=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "after").as_deref(), Some("1"));
 }
 
 #[test]
@@ -173,7 +577,7 @@ fn rules_can_inspect_the_request_body() {
     let mut tx = waf.new_transaction();
     tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
     tx.process_request_headers();
-    let interruption = tx.process_request_body(b"an attack payload").unwrap();
+    let interruption = tx.process_request_body(b"an attack payload");
 
     assert_eq!(interruption.map(|i| i.rule_id), Some(1));
 }
@@ -208,7 +612,29 @@ fn ctl_rule_engine_applies_to_later_phases() {
     let mut tx = waf.new_transaction();
     tx.process_request_headers();
 
-    assert_eq!(tx.process_request_body(b"").unwrap(), None);
+    assert_eq!(tx.process_request_body(b""), None);
+}
+
+#[test]
+fn a_rule_engine_mode_change_applies_to_the_next_rule_of_the_phase() {
+    let waf = waf(r#"
+        SecRuleEngine On
+        SecAction "id:1,phase:1,pass,nolog,ctl:ruleEngine=DetectionOnly"
+        SecAction "id:2,phase:1,deny,status:403"
+    "#);
+
+    let mut tx = waf.new_transaction();
+
+    // As in Go Coraza, rule 2's deny runs in DetectionOnly: it doesn't interrupt, and is
+    // recorded as a disruptive action that didn't take effect
+    assert_eq!(tx.process_request_headers(), None);
+    let rule_2 = tx
+        .matched_rules()
+        .iter()
+        .find(|matched| matched.rule.id == 2)
+        .expect("rule 2 matched");
+    assert_eq!(rule_2.disruptive_action, Some("deny"));
+    assert!(!rule_2.disruptive);
 }
 
 #[test]
@@ -224,7 +650,7 @@ fn malformed_bodies_are_reported_to_rules() {
     let mut tx = waf.new_transaction();
     tx.add_request_header("Content-Type", "application/json");
     tx.process_request_headers();
-    let interruption = tx.process_request_body(b"{not json").unwrap();
+    let interruption = tx.process_request_body(b"{not json");
 
     assert_eq!(interruption.map(|i| i.rule_id), Some(1));
     assert!(
@@ -252,7 +678,7 @@ fn well_formed_bodies_raise_no_body_error() {
     tx.add_request_header("Content-Type", "application/json");
     tx.process_request_headers();
 
-    assert_eq!(tx.process_request_body(br#"{"a": 1}"#).unwrap(), None);
+    assert_eq!(tx.process_request_body(br#"{"a": 1}"#), None);
 }
 
 #[test]
@@ -291,7 +717,7 @@ fn detect_sqli_blocks_and_captures_the_fingerprint() {
     // sqlmap's payload for MySQL's full-text search
     let mut tx = request_with_arg(&waf, "q", "1' IN BOOLEAN MODE) UNION ALL SELECT NULL#");
     tx.process_request_headers();
-    let interruption = tx.process_request_body(b"").unwrap();
+    let interruption = tx.process_request_body(b"");
 
     assert_eq!(interruption.map(|i| i.rule_id), Some(942100));
     assert_eq!(tx_var(&tx, "0").as_deref(), Some("sk)UE"));
@@ -308,7 +734,7 @@ fn detect_xss_blocks_recent_event_handlers() {
 
     let mut tx = request_with_arg(&waf, "q", "<a onauxclick=alert(1)>");
     tx.process_request_headers();
-    let interruption = tx.process_request_body(b"").unwrap();
+    let interruption = tx.process_request_body(b"");
 
     assert_eq!(interruption.map(|i| i.rule_id), Some(941100));
 }
@@ -435,7 +861,7 @@ fn block_passes_without_defaults() {
 
     let mut tx = request_with_arg(&waf, "q", "x");
     assert!(tx.process_request_headers().is_none());
-    assert_eq!(tx.process_request_body(b"").unwrap(), None);
+    assert_eq!(tx.process_request_body(b""), None);
 }
 
 #[test]
@@ -516,7 +942,7 @@ fn body_arguments_of_every_processor_are_in_args() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", content_type);
         tx.process_request_headers();
-        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        let interruption = tx.process_request_body(body.as_bytes());
         assert_eq!(interruption.map(|i| i.rule_id), Some(1), "{content_type}");
     }
 }
@@ -564,7 +990,7 @@ fn repeated_multipart_part_headers_are_flagged() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
         tx.process_request_headers();
-        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        let interruption = tx.process_request_body(body.as_bytes());
         assert_eq!(interruption.is_some(), flagged, "{part_headers:?}");
         assert_eq!(
             tx.get_variable(coraza::RuleVariable::MultipartStrictError, None)
@@ -642,7 +1068,7 @@ fn json_bodies_deeper_than_the_limit_are_body_errors() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", "application/json");
         tx.process_request_headers();
-        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        let interruption = tx.process_request_body(body.as_bytes());
         assert_eq!(interruption.is_some(), too_deep, "{body}");
     }
 }
@@ -691,7 +1117,7 @@ fn the_request_body_processor_is_chosen_as_in_go() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", content_type);
         tx.process_request_headers();
-        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        let interruption = tx.process_request_body(body.as_bytes());
         assert_eq!(interruption.is_some(), parsed, "{content_type}");
         assert_eq!(
             tx.get_variable(ReqbodyProcessor, None).as_deref(),
@@ -714,9 +1140,7 @@ fn forcing_the_request_body_variable_defaults_to_urlencoded() {
     tx.process_request_headers();
 
     assert_eq!(
-        tx.process_request_body(b"a=evil")
-            .unwrap()
-            .map(|i| i.rule_id),
+        tx.process_request_body(b"a=evil").map(|i| i.rule_id),
         Some(1)
     );
 }
@@ -804,7 +1228,7 @@ fn bodies_are_inspected_only_with_body_access() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
         tx.process_request_headers();
-        let interruption = tx.process_request_body(b"a secret").unwrap();
+        let interruption = tx.process_request_body(b"a secret");
         assert_eq!(
             interruption.is_some(),
             inspected,
@@ -840,7 +1264,7 @@ fn xml_is_the_parsed_request_xml() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", "text/xml");
         tx.process_request_headers();
-        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        let interruption = tx.process_request_body(body.as_bytes());
         assert_eq!(interruption.map(|i| i.rule_id), rule_id, "{body}");
     }
 }
@@ -894,7 +1318,7 @@ fn names_variables_are_the_keys_of_their_collections() {
     let mut tx = waf.new_transaction();
     tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
     tx.process_request_headers();
-    let interruption = tx.process_request_body(b"evil_post=x").unwrap();
+    let interruption = tx.process_request_body(b"evil_post=x");
     assert_eq!(interruption.map(|i| i.rule_id), Some(5));
 
     let mut tx = waf.new_transaction();
@@ -917,13 +1341,13 @@ fn args_combined_size_and_unique_id_describe_the_transaction() {
     tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
     tx.process_request_headers();
     assert_eq!(tx_var(&tx, "id_seen").as_deref(), Some("1"));
-    let interruption = tx.process_request_body(b"b=5678").unwrap();
+    let interruption = tx.process_request_body(b"b=5678");
     assert_eq!(interruption.map(|i| i.rule_id), Some(1));
 
     let mut tx = waf.new_transaction();
     tx.process_uri("/?a=1234", "GET", "HTTP/1.1");
     tx.process_request_headers();
-    assert_eq!(tx.process_request_body(b"").unwrap(), None);
+    assert_eq!(tx.process_request_body(b""), None);
 }
 
 #[test]
@@ -941,7 +1365,7 @@ fn quoted_extended_multipart_filenames_are_invalid_quoting() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
         tx.process_request_headers();
-        let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+        let interruption = tx.process_request_body(body.as_bytes());
         assert_eq!(interruption.is_some(), flagged, "{disposition}");
     }
 }
@@ -1052,7 +1476,7 @@ fn multipart_part_names_and_filenames_are_variables() {
     let mut tx = waf.new_transaction();
     tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
     tx.process_request_headers();
-    let interruption = tx.process_request_body(body.as_bytes()).unwrap();
+    let interruption = tx.process_request_body(body.as_bytes());
 
     assert_eq!(tx_var(&tx, "name").as_deref(), Some("1"));
     assert_eq!(interruption.map(|i| i.rule_id), Some(2));
@@ -1076,7 +1500,7 @@ fn request_bodies_reaching_the_limit_are_rejected_or_cut() {
         let mut tx = waf.new_transaction();
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
         tx.process_request_headers();
-        let interruption = tx.process_request_body(b"0123456789abcdef").unwrap();
+        let interruption = tx.process_request_body(b"0123456789abcdef");
 
         assert_eq!(interruption.map(|i| i.status), interrupted, "{action}");
         assert_eq!(tx_var(&tx, "seen").as_deref(), seen, "{action}");
@@ -1364,6 +1788,24 @@ fn relevant_transactions_are_audit_logged_natively() {
 }
 
 #[test]
+fn detection_only_audit_logs_by_the_status_a_rule_would_have_set() {
+    let dir = tempfile::tempdir().unwrap();
+    let waf = audited_waf(
+        dir.path(),
+        r#"SecRuleEngine DetectionOnly
+        SecAuditLogRelevantStatus "^4""#,
+    );
+
+    let tx = audit_request(&waf, "tx-evil", "evil");
+
+    // As in Go Coraza, the status is the one rule 1's deny would have set: there is no
+    // response status, and the transaction wasn't interrupted
+    assert!(tx.interruption().is_none());
+    let log = std::fs::read_to_string(dir.path().join("audit.log")).unwrap_or_default();
+    assert!(log.contains("tx-evil"), "{log}");
+}
+
+#[test]
 fn audit_log_entries_can_be_json() {
     let dir = tempfile::tempdir().unwrap();
     let waf = audited_waf(dir.path(), "SecAuditLogFormat JSON");
@@ -1434,6 +1876,18 @@ fn audit_log_entries_can_be_ocsf() {
     assert_eq!(event["message"], "Evil");
     // Zero values are left out, as protobuf's JSON tags do in Go
     assert!(event["http_request"].get("length").is_none(), "{event}");
+}
+
+#[test]
+fn audit_log_entries_list_the_arguments() {
+    let dir = tempfile::tempdir().unwrap();
+    let waf = audited_waf(dir.path(), "SecAuditLogFormat OCSF");
+
+    audit_request(&waf, "tx-evil", "evil");
+
+    let log = std::fs::read_to_string(dir.path().join("audit.log")).unwrap();
+    let event: serde_json::Value = serde_json::from_str(log.trim_end()).unwrap();
+    assert_eq!(event["http_request"]["args"], "q=evil,");
 }
 
 #[test]
@@ -1551,7 +2005,7 @@ fn extended_multipart_filenames_are_decoded_with_their_charset_and_language() {
     let mut tx = waf.new_transaction();
     tx.add_request_header("Content-Type", "multipart/form-data; boundary=b");
     tx.process_request_headers();
-    tx.process_request_body(body.as_bytes()).unwrap();
+    tx.process_request_body(body.as_bytes());
 
     let values = |variable| {
         let mut values: Vec<String> = match tx.collection(variable) {

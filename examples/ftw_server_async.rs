@@ -198,13 +198,8 @@ fn run_transaction(
         return create_blocking_response(&interruption);
     }
 
-    match tx.process_request_body(body) {
-        Ok(Some(interruption)) => return create_blocking_response(&interruption),
-        Err(e) => {
-            eprintln!("Error processing request body: {}", e);
-            return create_error_response(500, "Internal Server Error");
-        }
-        Ok(None) => {}
+    if let Some(interruption) = tx.process_request_body(body) {
+        return create_blocking_response(&interruption);
     }
 
     let backend = BackendResponse::for_request(path, body);

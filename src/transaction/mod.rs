@@ -3,12 +3,16 @@
 //! A transaction represents a single HTTP request/response pair and holds
 //! all the data (headers, arguments, cookies, etc.) that rules operate on.
 
+mod phase;
 pub mod variables;
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
+use phase::FlowState;
+
 use crate::RuleVariable;
-use crate::actions::{AllowType, RuleMetadata};
+use crate::actions::RuleMetadata;
 use crate::audit_log::{
     AuditFile, AuditLog, AuditLogger, AuditMessage, AuditMessageData, AuditProducer, AuditRequest,
     AuditResponse, AuditTransaction, mime_type_of,
@@ -16,8 +20,9 @@ use crate::audit_log::{
 use crate::body_processors::{BodyProcessorKind, BodyProcessorOptions};
 use crate::collection::{Map, MatchData, Single};
 use crate::config::WafConfig;
+use crate::operators::Outputs;
 use crate::rules::RuleGroup;
-use crate::transformations::text_from_bytes;
+use crate::transformations::{text_from_bytes, text_of};
 use crate::types::{
     AuditEngineStatus, AuditLogPart, AuditLogParts, BodyLimitAction, RuleEngineStatus, RulePhase,
     RuleSeverity,
@@ -664,28 +669,9 @@ pub struct Transaction {
     /// Last phase that was processed
     last_phase: Option<RulePhase>,
 
-    /// Current interruption (if any disruptive action was triggered)
-    pub(crate) interruption: Option<Interruption>,
-
-    /// Number of rules to skip in current phase (controlled by skip action)
-    pub(crate) skip: i32,
-
-    /// Marker ID to skip to (controlled by skipAfter action)
-    pub(crate) skip_after: String,
-
-    /// Whether operators of the rule being evaluated store their captures in TX.0-TX.9
-    capturing: bool,
-
-    // ===== CTL Runtime Exclusions =====
-    /// Rules with these IDs will be skipped for this transaction
-    /// (set by ctl:ruleRemoveById, ctl:ruleRemoveByTag, ctl:ruleRemoveByMsg)
-    rule_remove_by_id: std::collections::BTreeSet<i32>,
-
-    /// Variable exclusions per rule ID
-    /// (set by ctl:ruleRemoveTargetById, ctl:ruleRemoveTargetByTag, ctl:ruleRemoveTargetByMsg)
-    /// Map: rule_id -> Vec<(variable, key)>
-    rule_remove_target_by_id:
-        std::collections::BTreeMap<i32, Vec<(RuleVariable, crate::rules::VariableException)>>,
+    /// What phase evaluation reads and the rules' actions change: the interruption,
+    /// `skip`, `skipAfter`, `allow` and the rules `ctl` removed
+    flow: FlowState,
 
     /// All rules that matched during this transaction (for audit logging)
     matched_rules: Vec<MatchedRule>,
@@ -693,9 +679,6 @@ pub struct Transaction {
     /// Reference to WAF's rule group for CTL tag/msg-based exclusions
     /// Optional because transactions created via Transaction::new() don't have a WAF reference
     rules: Option<Arc<RuleGroup>>,
-
-    /// Rules skipped because of an `allow` action
-    allow_type: AllowType,
 }
 
 impl Default for Transaction {
@@ -802,6 +785,11 @@ fn request_uri_path(uri: &str) -> Option<&str> {
                     .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
         })
         .then_some(path)
+}
+
+/// `value` as text, invalid UTF-8 replaced with U+FFFD, as logs show values.
+fn lossy(value: &[u8]) -> String {
+    text_of(value).into_owned()
 }
 
 /// `path` with its `%`-escapes, all valid, decoded; `+` stays, as in a URL's path.
@@ -936,15 +924,9 @@ impl Transaction {
             response_body_limit: 524288, // 512KB default
             force_response_body_variable: false,
             last_phase: None,
-            interruption: None,
-            skip: 0,
-            skip_after: String::new(),
-            capturing: false,
-            rule_remove_by_id: std::collections::BTreeSet::new(),
-            rule_remove_target_by_id: std::collections::BTreeMap::new(),
+            flow: FlowState::new(),
             matched_rules: Vec::new(),
             rules: None, // No WAF reference for standalone transactions
-            allow_type: AllowType::Unset,
         }
     }
 
@@ -1026,15 +1008,12 @@ impl Transaction {
         // Computed here rather than kept up to date: anything may have added an argument
         let combined_size: usize = [&self.args_get, &self.args_post]
             .into_iter()
-            .flat_map(|args| args.find_all())
-            .map(|arg| arg.key.len() + arg.value.len())
+            .flat_map(|args| args.iter())
+            .map(|(key, value)| key.len() + value.len())
             .sum();
         self.args_combined_size.set(combined_size.to_string());
 
-        if let Some(rules) = self.rules.clone() {
-            let rule_engine_on = self.rule_engine == RuleEngineStatus::On;
-            rules.eval(phase, self, rule_engine_on);
-        }
+        self.run_phase(phase);
     }
 
     /// Records a value a rule (or chain link) matched, before its actions run: in
@@ -1047,7 +1026,7 @@ impl Transaction {
             format!("{}:{}", matched.variable.name(), matched.key)
         };
         self.matched_vars.add(&name, &matched.value);
-        self.matched_var.set(matched.value.as_str());
+        self.matched_var.set(matched.value_text());
         self.matched_var_name.set(name);
     }
 
@@ -1068,7 +1047,7 @@ impl Transaction {
     ) {
         // Each value replaced in place, as Go's SetIndex does: this runs for every rule
         // evaluated, and rebuilding the entries cost a fifth of a simple GET with CRS
-        self.rule.set_index("id", 0, &id.to_string());
+        self.rule.set_index("id", 0, id.to_string());
         if let Some(msg) = msg {
             self.rule.set_index("msg", 0, &msg);
         }
@@ -1297,16 +1276,10 @@ impl Transaction {
         &self.request_xml
     }
 
-    /// Sets whether operators store their captures in `TX.0`..`TX.9`; follows the `capture`
-    /// action of the rule being evaluated.
-    pub fn set_capturing(&mut self, enabled: bool) {
-        self.capturing = enabled;
-    }
-
     // ===== CTL Action Setters =====
 
     /// Set rule engine status (used by ctl:ruleEngine).
-    pub fn set_rule_engine(&mut self, status: RuleEngineStatus) {
+    pub(crate) fn set_rule_engine(&mut self, status: RuleEngineStatus) {
         self.rule_engine = status;
     }
 
@@ -1335,7 +1308,8 @@ impl Transaction {
     /// Once ARGS_GET holds the argument limit's worth of values (`SecArgumentsLimit`),
     /// counting each value of a repeated key, the argument is dropped and
     /// ARGUMENTS_LIMIT_REACHED set to 1.
-    pub fn add_get_argument(&mut self, key: &str, value: &str) {
+    pub fn add_get_argument(&mut self, key: &str, value: impl AsRef<[u8]>) {
+        let value = value.as_ref();
         if self.within_argument_limit(self.args_get.value_count()) {
             self.args_get.add(key, value);
             self.args.add(key, value);
@@ -1344,7 +1318,8 @@ impl Transaction {
 
     /// Adds a request body argument to ARGS_POST and ARGS, within the argument limit as
     /// [`Transaction::add_get_argument`] does.
-    pub fn add_post_argument(&mut self, key: &str, value: &str) {
+    pub fn add_post_argument(&mut self, key: &str, value: impl AsRef<[u8]>) {
+        let value = value.as_ref();
         if self.within_argument_limit(self.args_post.value_count()) {
             self.args_post.add(key, value);
             self.args.add(key, value);
@@ -1354,7 +1329,8 @@ impl Transaction {
     /// Adds an argument the connector took from the URL path (e.g. `/users/{id}`) to
     /// ARGS_PATH and ARGS, within the argument limit as [`Transaction::add_get_argument`]
     /// does.
-    pub fn add_path_argument(&mut self, key: &str, value: &str) {
+    pub fn add_path_argument(&mut self, key: &str, value: impl AsRef<[u8]>) {
+        let value = value.as_ref();
         if self.within_argument_limit(self.args_path.value_count()) {
             self.args_path.add(key, value);
             self.args.add(key, value);
@@ -1378,7 +1354,8 @@ impl Transaction {
 
     /// Adds a response body argument to RESPONSE_ARGS, within the argument limit as
     /// [`Transaction::add_get_argument`] does.
-    pub fn add_response_argument(&mut self, key: &str, value: &str) {
+    pub fn add_response_argument(&mut self, key: &str, value: impl AsRef<[u8]>) {
+        let value = value.as_ref();
         if self.within_argument_limit(self.response_args.value_count()) {
             self.response_args.add(key, value);
         }
@@ -1474,38 +1451,6 @@ impl Transaction {
     /// Get last processed phase.
     pub fn last_phase(&self) -> Option<RulePhase> {
         self.last_phase
-    }
-
-    // ===== Flow Control & Interruption =====
-
-    /// Get the current interruption, if any.
-    pub fn interruption(&self) -> Option<&Interruption> {
-        self.interruption.as_ref()
-    }
-
-    /// Set an interruption (used for testing and internal rule actions).
-    pub fn set_interruption(&mut self, interruption: Option<Interruption>) {
-        self.interruption = interruption;
-    }
-
-    /// Get the skip counter (number of rules to skip).
-    pub fn skip(&self) -> i32 {
-        self.skip
-    }
-
-    /// Set the skip counter (used by skip action).
-    pub fn set_skip(&mut self, count: i32) {
-        self.skip = count;
-    }
-
-    /// Get the skip_after marker.
-    pub fn skip_after(&self) -> &str {
-        &self.skip_after
-    }
-
-    /// Set the skip_after marker (used by skipAfter action).
-    pub fn set_skip_after(&mut self, marker: impl Into<String>) {
-        self.skip_after = marker.into();
     }
 
     // ===== HTTP Processing Methods =====
@@ -1629,7 +1574,7 @@ impl Transaction {
 
     /// Adds the arguments of a query string to ARGS_GET and ARGS.
     fn extract_get_arguments(&mut self, query: &str) {
-        for (key, value) in crate::body_processors::urlencoded::parse_query(query) {
+        for (key, value) in crate::body_processors::urlencoded::parse_query(query.as_bytes()) {
             self.add_get_argument(&key, &value);
         }
     }
@@ -1745,9 +1690,11 @@ impl Transaction {
     /// Process request headers and evaluate Phase 1 rules.
     ///
     /// Should be called after all request headers have been added via
-    /// `add_request_header()`. This triggers rule evaluation for Phase 1.
+    /// `add_request_header()`. This triggers rule evaluation for Phase 1, once.
     ///
-    /// Returns an interruption if a disruptive action was triggered.
+    /// Returns the transaction's interruption, if any. As in Go Coraza, every phase
+    /// method does, also when its phase doesn't run: it already ran, or the transaction
+    /// was interrupted.
     ///
     /// # Example
     ///
@@ -1767,20 +1714,10 @@ impl Transaction {
     /// assert!(interruption.is_none()); // No rules triggered
     /// ```
     pub fn process_request_headers(&mut self) -> Option<Interruption> {
-        // Check if already processed
-        if let Some(phase) = self.last_phase
-            && phase >= RulePhase::RequestHeaders
-        {
-            return None;
+        if self.begin_phase(RulePhase::RequestHeaders) {
+            self.evaluate_rules(RulePhase::RequestHeaders);
         }
-
-        // Update phase
-        self.last_phase = Some(RulePhase::RequestHeaders);
-
-        // Evaluate rules for Phase 1 (Request Headers)
-        self.evaluate_rules(RulePhase::RequestHeaders);
-
-        self.interruption.clone()
+        self.interruption().cloned()
     }
 
     /// Stores the request body in REQUEST_BODY and parses it with the processor
@@ -1828,9 +1765,11 @@ impl Transaction {
     ///    by `ctl:requestBodyProcessor`)
     /// 2. Calls it to parse the body; the URLENCODED and RAW processors also keep the
     ///    body in REQUEST_BODY and REQUEST_BODY_LENGTH, as in Go Coraza and ModSecurity
-    /// 3. Updates last_phase to RequestBody
+    /// 3. Evaluates Phase 2 rules
     ///
-    /// Returns an interruption if a disruptive action was triggered.
+    /// As in Go Coraza, it does so only right after
+    /// [`Transaction::process_request_headers`], and not once the transaction is
+    /// interrupted. Returns the transaction's interruption, if any.
     ///
     /// # Example
     ///
@@ -1839,6 +1778,7 @@ impl Transaction {
     ///
     /// let mut tx = Transaction::new("tx-1");
     /// tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
+    /// tx.process_request_headers();
     ///
     /// let body = b"username=admin&password=secret";
     /// let result = tx.process_request_body(body);
@@ -1847,12 +1787,9 @@ impl Transaction {
     /// assert_eq!(tx.args_post().get("username"), vec!["admin"]);
     /// assert_eq!(tx.args_post().get("password"), vec!["secret"]);
     /// ```
-    pub fn process_request_body(&mut self, body: &[u8]) -> Result<Option<Interruption>, String> {
-        // Check if already processed
-        if let Some(phase) = self.last_phase
-            && phase >= RulePhase::RequestBody
-        {
-            return Ok(None);
+    pub fn process_request_body(&mut self, body: &[u8]) -> Option<Interruption> {
+        if !self.begin_phase(RulePhase::RequestBody) {
+            return self.interruption().cloned();
         }
 
         // As in Go Coraza, an empty body or one without access is left alone
@@ -1863,26 +1800,23 @@ impl Transaction {
             if body.len() >= limit {
                 self.inbound_data_error.set("1");
                 match self.config.request_body_limit_action {
-                    BodyLimitAction::Reject => {
-                        self.last_phase = Some(RulePhase::RequestBody);
-                        return Ok(Some(self.interrupt_for_body_limit(413)));
-                    }
+                    BodyLimitAction::Reject => return Some(self.interrupt_for_body_limit(413)),
                     BodyLimitAction::ProcessPartial => body = &body[..limit],
                 }
             }
             self.inspect_request_body(body);
         }
 
-        // Update phase
-        self.last_phase = Some(RulePhase::RequestBody);
-
         // Evaluate rules for Phase 2 (Request Body)
         self.evaluate_rules(RulePhase::RequestBody);
 
-        Ok(self.interruption.clone())
+        self.interruption().cloned()
     }
 
-    /// Process response headers and populate response variables.
+    /// Process response headers and populate response variables, then evaluate Phase 3
+    /// rules, once and not once the transaction is interrupted, as in Go Coraza.
+    ///
+    /// Returns the transaction's interruption, if any.
     ///
     /// # Example
     ///
@@ -1902,24 +1836,18 @@ impl Transaction {
         status_code: u16,
         protocol: &str,
     ) -> Option<Interruption> {
-        // Check if already processed
-        if let Some(phase) = self.last_phase
-            && phase >= RulePhase::ResponseHeaders
-        {
-            return None;
+        if !self.begin_phase(RulePhase::ResponseHeaders) {
+            return self.interruption().cloned();
         }
 
         // Populate response variables
         self.response_status.set(status_code.to_string());
         self.response_protocol.set(protocol);
 
-        // Update phase
-        self.last_phase = Some(RulePhase::ResponseHeaders);
-
         // Evaluate rules for Phase 3 (Response Headers)
         self.evaluate_rules(RulePhase::ResponseHeaders);
 
-        self.interruption.clone()
+        self.interruption().cloned()
     }
 
     /// Whether [`Transaction::process_response_body`] inspects the body, given response
@@ -1961,20 +1889,11 @@ impl Transaction {
         }
     }
 
-    /// Interrupts the transaction for a body over its limit (`Reject`), as Go Coraza does:
-    /// with `deny` and `status`, outside any rule.
-    fn interrupt_for_body_limit(&mut self, status: u16) -> Interruption {
-        let interruption = Interruption {
-            rule_id: 0,
-            action: "deny".to_string(),
-            status,
-            data: String::new(),
-        };
-        self.interruption = Some(interruption.clone());
-        interruption
-    }
-
-    /// Process response body.
+    /// Process response body, then evaluate Phase 4 rules.
+    ///
+    /// As in Go Coraza, it does so only right after
+    /// [`Transaction::process_response_headers`], and not once the transaction is
+    /// interrupted. Returns the transaction's interruption, if any.
     ///
     /// # Example
     ///
@@ -1989,11 +1908,8 @@ impl Transaction {
     /// let result = tx.process_response_body(body);
     /// ```
     pub fn process_response_body(&mut self, body: &[u8]) -> Option<Interruption> {
-        // Check if already processed
-        if let Some(phase) = self.last_phase
-            && phase >= RulePhase::ResponseBody
-        {
-            return None;
+        if !self.begin_phase(RulePhase::ResponseBody) {
+            return self.interruption().cloned();
         }
 
         if self.response_body_access && self.is_response_body_processable() {
@@ -2003,29 +1919,25 @@ impl Transaction {
             if body.len() >= limit {
                 self.outbound_data_error.set("1");
                 match self.config.response_body_limit_action {
-                    BodyLimitAction::Reject => {
-                        self.last_phase = Some(RulePhase::ResponseBody);
-                        return Some(self.interrupt_for_body_limit(500));
-                    }
+                    BodyLimitAction::Reject => return Some(self.interrupt_for_body_limit(500)),
                     BodyLimitAction::ProcessPartial => body = &body[..limit],
                 }
             }
             self.inspect_response_body(body);
         }
 
-        // Update phase
-        self.last_phase = Some(RulePhase::ResponseBody);
-
         // Evaluate rules for Phase 4 (Response Body)
         self.evaluate_rules(RulePhase::ResponseBody);
 
-        self.interruption.clone()
+        self.interruption().cloned()
     }
 
-    /// Process logging phase (final phase): runs its rules, then writes the transaction's
-    /// audit log entry, as Go Coraza decides: always with `SecAuditEngine On`, and with
+    /// Process logging phase (final phase): runs its rules, unless the rule engine is
+    /// `Off`, then writes the transaction's audit log entry, as Go Coraza decides: always
+    /// with `SecAuditEngine On`, and with
     /// `RelevantOnly` when a rule with `auditlog` matched or the status is one of
-    /// `SecAuditLogRelevantStatus` (the interruption's, or the response's).
+    /// `SecAuditLogRelevantStatus`: the interruption's, the would-be interruption's in
+    /// `DetectionOnly` mode, or the response's.
     ///
     /// # Errors
     ///
@@ -2044,9 +1956,10 @@ impl Transaction {
         // Update phase
         self.last_phase = Some(RulePhase::Logging);
 
-        // Evaluate rules for Phase 5 (Logging)
-        // Note: Logging phase rules run even if transaction is disrupted
-        self.evaluate_rules(RulePhase::Logging);
+        // Evaluate rules for Phase 5 (Logging), even if the transaction was interrupted
+        if self.rule_engine != RuleEngineStatus::Off {
+            self.evaluate_rules(RulePhase::Logging);
+        }
 
         let Some(logger) = self.audit_logger.clone() else {
             return Ok(());
@@ -2055,7 +1968,7 @@ impl Transaction {
             AuditEngineStatus::Off => false,
             AuditEngineStatus::On => true,
             AuditEngineStatus::RelevantOnly => {
-                let status = match &self.interruption {
+                let status = match self.interruption().or(self.would_be_interruption()) {
                     Some(interruption) => interruption.status.to_string(),
                     None => self.response_status.get().to_string(),
                 };
@@ -2096,14 +2009,13 @@ impl Transaction {
                 length: self.full_request_length.get().parse().unwrap_or(0),
                 args: self
                     .args
-                    .find_all()
-                    .into_iter()
-                    .map(|arg| (arg.key, arg.value))
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), lossy(value)))
                     .collect(),
                 ..AuditRequest::default()
             },
             highest_severity: self.highest_severity.get().to_string(),
-            is_interrupted: self.interruption.is_some(),
+            is_interrupted: self.interruption().is_some(),
             ..AuditTransaction::default()
         };
 
@@ -2118,17 +2030,19 @@ impl Transaction {
         if has(AuditLogPart::UploadedFiles) {
             transaction.request.files = Some(
                 self.files
-                    .find_all()
-                    .into_iter()
-                    .map(|file| AuditFile {
-                        size: self
-                            .files_sizes
-                            .get(&file.value)
-                            .first()
-                            .and_then(|size| size.parse().ok())
-                            .unwrap_or(0),
-                        mime: mime_type_of(&file.value).to_string(),
-                        name: file.value,
+                    .iter()
+                    .map(|(_, name)| {
+                        let name = lossy(name);
+                        AuditFile {
+                            size: self
+                                .files_sizes
+                                .get(&name)
+                                .first()
+                                .and_then(|size| size.parse().ok())
+                                .unwrap_or(0),
+                            mime: mime_type_of(&name).to_string(),
+                            name,
+                        }
                     })
                     .collect(),
             );
@@ -2209,127 +2123,6 @@ impl Transaction {
             messages,
         }
     }
-
-    // ===== CTL Action Methods =====
-
-    /// Removes a rule by ID for this transaction only.
-    ///
-    /// Rules with the specified ID will be skipped during rule evaluation
-    /// for this transaction. This does not affect the WAF's rule set or
-    /// other transactions.
-    ///
-    /// Called by `ctl:ruleRemoveById` action.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::transaction::Transaction;
-    ///
-    /// let mut tx = Transaction::new("tx-1");
-    /// tx.remove_rule_by_id(123);
-    /// // Rule 123 will be skipped for this transaction
-    /// ```
-    pub fn remove_rule_by_id(&mut self, id: i32) {
-        self.rule_remove_by_id.insert(id);
-    }
-
-    /// Removes a specific variable target from a rule for this transaction only.
-    ///
-    /// The specified variable will be excluded from the rule's targets
-    /// during evaluation for this transaction.
-    ///
-    /// Called by `ctl:ruleRemoveTargetById`, `ctl:ruleRemoveTargetByTag`,
-    /// and `ctl:ruleRemoveTargetByMsg` actions.
-    ///
-    /// # Arguments
-    ///
-    /// * `rule_id` - The rule ID to modify
-    /// * `variable` - The variable type to exclude
-    /// * `key` - The specific key to exclude (e.g., "user-agent" for HEADERS)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::transaction::Transaction;
-    /// use coraza::RuleVariable;
-    ///
-    /// let mut tx = Transaction::new("tx-1");
-    ///
-    /// // Exclude ARGS:username from rule 123
-    /// tx.remove_rule_target_by_id(123, RuleVariable::Args, "username");
-    ///
-    /// // Exclude REQUEST_HEADERS:User-Agent from rule 456
-    /// tx.remove_rule_target_by_id(456, RuleVariable::RequestHeaders, "user-agent");
-    /// ```
-    pub fn remove_rule_target_by_id(
-        &mut self,
-        rule_id: i32,
-        variable: RuleVariable,
-        key: impl Into<String>,
-    ) {
-        let exception = crate::rules::VariableException::new_string(key.into());
-        self.remove_rule_target(rule_id, variable, exception);
-    }
-
-    /// Excludes the keys of `variable` that `exception` matches from rule `rule_id`, for
-    /// this transaction.
-    pub(crate) fn remove_rule_target(
-        &mut self,
-        rule_id: i32,
-        variable: RuleVariable,
-        exception: crate::rules::VariableException,
-    ) {
-        self.rule_remove_target_by_id
-            .entry(rule_id)
-            .or_default()
-            .push((variable, exception));
-    }
-
-    /// Checks if a rule should be skipped for this transaction.
-    ///
-    /// Returns true if the rule was excluded via `ctl:ruleRemoveById`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::transaction::Transaction;
-    ///
-    /// let mut tx = Transaction::new("tx-1");
-    /// tx.remove_rule_by_id(123);
-    ///
-    /// assert!(tx.is_rule_removed(123));
-    /// assert!(!tx.is_rule_removed(456));
-    /// ```
-    pub fn is_rule_removed(&self, rule_id: i32) -> bool {
-        self.rule_remove_by_id.contains(&rule_id)
-    }
-
-    /// Checks if a specific variable target is excluded from a rule.
-    ///
-    /// Returns true if the variable/key combination was excluded via
-    /// `ctl:ruleRemoveTargetById` actions.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use coraza::transaction::Transaction;
-    /// use coraza::RuleVariable;
-    ///
-    /// let mut tx = Transaction::new("tx-1");
-    /// tx.remove_rule_target_by_id(123, RuleVariable::Args, "id");
-    ///
-    /// assert!(tx.is_rule_target_removed(123, RuleVariable::Args, "id"));
-    /// assert!(!tx.is_rule_target_removed(123, RuleVariable::Args, "other"));
-    /// ```
-    pub fn is_rule_target_removed(&self, rule_id: i32, variable: RuleVariable, key: &str) -> bool {
-        self.rule_remove_target_by_id
-            .get(&rule_id)
-            .is_some_and(|targets| {
-                targets
-                    .iter()
-                    .any(|(removed, exception)| *removed == variable && exception.matches(key))
-            })
-    }
 }
 
 /// State that operators and actions read and change while a rule is evaluated.
@@ -2338,65 +2131,34 @@ impl Transaction {
     /// single-value variable (with `key` `None`), or the first value of `key` in a
     /// collection. `None` if the variable isn't set or not available.
     pub fn get_variable(&self, variable: RuleVariable, key: Option<&str>) -> Option<String> {
-        self.variable_value(variable, key).map(str::to_string)
+        self.variable_value(variable, key).map(Cow::into_owned)
     }
 
-    /// [`Transaction::get_variable`], borrowing the value.
+    /// [`Transaction::get_variable`], borrowing the value when it is UTF-8; invalid UTF-8
+    /// is replaced with U+FFFD.
     pub(crate) fn variable_value<'a>(
         &'a self,
         variable: RuleVariable,
         key: Option<&'a str>,
-    ) -> Option<&'a str> {
+    ) -> Option<Cow<'a, str>> {
         match (self.collection(variable)?, key) {
-            (VariableCollection::Single(single), None) => Some(single.get()),
-            (VariableCollection::Map(map), Some(key)) => map.first(key),
-            (VariableCollection::Names(_, map), Some(key)) => map.first(key).map(|_| key),
+            (VariableCollection::Single(single), None) => Some(Cow::Borrowed(single.get())),
+            (VariableCollection::Map(map), Some(key)) => map.first(key).map(text_of),
+            (VariableCollection::Names(_, map), Some(key)) => {
+                map.first(key).map(|_| Cow::Borrowed(key))
+            }
             _ => None,
         }
     }
 
-    /// Whether operators currently store their captures (see [`Transaction::set_capturing`]).
-    pub fn capturing(&self) -> bool {
-        self.capturing
-    }
-
-    /// Stores capture `index` (0-9) in `TX.<index>` if capturing is on; otherwise does nothing.
-    pub fn capture_field(&mut self, index: usize, value: &str) {
-        if self.capturing {
-            self.tx.set(&index.to_string(), vec![value.to_string()]);
+    /// Stores what an operator handed back for a value: each capture `n` in `TX.n`, and
+    /// `@restpath`'s path arguments in ARGS_PATH (and ARGS). Leaves `outputs` empty.
+    pub(crate) fn store_operator_outputs(&mut self, outputs: &mut Outputs) {
+        for (index, value) in outputs.take_captures() {
+            self.tx.set(&index.to_string(), vec![value]);
         }
-    }
-
-    /// Interrupts the transaction on behalf of a disruptive action of `rule_id`.
-    pub(crate) fn interrupt(&mut self, rule_id: i32, action: &str, status: i32, data: &str) {
-        self.interruption = Some(Interruption {
-            rule_id: rule_id as usize,
-            action: action.to_string(),
-            status: status as u16,
-            data: data.to_string(),
-        });
-    }
-
-    /// Records an `allow` action; see [`AllowType`] for which rules it skips.
-    pub(crate) fn set_allow_type(&mut self, allow_type: AllowType) {
-        self.allow_type = allow_type;
-    }
-
-    /// Whether an earlier `allow` action skips the rules of `phase` still to be evaluated.
-    pub(crate) fn is_allowed(&self, phase: RulePhase) -> bool {
-        match self.allow_type {
-            AllowType::Unset => false,
-            AllowType::All | AllowType::Phase => phase != RulePhase::Logging,
-            AllowType::Request => {
-                matches!(phase, RulePhase::RequestHeaders | RulePhase::RequestBody)
-            }
-        }
-    }
-
-    /// Ends an `allow:phase` once the phase that triggered it has been evaluated.
-    pub(crate) fn end_phase_allow(&mut self) {
-        if self.allow_type == AllowType::Phase {
-            self.allow_type = AllowType::Unset;
+        for (key, value) in outputs.take_path_arguments() {
+            self.set_path_argument(&key, &value);
         }
     }
 
@@ -2473,23 +2235,24 @@ mod tests {
     }
 
     #[test]
-    fn test_transaction_capturing() {
+    fn test_operator_outputs_are_stored_in_tx_and_args_path() {
         let mut tx = Transaction::new("tx-006");
-        assert!(!tx.capturing());
+        let mut outputs = Outputs::new(true);
+        outputs.capture(0, b"match1");
+        outputs.capture(5, b"match6"); // Sparse indexing
+        outputs.add_path_argument("id", "42");
 
-        tx.set_capturing(true);
-        assert!(tx.capturing());
-
-        tx.capture_field(0, "match1");
-        tx.capture_field(5, "match6"); // Sparse indexing
+        tx.store_operator_outputs(&mut outputs);
 
         assert_eq!(tx.tx.get("0"), vec!["match1"]);
         assert!(tx.tx.get("1").is_empty());
         assert_eq!(tx.tx.get("5"), vec!["match6"]);
+        assert_eq!(tx.args_path.get("id"), vec!["42"]);
 
-        // Captures are dropped while capturing is off
-        tx.set_capturing(false);
-        tx.capture_field(1, "ignored");
+        // Outputs not asking for captures drop them
+        let mut outputs = Outputs::new(false);
+        outputs.capture(1, b"ignored");
+        tx.store_operator_outputs(&mut outputs);
         assert!(tx.tx.get("1").is_empty());
     }
 
@@ -2567,9 +2330,8 @@ mod tests {
         );
         let mut cookies: Vec<(String, String)> = tx
             .request_cookies
-            .find_all()
-            .into_iter()
-            .map(|cookie| (cookie.key, cookie.value))
+            .iter()
+            .map(|(name, value)| (name.to_string(), lossy(value)))
             .collect();
         cookies.sort();
         let pair = |name: &str, value: &str| (name.to_string(), value.to_string());
@@ -2666,7 +2428,7 @@ mod tests {
         tx.add_request_header("", "value");
 
         // Should not add header with empty key
-        assert!(tx.request_headers().find_all().is_empty());
+        assert!(tx.request_headers().is_empty());
     }
 
     #[test]
@@ -2700,7 +2462,7 @@ mod tests {
         tx.add_response_header("", "value");
 
         // Should not add header with empty key
-        assert!(tx.response_headers().find_all().is_empty());
+        assert!(tx.response_headers().is_empty());
     }
 
     #[test]
@@ -2709,10 +2471,10 @@ mod tests {
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
 
         let body = b"username=admin&password=secret&role=admin";
+        tx.process_request_headers();
         let result = tx.process_request_body(body);
 
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none()); // No interruption
+        assert!(result.is_none()); // No interruption
 
         // Check ARGS_POST populated
         assert_eq!(tx.args_post().get("username"), vec!["admin"]);
@@ -2738,9 +2500,10 @@ mod tests {
         tx.set_request_body_processor(BodyProcessorKind::Json);
 
         let body = br#"{"user": "admin", "id": 123}"#;
+        tx.process_request_headers();
         let result = tx.process_request_body(body);
 
-        assert!(result.is_ok());
+        assert!(result.is_none());
 
         // Check JSON flattening in ARGS_POST
         assert_eq!(tx.args_post().get("json.user"), vec!["admin"]);
@@ -2755,9 +2518,10 @@ mod tests {
         tx.set_request_body_processor(BodyProcessorKind::Xml);
 
         let body = br#"<user name="admin"><id>123</id></user>"#;
+        tx.process_request_headers();
         let result = tx.process_request_body(body);
 
-        assert!(result.is_ok());
+        assert!(result.is_none());
 
         // Check REQUEST_XML populated
         assert_eq!(tx.request_xml.get("//@*"), vec!["admin"]);
@@ -2778,9 +2542,10 @@ Content-Disposition: form-data; name=\"field1\"\r\n\
 value1\r\n\
 ------WebKitFormBoundary--\r\n";
 
+        tx.process_request_headers();
         let result = tx.process_request_body(body);
 
-        assert!(result.is_ok());
+        assert!(result.is_none());
 
         // Check ARGS_POST populated from multipart
         assert_eq!(tx.args_post().get("field1"), vec!["value1"]);
@@ -2792,9 +2557,10 @@ value1\r\n\
         // No Content-Type header
 
         let body = b"some data";
+        tx.process_request_headers();
         let result = tx.process_request_body(body);
 
-        assert!(result.is_ok());
+        assert!(result.is_none());
 
         // Without a body processor, as in Go Coraza and ModSecurity, the body is
         // neither parsed nor kept in REQUEST_BODY
@@ -2815,7 +2581,7 @@ value1\r\n\
             tx.add_request_header("Content-Type", content_type);
             tx.force_request_body_variable = forced;
             tx.process_request_headers();
-            tx.process_request_body(body).unwrap();
+            tx.process_request_body(body);
             assert_eq!(tx.request_body.get(), request_body, "{content_type}");
             let length = if request_body.is_empty() { "0" } else { "9" };
             assert_eq!(tx.request_body_length.get(), length, "{content_type}");
@@ -2828,11 +2594,12 @@ value1\r\n\
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
 
         let body1 = b"key1=value1";
-        tx.process_request_body(body1).unwrap();
+        tx.process_request_headers();
+        tx.process_request_body(body1);
 
         // Try to process again
         let body2 = b"key2=value2";
-        tx.process_request_body(body2).unwrap();
+        tx.process_request_body(body2);
 
         // Should still have first body only
         assert_eq!(tx.request_body.get(), "key1=value1");
@@ -2964,9 +2731,11 @@ value1\r\n\
         tx.process_connection("127.0.0.1", 54321, "10.0.0.1", 8080);
         // Connection processing doesn't update phase (it's before phase 1)
 
-        // Process request body
+        // Process request headers, then the request body
         tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
-        tx.process_request_body(b"key=value").unwrap();
+        tx.process_request_headers();
+        assert_eq!(tx.last_phase, Some(RulePhase::RequestHeaders));
+        tx.process_request_body(b"key=value");
         assert_eq!(tx.last_phase, Some(RulePhase::RequestBody));
 
         // Process response headers

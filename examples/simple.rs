@@ -170,7 +170,7 @@ fn process_post_request(waf: &Waf, uri: &str, body: &str) {
     println!("⚙️  Phase 1: Request headers processed");
 
     // Process Phase 2 and check for interruption
-    if let Ok(Some(interruption)) = tx.process_request_body(body.as_bytes()) {
+    if let Some(interruption) = tx.process_request_body(body.as_bytes()) {
         print_blocked(&interruption);
         return;
     }
