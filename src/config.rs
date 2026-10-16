@@ -88,7 +88,6 @@ pub struct WafConfig {
     /// Path of the audit log file; empty when unset (`SecAuditLog`).
     pub audit_log: String,
 
-    // The library writes no audit log: the audit log settings are for the embedder.
     /// Format of audit log entries (`SecAuditLogFormat`).
     pub audit_log_format: AuditLogFormat,
 

@@ -142,14 +142,16 @@ impl Rule {
 
     /// Set the rule's variables (replaces existing variables).
     ///
-    /// This is used by SecLang directives like `SecRuleUpdateTargetById`.
+    /// Used by `WafBuilder::update_rule_variables_by_id` and `_by_tag`. Unlike them,
+    /// `SecRuleUpdateTargetById` adds to a rule's variables.
     pub fn set_variables(&mut self, variables: Vec<VariableSpec>) {
         self.variables = variables;
     }
 
     /// Set the rule's actions (replaces existing actions).
     ///
-    /// This is used by SecLang directives like `SecRuleUpdateActionById`.
+    /// Used by `WafBuilder::update_rule_actions_by_id`. Unlike it,
+    /// `SecRuleUpdateActionById` merges into a rule's actions.
     pub fn set_actions(&mut self, actions: Vec<Action>) {
         self.actions = actions;
     }

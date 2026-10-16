@@ -1387,8 +1387,8 @@ impl Transaction {
         self.force_request_body_variable
     }
 
-    /// Audit logging mode of this transaction; the library writes no audit log, so this
-    /// is for the embedder.
+    /// Audit logging mode of this transaction (`SecAuditEngine`, changed by
+    /// `ctl:auditEngine`): whether its logging phase writes an audit log entry.
     pub fn audit_engine(&self) -> AuditEngineStatus {
         self.audit_engine
     }
@@ -1668,7 +1668,7 @@ impl Transaction {
     /// let mut tx = Transaction::new("tx-1");
     /// tx.add_response_header("Content-Type", "application/json; charset=utf-8");
     ///
-    /// // Note: RESPONSE_CONTENT_TYPE is not yet accessible, will be added later
+    /// assert_eq!(tx.response_content_type(), "application/json");
     /// ```
     pub fn add_response_header(&mut self, key: &str, value: &str) {
         if key.is_empty() {
@@ -1832,7 +1832,7 @@ impl Transaction {
     /// let result = tx.process_response_headers(200, "HTTP/1.1");
     ///
     /// // Response variables are populated
-    /// // (Note: Direct access to response_status not yet public)
+    /// assert_eq!(tx.response_status(), "200");
     /// ```
     pub fn process_response_headers(
         &mut self,
