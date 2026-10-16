@@ -287,8 +287,10 @@ impl CtlAction {
                 }
             }
             CtlCommand::RuleRemoveById(ids) => {
-                for id in ids.clone() {
-                    tx.remove_rule_by_id(id);
+                if ids.start() == ids.end() {
+                    tx.remove_rule_by_id(*ids.start());
+                } else {
+                    tx.remove_rules_by_id_range(ids.clone());
                 }
             }
             CtlCommand::RuleRemoveByTag(tag) => {

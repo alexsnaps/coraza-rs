@@ -518,6 +518,23 @@ fn ctl_rule_remove_by_id_skips_rules_for_one_transaction() {
 }
 
 #[test]
+fn ctl_rule_remove_by_id_removes_a_wide_range_without_listing_its_ids() {
+    // Go keeps the range rather than each id in it ("Ranges avoid expanding all IDs")
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,nolog,ctl:ruleRemoveById=10-20000000"
+        SecAction "id:15000000,phase:1,deny,status:403"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    let started = std::time::Instant::now();
+    let interruption = tx.process_request_headers();
+    let took = started.elapsed();
+
+    assert!(interruption.is_none());
+    assert!(took < std::time::Duration::from_secs(1), "took {took:?}");
+}
+
+#[test]
 fn ctl_rule_remove_by_tag_and_msg_skip_the_rules_they_select() {
     let waf = waf(r#"
         SecAction "id:1,phase:1,pass,nolog,ctl:ruleRemoveByTag=noisy,ctl:ruleRemoveByMsg=Chatty"
