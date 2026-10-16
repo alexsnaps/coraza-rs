@@ -182,6 +182,7 @@ fn canonical_header_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RuleVariable;
     use crate::body_processors::BodyProcessorKind;
     use std::fs;
 
@@ -256,7 +257,10 @@ Content of a.txt.\r
             .unwrap();
 
         // Check that field was parsed
-        assert_eq!(tx.args_post().get("text"), vec!["text default"]);
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost).get("text"),
+            vec!["text default"]
+        );
 
         // Check that file was parsed
         let files: Vec<_> = tx.files.iter().map(|(_, name)| name).collect();
@@ -471,7 +475,10 @@ value\r
             .process_request(payload.as_bytes(), &mut tx, &options)
             .unwrap();
 
-        assert_eq!(tx.args_post().get("field"), vec!["value"]);
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost).get("field"),
+            vec!["value"]
+        );
     }
 
     #[test]
@@ -494,7 +501,7 @@ value\r
 
         // Should have no files or fields
         assert!(tx.files.is_empty());
-        assert!(tx.args_post().is_empty());
+        assert!(tx.variable_map(RuleVariable::ArgsPost).is_empty());
         assert_eq!(tx.files_combined_size.get(), "0");
     }
 
@@ -527,7 +534,10 @@ text default\r
         // This is acceptable for a WAF - we still inspect the data
         if result.is_ok() {
             // Parser succeeded - check that we got the data
-            assert_eq!(tx.args_post().get("text"), vec!["text default"]);
+            assert_eq!(
+                tx.variable_map(RuleVariable::ArgsPost).get("text"),
+                vec!["text default"]
+            );
         } else {
             // If it fails for other reasons, strict error should be set
             assert_eq!(tx.multipart_strict_error.get(), "1");

@@ -67,6 +67,7 @@ pub(crate) fn parse_query(query: &[u8]) -> impl Iterator<Item = (String, Vec<u8>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RuleVariable;
     use crate::body_processors::BodyProcessorKind;
     #[test]
     fn test_urlencoded_basic() {
@@ -79,9 +80,9 @@ mod tests {
             .unwrap();
 
         // Check ARGS_POST
-        assert_eq!(tx.args_post().get("a"), vec!["1"]);
-        assert_eq!(tx.args_post().get("b"), vec!["2"]);
-        assert_eq!(tx.args_post().get("c"), vec!["3"]);
+        assert_eq!(tx.variable_map(RuleVariable::ArgsPost).get("a"), vec!["1"]);
+        assert_eq!(tx.variable_map(RuleVariable::ArgsPost).get("b"), vec!["2"]);
+        assert_eq!(tx.variable_map(RuleVariable::ArgsPost).get("c"), vec!["3"]);
 
         // Check REQUEST_BODY
         assert_eq!(tx.request_body.get(), "a=1&b=2&c=3");
@@ -98,8 +99,14 @@ mod tests {
             .process_request(body, &mut tx, &BodyProcessorOptions::default())
             .unwrap();
 
-        assert_eq!(tx.args_post().get("username"), vec!["admin"]);
-        assert_eq!(tx.args_post().get("password"), vec!["secret pass"]);
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost).get("username"),
+            vec!["admin"]
+        );
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost).get("password"),
+            vec!["secret pass"]
+        );
     }
 
     #[test]
@@ -112,7 +119,10 @@ mod tests {
             .process_request(body, &mut tx, &BodyProcessorOptions::default())
             .unwrap();
 
-        assert_eq!(tx.args_post().get("text"), vec!["hello world"]);
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost).get("text"),
+            vec!["hello world"]
+        );
     }
 
     #[test]
@@ -125,7 +135,7 @@ mod tests {
             .process_request(body, &mut tx, &BodyProcessorOptions::default())
             .unwrap();
 
-        let ids = tx.args_post().get("id");
+        let ids = tx.variable_map(RuleVariable::ArgsPost).get("id");
         assert_eq!(ids.len(), 3);
         assert!(ids.contains(&"1".to_string()));
         assert!(ids.contains(&"2".to_string()));
@@ -142,8 +152,14 @@ mod tests {
             .process_request(body, &mut tx, &BodyProcessorOptions::default())
             .unwrap();
 
-        assert_eq!(tx.args_post().get("key1"), vec![""]);
-        assert_eq!(tx.args_post().get("key2"), vec!["value"]);
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost).get("key1"),
+            vec![""]
+        );
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost).get("key2"),
+            vec!["value"]
+        );
     }
 
     #[test]
@@ -157,8 +173,14 @@ mod tests {
             .unwrap();
 
         // Key without = gets empty value
-        assert_eq!(tx.args_post().get("key1"), vec![""]);
-        assert_eq!(tx.args_post().get("key2"), vec!["value"]);
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost).get("key1"),
+            vec![""]
+        );
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost).get("key2"),
+            vec!["value"]
+        );
     }
 
     #[test]
@@ -172,7 +194,7 @@ mod tests {
             .unwrap();
 
         // Empty body should result in no ARGS_POST entries
-        assert!(tx.args_post().is_empty());
+        assert!(tx.variable_map(RuleVariable::ArgsPost).is_empty());
         assert_eq!(tx.request_body.get(), "");
         assert_eq!(tx.request_body_length.get(), "0");
     }
@@ -187,7 +209,10 @@ mod tests {
             .process_request(body, &mut tx, &BodyProcessorOptions::default())
             .unwrap();
 
-        assert_eq!(tx.args_post().get("test"), vec!["value"]);
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost).get("test"),
+            vec!["value"]
+        );
     }
 
     #[test]
@@ -201,8 +226,14 @@ mod tests {
             .unwrap();
 
         // Should also populate ARGS collection (not just ARGS_POST)
-        assert_eq!(tx.args().get("username"), vec!["admin"]);
-        assert_eq!(tx.args().get("password"), vec!["secret"]);
+        assert_eq!(
+            tx.variable_map(RuleVariable::Args).get("username"),
+            vec!["admin"]
+        );
+        assert_eq!(
+            tx.variable_map(RuleVariable::Args).get("password"),
+            vec!["secret"]
+        );
     }
 
     #[test]

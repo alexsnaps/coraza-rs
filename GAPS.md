@@ -98,14 +98,14 @@ Suggested order: 1 → 2 → 3 → 6, then 4 and 5. The first three items of 1 a
     `RESPONSE_BODY`. A processor failing sets `REQBODY_ERROR`, `REQBODY_PROCESSOR_ERROR` and their messages, or
     the `RESBODY_*` ones. Unlike Go, an unknown processor name is a compile error.
   - Done for the rest: `auditEngine`, `auditLogParts` and `debugLogLevel` change the transaction's own copy of
-    the WAF's setting (`Transaction::audit_engine`, `audit_log_parts`, `debug_log_level`), which an embedder's
-    logger can read; the library itself writes neither log. `hashEngine` and `hashEnforcement` have no effect, as in
-    Go ("not supported yet"). A transaction now takes all its `ctl`-changeable settings from the WAF in one place.
+    the WAF's setting. The first two decide the transaction's audit log entry; the library writes no debug log, so
+    an embedder's logger reads the level with `Transaction::debug_log_level`. `hashEngine` and `hashEnforcement`
+    have no effect, as in Go ("not supported yet"). A transaction now takes all its `ctl`-changeable settings from
+    the WAF in one place.
 - [x] **`SecRequestBodyAccess` and `SecResponseBodyAccess` are not enforced.** Found while working on 1.6: bodies are
   stored and processed whatever the setting, while Go skips them (and defaults both to `Off`, as `WafConfig` does).
   - Done: as in Go, a request body is stored and parsed only with request body access and when not empty, and a
     response body only with response body access and a processable content type; the phase's rules run either way.
-    A transaction made with `Transaction::new`, outside a WAF, keeps request body access on.
 
 - [x] **Body limits are not enforced.** Found while working on section 3: `SecRequestBodyLimit`,
   `SecResponseBodyLimit` and their `…LimitAction` were stored and ignored, and `WafConfig` defaulted the response

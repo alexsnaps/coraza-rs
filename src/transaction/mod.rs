@@ -396,20 +396,26 @@ macro_rules! variable_storage {
 /// Transactions store all request and response data in collections that
 /// can be queried by rules. Each transaction is isolated and not thread-safe.
 ///
+/// A connector makes one with [`Waf::new_transaction`](crate::waf::Waf::new_transaction)
+/// and feeds it only through its input methods ([`Transaction::process_uri`],
+/// [`Transaction::add_request_header`], ...), which also fill the variables derived from
+/// what they are given, such as ARGS from ARGS_GET.
+///
 /// # Examples
 ///
 /// ```
-/// use coraza::transaction::Transaction;
+/// use coraza::RuleVariable;
+/// use coraza::waf::Waf;
 ///
-/// let mut tx = Transaction::new("tx-001");
+/// let mut tx = Waf::default().new_transaction();
 ///
 /// // Add request data
-/// tx.args_get_mut().add("id", "123");
-/// tx.request_headers_mut().add("User-Agent", "Mozilla/5.0");
+/// tx.process_uri("/search?id=123", "GET", "HTTP/1.1");
+/// tx.add_request_header("User-Agent", "Mozilla/5.0");
 ///
-/// // Query data in rules
-/// let id_values = tx.args_get().get("id");
-/// assert_eq!(id_values, vec!["123"]);
+/// // Query data as rules do
+/// let id = tx.get_variable(RuleVariable::Args, Some("id"));
+/// assert_eq!(id.as_deref(), Some("123"));
 /// ```
 pub struct Transaction {
     /// UNIQUE_ID - The transaction ID
@@ -642,7 +648,7 @@ pub struct Transaction {
     pub(crate) request_body_limit: i64,
 
     /// Settings of the WAF the transaction belongs to; the defaults for one made with
-    /// [`Transaction::new`]
+    /// `Transaction::new`
     config: Arc<WafConfig>,
 
     /// Audit logging mode (`SecAuditEngine`, controlled by ctl:auditEngine)
@@ -679,12 +685,6 @@ pub struct Transaction {
     /// Reference to WAF's rule group for CTL tag/msg-based exclusions
     /// Optional because transactions created via Transaction::new() don't have a WAF reference
     rules: Option<Arc<RuleGroup>>,
-}
-
-impl Default for Transaction {
-    fn default() -> Self {
-        Self::new("default")
-    }
 }
 
 /// A `0`/`1` variable, starting at `0` as in Go Coraza.
@@ -811,7 +811,7 @@ fn decode_path(path: &str) -> String {
 
 impl Transaction {
     /// Create a new transaction with the given ID.
-    pub fn new(id: impl Into<String>) -> Self {
+    pub(crate) fn new(id: impl Into<String>) -> Self {
         let config = WafConfig::default();
         let started = std::time::SystemTime::now();
         let map = |variable: RuleVariable| {
@@ -971,9 +971,9 @@ impl Transaction {
     /// # Examples
     ///
     /// ```
-    /// use coraza::transaction::Transaction;
+    /// use coraza::waf::Waf;
     ///
-    /// let tx = Transaction::new("tx-001");
+    /// let tx = Waf::default().new_transaction();
     /// let matches = tx.matched_rules();
     /// assert_eq!(matches.len(), 0); // No rules matched yet
     /// ```
@@ -1032,7 +1032,7 @@ impl Transaction {
     }
 
     /// Sets `key` of ENV to `value`, as the `setenv` action does.
-    pub fn set_env(&mut self, key: &str, value: String) {
+    pub(crate) fn set_env(&mut self, key: &str, value: String) {
         self.env.set(key, vec![value]);
     }
 
@@ -1080,229 +1080,116 @@ impl Transaction {
     }
 
     /// Like [`Transaction::collection`], for changing the data (e.g. by `setvar`).
-    pub fn collection_mut(
+    pub(crate) fn collection_mut(
         &mut self,
         variable: RuleVariable,
     ) -> Option<VariableCollection<&mut Single, &mut Map>> {
         variable_storage!(self, variable, &mut)
     }
 
-    /// Get ARGS (combined GET + POST) collection.
-    pub fn args(&self) -> &Map {
-        &self.args
+    /// The map a rule variable such as ARGS_POST reads, for tests to check what it holds.
+    ///
+    /// # Panics
+    ///
+    /// If `variable` isn't a populated map.
+    #[cfg(test)]
+    pub(crate) fn variable_map(&self, variable: RuleVariable) -> &Map {
+        match self.collection(variable) {
+            Some(VariableCollection::Map(map)) => map,
+            _ => panic!("{variable:?} is not a populated map"),
+        }
     }
 
-    /// Get mutable ARGS collection.
-    pub fn args_mut(&mut self) -> &mut Map {
-        &mut self.args
-    }
-
-    /// Get ARGS_GET collection.
-    pub fn args_get(&self) -> &Map {
-        &self.args_get
-    }
-
-    /// Get mutable ARGS_GET collection.
-    pub fn args_get_mut(&mut self) -> &mut Map {
-        &mut self.args_get
-    }
-
-    /// Get ARGS_POST collection.
-    pub fn args_post(&self) -> &Map {
-        &self.args_post
-    }
-
-    /// Get mutable ARGS_POST collection.
-    pub fn args_post_mut(&mut self) -> &mut Map {
-        &mut self.args_post
-    }
-
-    /// Get REQUEST_HEADERS collection.
-    pub fn request_headers(&self) -> &Map {
-        &self.request_headers
-    }
-
-    /// Get mutable REQUEST_HEADERS collection.
-    pub fn request_headers_mut(&mut self) -> &mut Map {
-        &mut self.request_headers
-    }
-
-    /// Get REQUEST_COOKIES collection.
-    pub fn request_cookies(&self) -> &Map {
-        &self.request_cookies
-    }
-
-    /// Get mutable REQUEST_COOKIES collection.
-    pub fn request_cookies_mut(&mut self) -> &mut Map {
-        &mut self.request_cookies
-    }
-
-    /// Get RESPONSE_HEADERS collection.
-    pub fn response_headers(&self) -> &Map {
-        &self.response_headers
-    }
-
-    /// Get mutable RESPONSE_HEADERS collection.
-    pub fn response_headers_mut(&mut self) -> &mut Map {
-        &mut self.response_headers
-    }
-
-    /// Get RESPONSE_ARGS collection.
-    pub fn response_args(&self) -> &Map {
-        &self.response_args
-    }
-
-    /// Get mutable RESPONSE_ARGS collection.
-    pub fn response_args_mut(&mut self) -> &mut Map {
-        &mut self.response_args
-    }
-
-    /// Get RESPONSE_XML collection.
-    pub fn response_xml(&self) -> &Map {
-        &self.response_xml
-    }
-
-    /// Get mutable RESPONSE_XML collection.
-    pub fn response_xml_mut(&mut self) -> &mut Map {
-        &mut self.response_xml
-    }
-
-    /// Get the REQUEST_URI value.
-    pub fn request_uri(&self) -> &str {
-        self.request_uri.get()
-    }
-
-    /// Set the REQUEST_URI value.
-    pub fn set_request_uri(&mut self, uri: impl Into<String>) {
-        self.request_uri.set(uri);
-    }
-
-    /// Get the REQUEST_METHOD value.
-    pub fn request_method(&self) -> &str {
-        self.request_method.get()
-    }
-
-    /// Set the REQUEST_METHOD value.
-    pub fn set_request_method(&mut self, method: impl Into<String>) {
-        self.request_method.set(method);
-    }
-
-    /// Get the REMOTE_ADDR value.
-    pub fn remote_addr(&self) -> &str {
-        self.remote_addr.get()
-    }
-
-    /// Set the REMOTE_ADDR value.
-    pub fn set_remote_addr(&mut self, addr: impl Into<String>) {
-        self.remote_addr.set(addr);
-    }
-
-    /// Get the REMOTE_PORT value.
-    pub fn remote_port(&self) -> &str {
-        self.remote_port.get()
-    }
-
-    /// Get the SERVER_ADDR value.
-    pub fn server_addr(&self) -> &str {
-        self.server_addr.get()
-    }
-
-    /// Get the SERVER_PORT value.
-    pub fn server_port(&self) -> &str {
-        self.server_port.get()
-    }
-
-    /// Get the SERVER_NAME value.
-    pub fn server_name(&self) -> &str {
-        self.server_name.get()
-    }
-
-    /// Get the REQUEST_PROTOCOL value.
-    pub fn request_protocol(&self) -> &str {
-        self.request_protocol.get()
-    }
-
-    /// Get the QUERY_STRING value.
-    pub fn query_string(&self) -> &str {
-        self.query_string.get()
-    }
-
-    /// Get the REQUEST_BODY value.
-    pub fn request_body(&self) -> &str {
-        self.request_body.get()
-    }
-
-    /// Get the RESPONSE_STATUS value.
-    pub fn response_status(&self) -> &str {
-        self.response_status.get()
-    }
-
-    /// Get the RESPONSE_PROTOCOL value.
-    pub fn response_protocol(&self) -> &str {
-        self.response_protocol.get()
-    }
-
-    /// Get the RESPONSE_CONTENT_TYPE value.
-    pub fn response_content_type(&self) -> &str {
-        self.response_content_type.get()
-    }
-
-    /// Get the RESPONSE_BODY value.
-    pub fn response_body(&self) -> &str {
-        self.response_body.get()
-    }
-
-    /// Get the FILES_COMBINED_SIZE value.
-    pub fn files_combined_size(&self) -> &str {
-        self.files_combined_size.get()
-    }
-
-    /// Get the FILES collection.
-    pub fn files(&self) -> &Map {
-        &self.files
-    }
-
-    /// Get the FILES_TMPNAMES collection.
-    pub fn files_tmp_names(&self) -> &Map {
-        &self.files_tmp_names
-    }
-
-    /// Get the FILES_NAMES collection.
-    pub fn files_names(&self) -> &Map {
-        &self.files_names
-    }
-
-    /// Get the REQUEST_XML collection.
-    pub fn request_xml(&self) -> &Map {
-        &self.request_xml
-    }
-
-    // ===== CTL Action Setters =====
+    // ===== Settings, which `ctl` changes for this transaction only =====
 
     /// Set rule engine status (used by ctl:ruleEngine).
     pub(crate) fn set_rule_engine(&mut self, status: RuleEngineStatus) {
         self.rule_engine = status;
     }
 
-    /// Get rule engine status.
+    /// The rule engine mode: the WAF's `SecRuleEngine`, unless a `ctl:ruleEngine`
+    /// changed it.
     pub fn rule_engine(&self) -> RuleEngineStatus {
         self.rule_engine
     }
 
     /// Set request body access (used by ctl:requestBodyAccess).
-    pub fn set_request_body_access(&mut self, enabled: bool) {
+    pub(crate) fn set_request_body_access(&mut self, enabled: bool) {
         self.request_body_access = enabled;
     }
 
-    /// Get request body access status.
+    /// Whether [`Transaction::process_request_body`] inspects the body: the WAF's
+    /// `SecRequestBodyAccess`, unless a `ctl:requestBodyAccess` changed it. A connector
+    /// can pass an empty body otherwise.
     pub fn request_body_access(&self) -> bool {
         self.request_body_access
     }
 
     /// Set request body limit (used by ctl:requestBodyLimit).
-    pub fn set_request_body_limit(&mut self, limit: i64) {
+    pub(crate) fn set_request_body_limit(&mut self, limit: i64) {
         self.request_body_limit = limit;
     }
+
+    /// Set force request body variable (used by ctl:forceRequestBodyVariable).
+    pub(crate) fn set_force_request_body_variable(&mut self, enabled: bool) {
+        self.force_request_body_variable = enabled;
+    }
+
+    /// Set the audit logging mode (used by ctl:auditEngine).
+    pub(crate) fn set_audit_engine(&mut self, status: AuditEngineStatus) {
+        self.audit_engine = status;
+    }
+
+    /// Audit log parts of this transaction, `A` and `Z` included.
+    pub(crate) fn audit_log_parts(&self) -> &[AuditLogPart] {
+        &self.audit_log_parts
+    }
+
+    /// Set the audit log parts (used by ctl:auditLogParts).
+    pub(crate) fn set_audit_log_parts(&mut self, parts: AuditLogParts) {
+        self.audit_log_parts = parts;
+    }
+
+    /// Debug log verbosity of this transaction, 0 to 9: the WAF's `SecDebugLogLevel`,
+    /// unless a `ctl:debugLogLevel` changed it. The library writes no debug log, so this
+    /// is for the embedder.
+    pub fn debug_log_level(&self) -> u8 {
+        self.debug_log_level
+    }
+
+    /// Set the debug log verbosity (used by ctl:debugLogLevel).
+    pub(crate) fn set_debug_log_level(&mut self, level: u8) {
+        self.debug_log_level = level;
+    }
+
+    /// Set response body access (used by ctl:responseBodyAccess).
+    pub(crate) fn set_response_body_access(&mut self, enabled: bool) {
+        self.response_body_access = enabled;
+    }
+
+    /// Whether [`Transaction::process_response_body`] may inspect the body: the WAF's
+    /// `SecResponseBodyAccess`, unless a `ctl:responseBodyAccess` changed it. See also
+    /// [`Transaction::is_response_body_processable`].
+    pub fn response_body_access(&self) -> bool {
+        self.response_body_access
+    }
+
+    /// Set response body limit (used by ctl:responseBodyLimit).
+    pub(crate) fn set_response_body_limit(&mut self, limit: i64) {
+        self.response_body_limit = limit;
+    }
+
+    /// Set force response body variable (used by ctl:forceResponseBodyVariable).
+    pub(crate) fn set_force_response_body_variable(&mut self, enabled: bool) {
+        self.force_response_body_variable = enabled;
+    }
+
+    /// Get last processed phase.
+    pub fn last_phase(&self) -> Option<RulePhase> {
+        self.last_phase
+    }
+
+    // ===== HTTP Processing Methods =====
 
     /// Adds a query string argument to ARGS_GET and ARGS.
     ///
@@ -1355,7 +1242,7 @@ impl Transaction {
 
     /// Adds a response body argument to RESPONSE_ARGS, within the argument limit as
     /// [`Transaction::add_get_argument`] does.
-    pub fn add_response_argument(&mut self, key: &str, value: impl AsRef<[u8]>) {
+    pub(crate) fn add_response_argument(&mut self, key: &str, value: impl AsRef<[u8]>) {
         let value = value.as_ref();
         if self.within_argument_limit(self.response_args.value_count()) {
             self.response_args.add(key, value);
@@ -1372,90 +1259,6 @@ impl Transaction {
         within
     }
 
-    /// Get request body limit.
-    pub fn request_body_limit(&self) -> i64 {
-        self.request_body_limit
-    }
-
-    /// Set force request body variable (used by ctl:forceRequestBodyVariable).
-    pub fn set_force_request_body_variable(&mut self, enabled: bool) {
-        self.force_request_body_variable = enabled;
-    }
-
-    /// Get force request body variable status.
-    pub fn force_request_body_variable(&self) -> bool {
-        self.force_request_body_variable
-    }
-
-    /// Audit logging mode of this transaction (`SecAuditEngine`, changed by
-    /// `ctl:auditEngine`): whether its logging phase writes an audit log entry.
-    pub fn audit_engine(&self) -> AuditEngineStatus {
-        self.audit_engine
-    }
-
-    /// Set the audit logging mode (used by ctl:auditEngine).
-    pub fn set_audit_engine(&mut self, status: AuditEngineStatus) {
-        self.audit_engine = status;
-    }
-
-    /// Audit log parts of this transaction, `A` and `Z` included.
-    pub fn audit_log_parts(&self) -> &[AuditLogPart] {
-        &self.audit_log_parts
-    }
-
-    /// Set the audit log parts (used by ctl:auditLogParts).
-    pub fn set_audit_log_parts(&mut self, parts: AuditLogParts) {
-        self.audit_log_parts = parts;
-    }
-
-    /// Debug log verbosity of this transaction, 0 to 9; the library writes no debug log,
-    /// so this is for the embedder.
-    pub fn debug_log_level(&self) -> u8 {
-        self.debug_log_level
-    }
-
-    /// Set the debug log verbosity (used by ctl:debugLogLevel).
-    pub fn set_debug_log_level(&mut self, level: u8) {
-        self.debug_log_level = level;
-    }
-
-    /// Set response body access (used by ctl:responseBodyAccess).
-    pub fn set_response_body_access(&mut self, enabled: bool) {
-        self.response_body_access = enabled;
-    }
-
-    /// Get response body access status.
-    pub fn response_body_access(&self) -> bool {
-        self.response_body_access
-    }
-
-    /// Set response body limit (used by ctl:responseBodyLimit).
-    pub fn set_response_body_limit(&mut self, limit: i64) {
-        self.response_body_limit = limit;
-    }
-
-    /// Get response body limit.
-    pub fn response_body_limit(&self) -> i64 {
-        self.response_body_limit
-    }
-
-    /// Set force response body variable (used by ctl:forceResponseBodyVariable).
-    pub fn set_force_response_body_variable(&mut self, enabled: bool) {
-        self.force_response_body_variable = enabled;
-    }
-
-    /// Get force response body variable status.
-    pub fn force_response_body_variable(&self) -> bool {
-        self.force_response_body_variable
-    }
-
-    /// Get last processed phase.
-    pub fn last_phase(&self) -> Option<RulePhase> {
-        self.last_phase
-    }
-
-    // ===== HTTP Processing Methods =====
-
     /// Process connection information (Phase 1).
     ///
     /// Populates connection-level variables:
@@ -1465,9 +1268,9 @@ impl Transaction {
     /// # Example
     ///
     /// ```
-    /// use coraza::transaction::Transaction;
+    /// use coraza::waf::Waf;
     ///
-    /// let mut tx = Transaction::new("tx-1");
+    /// let mut tx = Waf::default().new_transaction();
     /// tx.process_connection("192.168.1.100", 54321, "10.0.0.1", 8080);
     /// ```
     pub fn process_connection(
@@ -1496,9 +1299,9 @@ impl Transaction {
     /// # Example
     ///
     /// ```
-    /// use coraza::transaction::Transaction;
+    /// use coraza::waf::Waf;
     ///
-    /// let mut tx = Transaction::new("tx-1");
+    /// let mut tx = Waf::default().new_transaction();
     /// tx.set_server_name("example.com");
     /// ```
     pub fn set_server_name(&mut self, name: impl Into<String>) {
@@ -1515,14 +1318,16 @@ impl Transaction {
     /// # Example
     ///
     /// ```
-    /// use coraza::transaction::Transaction;
+    /// use coraza::RuleVariable;
+    /// use coraza::waf::Waf;
     ///
-    /// let mut tx = Transaction::new("tx-1");
+    /// let mut tx = Waf::default().new_transaction();
     /// tx.process_uri("/api/users?id=123&name=admin", "GET", "HTTP/1.1");
     ///
     /// // Check populated variables
-    /// assert_eq!(tx.args_get().get("id"), vec!["123"]);
-    /// assert_eq!(tx.args_get().get("name"), vec!["admin"]);
+    /// let arg = |key| tx.get_variable(RuleVariable::ArgsGet, Some(key));
+    /// assert_eq!(arg("id").as_deref(), Some("123"));
+    /// assert_eq!(arg("name").as_deref(), Some("admin"));
     /// ```
     pub fn process_uri(&mut self, uri: &str, method: &str, http_version: &str) {
         self.request_method.set(method);
@@ -1589,22 +1394,25 @@ impl Transaction {
     /// # Example
     ///
     /// ```
-    /// use coraza::transaction::Transaction;
+    /// use coraza::RuleVariable;
+    /// use coraza::waf::Waf;
     ///
-    /// let mut tx = Transaction::new("tx-1");
+    /// let mut tx = Waf::default().new_transaction();
     /// tx.add_request_header("User-Agent", "Mozilla/5.0");
     /// tx.add_request_header("Cookie", "session=abc123; user=admin");
     ///
-    /// assert_eq!(tx.request_headers().get("user-agent"), vec!["Mozilla/5.0"]);
-    /// assert_eq!(tx.request_cookies().get("session"), vec!["abc123"]);
-    /// assert_eq!(tx.request_cookies().get("user"), vec!["admin"]);
+    /// let header = tx.get_variable(RuleVariable::RequestHeaders, Some("user-agent"));
+    /// assert_eq!(header.as_deref(), Some("Mozilla/5.0"));
+    /// let cookie = |name| tx.get_variable(RuleVariable::RequestCookies, Some(name));
+    /// assert_eq!(cookie("session").as_deref(), Some("abc123"));
+    /// assert_eq!(cookie("user").as_deref(), Some("admin"));
     /// ```
     pub fn add_request_header(&mut self, key: &str, value: &str) {
         if key.is_empty() {
             return;
         }
 
-        self.request_headers_mut().add(key, value);
+        self.request_headers.add(key, value);
 
         // Handle special headers
         let key_lower = key.to_lowercase();
@@ -1625,14 +1433,14 @@ impl Transaction {
     /// Makes `processor` parse the request body (`REQBODY_PROCESSOR`), as
     /// `ctl:requestBodyProcessor` does. The first `Content-Type` request header selects
     /// the urlencoded or multipart one.
-    pub fn set_request_body_processor(&mut self, processor: BodyProcessorKind) {
+    pub(crate) fn set_request_body_processor(&mut self, processor: BodyProcessorKind) {
         self.reqbody_processor.set(processor.name());
     }
 
     /// Makes `processor` parse the response body (`RES_BODY_PROCESSOR`), as
     /// `ctl:responseBodyProcessor` does. Without one, the response body is stored in
     /// RESPONSE_BODY.
-    pub fn set_response_body_processor(&mut self, processor: BodyProcessorKind) {
+    pub(crate) fn set_response_body_processor(&mut self, processor: BodyProcessorKind) {
         self.res_body_processor.set(processor.name());
     }
 
@@ -1663,19 +1471,21 @@ impl Transaction {
     /// # Example
     ///
     /// ```
-    /// use coraza::transaction::Transaction;
+    /// use coraza::RuleVariable;
+    /// use coraza::waf::Waf;
     ///
-    /// let mut tx = Transaction::new("tx-1");
+    /// let mut tx = Waf::default().new_transaction();
     /// tx.add_response_header("Content-Type", "application/json; charset=utf-8");
     ///
-    /// assert_eq!(tx.response_content_type(), "application/json");
+    /// let content_type = tx.get_variable(RuleVariable::ResponseContentType, None);
+    /// assert_eq!(content_type.as_deref(), Some("application/json"));
     /// ```
     pub fn add_response_header(&mut self, key: &str, value: &str) {
         if key.is_empty() {
             return;
         }
 
-        self.response_headers_mut().add(key, value);
+        self.response_headers.add(key, value);
 
         // Handle special headers
         let key_lower = key.to_lowercase();
@@ -1725,7 +1535,7 @@ impl Transaction {
     /// REQBODY_PROCESSOR names, if any.
     fn inspect_request_body(&mut self, body: &[u8]) {
         // Get Content-Type to determine body processor
-        let content_type_values = self.request_headers().get("content-type");
+        let content_type_values = self.request_headers.get("content-type");
         let content_type = content_type_values
             .first()
             .map(|s| s.as_str())
@@ -1776,10 +1586,13 @@ impl Transaction {
     /// # Example
     ///
     /// ```
-    /// use coraza::transaction::Transaction;
+    /// use coraza::RuleVariable;
+    /// use coraza::config::WafConfig;
+    /// use coraza::waf::Waf;
     ///
-    /// let mut tx = Transaction::new("tx-1");
-    /// tx.set_request_body_access(true); // SecRequestBodyAccess On
+    /// // SecRequestBodyAccess On
+    /// let config = WafConfig { request_body_access: true, ..WafConfig::default() };
+    /// let mut tx = Waf::new(config).unwrap().new_transaction();
     /// tx.add_request_header("Content-Type", "application/x-www-form-urlencoded");
     /// tx.process_request_headers();
     ///
@@ -1787,8 +1600,9 @@ impl Transaction {
     /// let result = tx.process_request_body(body);
     ///
     /// // Body is parsed and ARGS_POST is populated
-    /// assert_eq!(tx.args_post().get("username"), vec!["admin"]);
-    /// assert_eq!(tx.args_post().get("password"), vec!["secret"]);
+    /// let arg = |key| tx.get_variable(RuleVariable::ArgsPost, Some(key));
+    /// assert_eq!(arg("username").as_deref(), Some("admin"));
+    /// assert_eq!(arg("password").as_deref(), Some("secret"));
     /// ```
     pub fn process_request_body(&mut self, body: &[u8]) -> Option<Interruption> {
         if !self.begin_phase(RulePhase::RequestBody) {
@@ -1824,15 +1638,17 @@ impl Transaction {
     /// # Example
     ///
     /// ```
-    /// use coraza::transaction::Transaction;
+    /// use coraza::RuleVariable;
+    /// use coraza::waf::Waf;
     ///
-    /// let mut tx = Transaction::new("tx-1");
+    /// let mut tx = Waf::default().new_transaction();
     /// tx.add_response_header("Content-Type", "application/json");
     ///
     /// let result = tx.process_response_headers(200, "HTTP/1.1");
     ///
     /// // Response variables are populated
-    /// assert_eq!(tx.response_status(), "200");
+    /// let status = tx.get_variable(RuleVariable::ResponseStatus, None);
+    /// assert_eq!(status.as_deref(), Some("200"));
     /// ```
     pub fn process_response_headers(
         &mut self,
@@ -1901,9 +1717,9 @@ impl Transaction {
     /// # Example
     ///
     /// ```
-    /// use coraza::transaction::Transaction;
+    /// use coraza::waf::Waf;
     ///
-    /// let mut tx = Transaction::new("tx-1");
+    /// let mut tx = Waf::default().new_transaction();
     /// tx.add_response_header("Content-Type", "application/json");
     /// tx.process_response_headers(200, "HTTP/1.1");
     ///
@@ -1949,9 +1765,9 @@ impl Transaction {
     /// # Example
     ///
     /// ```
-    /// use coraza::transaction::Transaction;
+    /// use coraza::waf::Waf;
     ///
-    /// let mut tx = Transaction::new("tx-1");
+    /// let mut tx = Waf::default().new_transaction();
     /// // ... process request and response ...
     /// tx.process_logging().unwrap();
     /// ```
@@ -2196,50 +2012,60 @@ mod tests {
     }
 
     #[test]
+    fn a_transaction_without_a_waf_has_the_settings_of_a_default_wafs() {
+        let settings = |tx: &Transaction| {
+            (
+                tx.rule_engine,
+                tx.request_body_access,
+                tx.request_body_limit,
+                tx.response_body_access,
+                tx.response_body_limit,
+                tx.audit_engine,
+                tx.audit_log_parts.clone(),
+                tx.debug_log_level,
+            )
+        };
+
+        let standalone = Transaction::new("standalone");
+        let of_a_default_waf = crate::waf::Waf::default().new_transaction();
+
+        assert_eq!(settings(&standalone), settings(&of_a_default_waf));
+    }
+
+    #[test]
     fn test_transaction_args() {
         let mut tx = Transaction::new("tx-002");
-        tx.args_get_mut().add("id", "123");
-        tx.args_get_mut().add("name", "test");
+        tx.add_get_argument("id", "123");
+        tx.add_get_argument("name", "test");
 
-        let id_vals = tx.args_get().get("id");
+        let id_vals = tx.args_get.get("id");
         assert_eq!(id_vals, vec!["123"]);
 
-        let name_vals = tx.args_get().get("name");
+        let name_vals = tx.args_get.get("name");
         assert_eq!(name_vals, vec!["test"]);
+
+        // ARGS follows ARGS_GET
+        assert_eq!(tx.args.get("id"), vec!["123"]);
     }
 
     #[test]
     fn test_transaction_headers() {
         let mut tx = Transaction::new("tx-003");
-        tx.request_headers_mut().add("User-Agent", "Mozilla");
-        tx.request_headers_mut()
-            .add("Content-Type", "application/json");
+        tx.add_request_header("User-Agent", "Mozilla");
+        tx.add_request_header("Content-Type", "application/json");
 
         // Case-insensitive lookup
-        let ua = tx.request_headers().get("user-agent");
+        let ua = tx.request_headers.get("user-agent");
         assert_eq!(ua, vec!["Mozilla"]);
-    }
-
-    #[test]
-    fn test_transaction_single_values() {
-        let mut tx = Transaction::new("tx-004");
-        tx.set_request_uri("/api/users");
-        tx.set_request_method("GET");
-        tx.set_remote_addr("127.0.0.1");
-
-        assert_eq!(tx.request_uri.get(), "/api/users");
-        assert_eq!(tx.request_method.get(), "GET");
-        assert_eq!(tx.remote_addr.get(), "127.0.0.1");
     }
 
     #[test]
     fn test_transaction_state_get_variable() {
         let mut tx = Transaction::new("tx-005");
-        tx.set_request_uri("/test");
-        tx.args_get_mut().add("id", "456");
+        tx.process_uri("/test?id=456", "GET", "HTTP/1.1");
 
         // Get single-value variable
-        let uri = tx.get_variable(RuleVariable::RequestURI, None);
+        let uri = tx.get_variable(RuleVariable::RequestFilename, None);
         assert_eq!(uri, Some("/test".to_string()));
 
         // Get keyed variable
@@ -2334,8 +2160,8 @@ mod tests {
         assert_eq!(tx.query_string.get(), "q=test&page=2");
 
         // Check ARGS_GET populated
-        assert_eq!(tx.args_get().get("q"), vec!["test"]);
-        assert_eq!(tx.args_get().get("page"), vec!["2"]);
+        assert_eq!(tx.args_get.get("q"), vec!["test"]);
+        assert_eq!(tx.args_get.get("page"), vec!["2"]);
     }
 
     #[test]
@@ -2404,8 +2230,8 @@ mod tests {
         tx.process_uri("/search?q=hello+world&tag=%23rust", "GET", "HTTP/1.1");
 
         // Check URL decoding
-        assert_eq!(tx.args_get().get("q"), vec!["hello world"]); // + -> space
-        assert_eq!(tx.args_get().get("tag"), vec!["#rust"]); // %23 -> #
+        assert_eq!(tx.args_get.get("q"), vec!["hello world"]); // + -> space
+        assert_eq!(tx.args_get.get("tag"), vec!["#rust"]); // %23 -> #
     }
 
     #[test]
@@ -2413,7 +2239,7 @@ mod tests {
         let mut tx = Transaction::new("tx-013");
         tx.process_uri("/api?flag", "GET", "HTTP/1.1");
 
-        assert_eq!(tx.args_get().get("flag"), vec![""]);
+        assert_eq!(tx.args_get.get("flag"), vec![""]);
     }
 
     #[test]
@@ -2422,9 +2248,9 @@ mod tests {
         tx.add_request_header("User-Agent", "Mozilla/5.0");
         tx.add_request_header("Content-Type", "application/json");
 
-        assert_eq!(tx.request_headers().get("user-agent"), vec!["Mozilla/5.0"]);
+        assert_eq!(tx.request_headers.get("user-agent"), vec!["Mozilla/5.0"]);
         assert_eq!(
-            tx.request_headers().get("content-type"),
+            tx.request_headers.get("content-type"),
             vec!["application/json"]
         );
     }
@@ -2434,9 +2260,9 @@ mod tests {
         let mut tx = Transaction::new("tx-015");
         tx.add_request_header("Cookie", "session=abc123; user=admin; theme=dark");
 
-        assert_eq!(tx.request_cookies().get("session"), vec!["abc123"]);
-        assert_eq!(tx.request_cookies().get("user"), vec!["admin"]);
-        assert_eq!(tx.request_cookies().get("theme"), vec!["dark"]);
+        assert_eq!(tx.request_cookies.get("session"), vec!["abc123"]);
+        assert_eq!(tx.request_cookies.get("user"), vec!["admin"]);
+        assert_eq!(tx.request_cookies.get("theme"), vec!["dark"]);
     }
 
     #[test]
@@ -2445,7 +2271,7 @@ mod tests {
         tx.add_request_header("", "value");
 
         // Should not add header with empty key
-        assert!(tx.request_headers().is_empty());
+        assert!(tx.request_headers.is_empty());
     }
 
     #[test]
@@ -2453,8 +2279,8 @@ mod tests {
         let mut tx = Transaction::new("tx-017");
         tx.add_request_header("Cookie", " session = abc123 ; user = admin ");
 
-        assert_eq!(tx.request_cookies().get("session"), vec!["abc123"]);
-        assert_eq!(tx.request_cookies().get("user"), vec!["admin"]);
+        assert_eq!(tx.request_cookies.get("session"), vec!["abc123"]);
+        assert_eq!(tx.request_cookies.get("user"), vec!["admin"]);
     }
 
     #[test]
@@ -2464,10 +2290,10 @@ mod tests {
         tx.add_response_header("Server", "nginx/1.18");
 
         assert_eq!(
-            tx.response_headers().get("content-type"),
+            tx.response_headers.get("content-type"),
             vec!["application/json; charset=utf-8"]
         );
-        assert_eq!(tx.response_headers().get("server"), vec!["nginx/1.18"]);
+        assert_eq!(tx.response_headers.get("server"), vec!["nginx/1.18"]);
 
         // RESPONSE_CONTENT_TYPE should have just the MIME type
         assert_eq!(tx.response_content_type.get(), "application/json");
@@ -2479,7 +2305,7 @@ mod tests {
         tx.add_response_header("", "value");
 
         // Should not add header with empty key
-        assert!(tx.response_headers().is_empty());
+        assert!(tx.response_headers.is_empty());
     }
 
     #[test]
@@ -2495,9 +2321,9 @@ mod tests {
         assert!(result.is_none()); // No interruption
 
         // Check ARGS_POST populated
-        assert_eq!(tx.args_post().get("username"), vec!["admin"]);
-        assert_eq!(tx.args_post().get("password"), vec!["secret"]);
-        assert_eq!(tx.args_post().get("role"), vec!["admin"]);
+        assert_eq!(tx.args_post.get("username"), vec!["admin"]);
+        assert_eq!(tx.args_post.get("password"), vec!["secret"]);
+        assert_eq!(tx.args_post.get("role"), vec!["admin"]);
 
         // Check REQUEST_BODY stored
         assert_eq!(
@@ -2525,8 +2351,8 @@ mod tests {
         assert!(result.is_none());
 
         // Check JSON flattening in ARGS_POST
-        assert_eq!(tx.args_post().get("json.user"), vec!["admin"]);
-        assert_eq!(tx.args_post().get("json.id"), vec!["123"]);
+        assert_eq!(tx.args_post.get("json.user"), vec!["admin"]);
+        assert_eq!(tx.args_post.get("json.id"), vec!["123"]);
     }
 
     #[test]
@@ -2569,7 +2395,7 @@ value1\r\n\
         assert!(result.is_none());
 
         // Check ARGS_POST populated from multipart
-        assert_eq!(tx.args_post().get("field1"), vec!["value1"]);
+        assert_eq!(tx.args_post.get("field1"), vec!["value1"]);
     }
 
     #[test]
@@ -2626,8 +2452,8 @@ value1\r\n\
 
         // Should still have first body only
         assert_eq!(tx.request_body.get(), "key1=value1");
-        assert_eq!(tx.args_post().get("key1"), vec!["value1"]);
-        assert!(tx.args_post().get("key2").is_empty());
+        assert_eq!(tx.args_post.get("key1"), vec!["value1"]);
+        assert!(tx.args_post.get("key2").is_empty());
     }
 
     #[test]
@@ -2779,7 +2605,7 @@ value1\r\n\
         let mut tx = Transaction::new("utf8");
         tx.process_uri("/?name=%C3%A9t%C3%A9&q=a+b", "GET", "HTTP/1.1");
 
-        assert_eq!(tx.args_get().get("name"), vec!["été"]);
-        assert_eq!(tx.args().get("q"), vec!["a b"]);
+        assert_eq!(tx.args_get.get("name"), vec!["été"]);
+        assert_eq!(tx.args.get("q"), vec!["a b"]);
     }
 }

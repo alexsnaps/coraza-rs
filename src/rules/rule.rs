@@ -366,7 +366,7 @@ mod tests {
             ));
 
         let mut tx = Transaction::new("test");
-        tx.args_mut().add("test", "value");
+        tx.add_get_argument("test", "value");
 
         let matches = rule.evaluate(&mut tx);
 
@@ -391,7 +391,7 @@ mod tests {
             ));
 
         let mut tx = Transaction::new("test");
-        tx.args_mut().add("test", "different");
+        tx.add_get_argument("test", "different");
 
         let matches = rule.evaluate(&mut tx);
 
@@ -422,7 +422,7 @@ mod tests {
             .unwrap();
 
         let mut tx = Transaction::new("test");
-        tx.args_mut().add("test", "HELLO");
+        tx.add_get_argument("test", "HELLO");
 
         let matches = rule.evaluate(&mut tx);
 
@@ -460,8 +460,8 @@ mod tests {
             .with_chain(chained_rule);
 
         let mut tx = Transaction::new("test");
-        tx.args_mut().add("first", "value1");
-        tx.args_mut().add("second", "value2");
+        tx.add_get_argument("first", "value1");
+        tx.add_get_argument("second", "value2");
 
         let matches = rule.evaluate(&mut tx);
 
@@ -497,8 +497,8 @@ mod tests {
             .with_chain(chained_rule);
 
         let mut tx = Transaction::new("test");
-        tx.args_mut().add("first", "wrong");
-        tx.args_mut().add("second", "value2");
+        tx.add_get_argument("first", "wrong");
+        tx.add_get_argument("second", "value2");
 
         let matches = rule.evaluate(&mut tx);
 
@@ -534,8 +534,8 @@ mod tests {
             .with_chain(chained_rule);
 
         let mut tx = Transaction::new("test");
-        tx.args_mut().add("first", "value1");
-        tx.args_mut().add("second", "wrong");
+        tx.add_get_argument("first", "value1");
+        tx.add_get_argument("second", "wrong");
 
         let matches = rule.evaluate(&mut tx);
 

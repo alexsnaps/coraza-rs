@@ -125,7 +125,7 @@ impl RuleOperator {
     /// ```
     /// use coraza::rules::RuleOperator;
     /// use coraza::operators::{Outputs, streq};
-    /// use coraza::transaction::Transaction;
+    /// use coraza::waf::Waf;
     ///
     /// let op = RuleOperator::new(
     ///     streq("test").unwrap().into(),
@@ -133,7 +133,7 @@ impl RuleOperator {
     ///     "test"
     /// );
     ///
-    /// let tx = Transaction::new("test");
+    /// let tx = Waf::default().new_transaction();
     /// let mut out = Outputs::default();
     /// assert!(op.evaluate(&tx, "test".as_bytes(), &mut out));
     /// assert!(!op.evaluate(&tx, "other".as_bytes(), &mut out));

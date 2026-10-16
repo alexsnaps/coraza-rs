@@ -169,6 +169,7 @@ fn flatten_value(value: &Value, key_buffer: &mut Vec<u8>, result: &mut HashMap<S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RuleVariable;
     use crate::body_processors::BodyProcessorKind;
     #[test]
     fn test_json_map() {
@@ -317,8 +318,14 @@ mod tests {
             .unwrap();
 
         // Check ARGS_POST populated
-        assert_eq!(tx.args_post().get("json.username"), vec!["admin"]);
-        assert_eq!(tx.args_post().get("json.password"), vec!["secret"]);
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost).get("json.username"),
+            vec!["admin"]
+        );
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost).get("json.password"),
+            vec!["secret"]
+        );
 
         // As in Go Coraza and ModSecurity, only URLENCODED and RAW set REQUEST_BODY
         assert_eq!(tx.request_body.get(), "");
@@ -350,7 +357,10 @@ mod tests {
             .process_request(body, &mut tx, &BodyProcessorOptions::default())
             .unwrap();
 
-        assert_eq!(tx.args_post().get("json.test"), vec!["value"]);
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost).get("json.test"),
+            vec!["value"]
+        );
     }
 
     #[test]
@@ -363,9 +373,20 @@ mod tests {
             .process_request(body, &mut tx, &BodyProcessorOptions::default())
             .unwrap();
 
-        assert_eq!(tx.args_post().get("json.items"), vec!["2"]); // array length
-        assert_eq!(tx.args_post().get("json.items.0.id"), vec!["1"]);
-        assert_eq!(tx.args_post().get("json.items.1.id"), vec!["2"]);
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost).get("json.items"),
+            vec!["2"]
+        ); // array length
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost)
+                .get("json.items.0.id"),
+            vec!["1"]
+        );
+        assert_eq!(
+            tx.variable_map(RuleVariable::ArgsPost)
+                .get("json.items.1.id"),
+            vec!["2"]
+        );
     }
 
     #[test]
@@ -380,7 +401,11 @@ mod tests {
 
         // Empty object - no ARGS_POST entries
         // Note: We can't check if collection is empty easily, but we can check specific keys don't exist
-        assert!(tx.args_post().get("json").is_empty());
+        assert!(
+            tx.variable_map(RuleVariable::ArgsPost)
+                .get("json")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -394,9 +419,21 @@ mod tests {
             .unwrap();
 
         // Check RESPONSE_ARGS populated
-        assert_eq!(tx.response_args().get("json.status"), vec!["success"]);
-        assert_eq!(tx.response_args().get("json.data.id"), vec!["123"]);
-        assert_eq!(tx.response_args().get("json.data.name"), vec!["admin"]);
+        assert_eq!(
+            tx.variable_map(RuleVariable::ResponseArgs)
+                .get("json.status"),
+            vec!["success"]
+        );
+        assert_eq!(
+            tx.variable_map(RuleVariable::ResponseArgs)
+                .get("json.data.id"),
+            vec!["123"]
+        );
+        assert_eq!(
+            tx.variable_map(RuleVariable::ResponseArgs)
+                .get("json.data.name"),
+            vec!["admin"]
+        );
     }
 
     #[test]
@@ -410,9 +447,21 @@ mod tests {
             .unwrap();
 
         // Check RESPONSE_ARGS populated
-        assert_eq!(tx.response_args().get("json.items"), vec!["2"]); // array length
-        assert_eq!(tx.response_args().get("json.items.0.id"), vec!["1"]);
-        assert_eq!(tx.response_args().get("json.items.1.id"), vec!["2"]);
+        assert_eq!(
+            tx.variable_map(RuleVariable::ResponseArgs)
+                .get("json.items"),
+            vec!["2"]
+        ); // array length
+        assert_eq!(
+            tx.variable_map(RuleVariable::ResponseArgs)
+                .get("json.items.0.id"),
+            vec!["1"]
+        );
+        assert_eq!(
+            tx.variable_map(RuleVariable::ResponseArgs)
+                .get("json.items.1.id"),
+            vec!["2"]
+        );
     }
 
     #[test]

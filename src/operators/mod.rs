@@ -120,7 +120,7 @@ pub(crate) trait Matches {
 impl<O: Operator> Matches for O {
     fn matches(&self, input: impl AsRef<[u8]>) -> bool {
         self.evaluate(
-            &Transaction::default(),
+            &Transaction::new("test"),
             input.as_ref(),
             &mut Outputs::default(),
         )
@@ -290,7 +290,7 @@ mod tests {
     fn new_reaches_every_operator_in_the_table() {
         let op = OperatorEnum::new("noMatch", "").unwrap();
         assert!(!op.evaluate(
-            &Transaction::default(),
+            &Transaction::new("test"),
             b"anything",
             &mut Outputs::default()
         ));

@@ -28,7 +28,7 @@ use crate::transaction::Transaction;
 /// let op = detect_sqli();
 ///
 /// // SQL injection patterns
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "1' OR '1'='1".as_bytes(), &mut out));
 /// assert!(op.evaluate(&tx, "admin'--".as_bytes(), &mut out));
@@ -58,7 +58,7 @@ impl Operator for DetectSQLi {
 /// # use coraza::operators::detection::detect_sqli;
 /// # use coraza::operators::Operator;
 /// let op = detect_sqli();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "1' OR '1'='1".as_bytes(), &mut out));
 /// ```
@@ -87,7 +87,7 @@ pub fn detect_sqli() -> DetectSQLi {
 /// let op = detect_xss();
 ///
 /// // XSS patterns
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "<script>alert(1)</script>".as_bytes(), &mut out));
 /// assert!(op.evaluate(&tx, "<a href=\"javascript:alert(1)\">".as_bytes(), &mut out));
@@ -113,7 +113,7 @@ impl Operator for DetectXSS {
 /// # use coraza::operators::detection::detect_xss;
 /// # use coraza::operators::Operator;
 /// let op = detect_xss();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "<script>alert(1)</script>".as_bytes(), &mut out));
 /// ```
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn test_detect_sqli_with_capture() {
         let op = detect_sqli();
-        let mut tx = Transaction::default();
+        let mut tx = Transaction::new("test");
 
         // Detect SQL injection and capture fingerprint
         assert!(evaluate_in(&op, &mut tx, "1' OR '1'='1", true));

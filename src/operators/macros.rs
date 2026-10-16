@@ -248,7 +248,7 @@ mod tests {
         // Empty strings are allowed
         let m = Macro::new("").unwrap();
         assert_eq!(m.as_str(), "");
-        assert_eq!(m.expand(&Transaction::default()), "");
+        assert_eq!(m.expand(&Transaction::new("test")), "");
     }
 
     #[test]
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn test_compile_single_percent() {
         let m = Macro::new("%").unwrap();
-        assert!(m.expand(&Transaction::default()).contains('%'));
+        assert!(m.expand(&Transaction::new("test")).contains('%'));
     }
 
     #[test]
@@ -323,7 +323,7 @@ mod tests {
     #[test]
     fn test_expand_plain_text() {
         let m = Macro::new("static text").unwrap();
-        assert_eq!(m.expand(&Transaction::default()), "static text");
+        assert_eq!(m.expand(&Transaction::new("test")), "static text");
     }
 
     fn mock_tx() -> Transaction {
@@ -335,7 +335,7 @@ mod tests {
         };
         vars.add("score", "42");
         vars.add("id", "test-123");
-        tx.args_mut().add("count", "10");
+        tx.add_get_argument("count", "10");
         tx
     }
 

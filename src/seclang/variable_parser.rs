@@ -491,10 +491,10 @@ mod tests {
     #[test]
     fn test_regex_key_case_follows_the_collection() {
         let mut tx = crate::transaction::Transaction::new("test");
-        tx.request_headers_mut().add("X-Forwarded-For", "1.2.3.4");
-        tx.request_headers_mut().add("Host", "localhost");
-        tx.args_mut().add("Foo", "1");
-        tx.args_mut().add("foo", "2");
+        tx.add_request_header("X-Forwarded-For", "1.2.3.4");
+        tx.add_request_header("Host", "localhost");
+        tx.add_get_argument("Foo", "1");
+        tx.add_get_argument("foo", "2");
 
         // Header names are case-insensitive, and so is a regex for them, as in Go
         assert_eq!(
@@ -512,8 +512,8 @@ mod tests {
     #[test]
     fn test_regex_keys_quoted_or_holding_a_pipe() {
         let mut tx = crate::transaction::Transaction::new("test");
-        tx.args_mut().add("id_1", "1");
-        tx.args_mut().add("name", "2");
+        tx.add_get_argument("id_1", "1");
+        tx.add_get_argument("name", "2");
 
         assert_eq!(keys("ARGS:'/^id_/'", &tx), ["id_1"]);
         assert_eq!(keys("ARGS:/a|e/|ARGS_NAMES", &tx), ["id_1", "name", "name"]);

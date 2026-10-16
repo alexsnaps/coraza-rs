@@ -36,7 +36,7 @@ use regex::Regex;
 /// use coraza::{transaction::Transaction, Operator, rx};
 ///
 /// let op = rx("som(.*)ta").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "somedata".as_bytes(), &mut out));
 /// assert!(!op.evaluate(&tx, "notdata".as_bytes(), &mut out));
@@ -242,7 +242,7 @@ pub fn rx(pattern: &str) -> Result<Rx, Box<dyn std::error::Error>> {
 /// use coraza::{transaction::Transaction, Operator, pm};
 ///
 /// let op = pm("WebZIP WebCopier Webster").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0".as_bytes(), &mut out));
 /// assert!(op.evaluate(&tx, "WEBZIP is here".as_bytes(), &mut out)); // Case-insensitive
@@ -346,9 +346,8 @@ pub fn pm(patterns: &str) -> Result<Pm, MacroError> {
 /// ```no_run
 /// # use coraza::operators::pm_from_file;
 /// # use coraza::operators::Operator;
-/// # use coraza::transaction::Transaction;
 /// let op = pm_from_file("/etc/coraza/bad-user-agents.txt").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0".as_bytes(), &mut out));
 /// ```
@@ -504,7 +503,7 @@ pub fn pm_from_file(file_path: impl AsRef<Path>) -> Result<PmFromFile, String> {
 ///
 /// // Check if input is within allowed values
 /// let op = within("GET,POST,HEAD").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "GET".as_bytes(), &mut out));
 /// assert!(op.evaluate(&tx, "POST".as_bytes(), &mut out));
@@ -551,7 +550,7 @@ pub fn within(haystack: &str) -> Result<Within, MacroError> {
 /// use coraza::{transaction::Transaction, Operator, strmatch};
 ///
 /// let op = strmatch("WebZIP").unwrap();
-/// let tx = coraza::transaction::Transaction::default();
+/// let tx = coraza::waf::Waf::default().new_transaction();
 /// let mut out = coraza::operators::Outputs::default();
 /// assert!(op.evaluate(&tx, "User-Agent: WebZIP/1.0".as_bytes(), &mut out));
 /// assert!(!op.evaluate(&tx, "User-Agent: webzip".as_bytes(), &mut out)); // Case-sensitive
