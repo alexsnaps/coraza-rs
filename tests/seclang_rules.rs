@@ -2089,3 +2089,22 @@ fn ctl_removes_targets_from_rules_for_the_transaction() {
     assert_eq!(run("/x?a=1&ignored=evil").1, None);
     assert_eq!(run("/x?ignored=1&a=evil").1.as_deref(), Some("1"));
 }
+
+#[test]
+fn ctl_removes_a_target_from_every_rule_in_an_id_range() {
+    // As in Go, ruleRemoveTargetById takes an id or a range, as ruleRemoveById does
+    let waf = waf(r#"
+        SecAction "id:1,phase:1,pass,nolog,ctl:ruleRemoveTargetById=10-15;ARGS"
+        SecRule ARGS "@contains evil" "id:10,phase:1,pass,setvar:tx.ten=1"
+        SecRule ARGS "@contains evil" "id:15,phase:1,pass,setvar:tx.fifteen=1"
+        SecRule ARGS "@contains evil" "id:20,phase:1,pass,setvar:tx.twenty=1"
+    "#);
+
+    let mut tx = waf.new_transaction();
+    tx.process_uri("/x?a=evil", "GET", "HTTP/1.1");
+    tx.process_request_headers();
+
+    assert_eq!(tx_var(&tx, "ten"), None);
+    assert_eq!(tx_var(&tx, "fifteen"), None);
+    assert_eq!(tx_var(&tx, "twenty").as_deref(), Some("1"));
+}

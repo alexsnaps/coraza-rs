@@ -36,7 +36,7 @@ enum CtlCommand {
     RuleRemoveById(RangeInclusive<i32>),
     RuleRemoveByTag(String),
     RuleRemoveByMsg(String),
-    RuleRemoveTargetById(i32, RuleTarget),
+    RuleRemoveTargetById(RangeInclusive<i32>, RuleTarget),
     RuleRemoveTargetByTag(String, RuleTarget),
     RuleRemoveTargetByMsg(String, RuleTarget),
     AuditEngine(AuditEngineStatus),
@@ -82,7 +82,7 @@ impl CtlCommand {
             "ruleRemoveByMsg" => Self::RuleRemoveByMsg(value.to_string()),
             "ruleRemoveTargetById" => {
                 let (id, target) = split_target(value)?;
-                Self::RuleRemoveTargetById(parse_id(id)?, target)
+                Self::RuleRemoveTargetById(parse_id_range(id)?, target)
             }
             "ruleRemoveTargetByTag" => {
                 let (tag, target) = split_target(value)?;
@@ -210,7 +210,7 @@ fn split_target(value: &str) -> Result<(&str, RuleTarget), ActionError> {
 /// - `ruleRemoveById=ID` or `ID1-ID2` - Remove rule(s) by ID or range
 /// - `ruleRemoveByTag=TAG` - Remove rules by tag
 /// - `ruleRemoveByMsg=MSG` - Remove rules by message
-/// - `ruleRemoveTargetById=ID;COLLECTION:key` - Remove variable from rule
+/// - `ruleRemoveTargetById=ID;COLLECTION:key` or `ID1-ID2;...` - Remove variable from rule(s)
 /// - `ruleRemoveTargetByTag=TAG;COLLECTION:key` - Remove variable from tagged rules
 /// - `ruleRemoveTargetByMsg=MSG;COLLECTION:key` - Remove variable from rules by message
 ///
@@ -301,8 +301,16 @@ impl CtlAction {
                     tx.remove_rule_by_id(id);
                 }
             }
-            CtlCommand::RuleRemoveTargetById(id, target) => {
-                tx.remove_rule_target(*id, target.variable, target.key.clone());
+            CtlCommand::RuleRemoveTargetById(ids, target) => {
+                // As in Go, a range selects the rules in it; one id needs no rule set
+                let ids = if ids.start() == ids.end() {
+                    vec![*ids.start()]
+                } else {
+                    rule_ids(tx, |rule| ids.contains(&rule.id))
+                };
+                for id in ids {
+                    tx.remove_rule_target(id, target.variable, target.key.clone());
+                }
             }
             CtlCommand::RuleRemoveTargetByTag(tag, target) => {
                 for id in rule_ids(tx, |rule| rule.tags.contains(tag)) {
@@ -399,7 +407,7 @@ mod tests {
         assert_eq!(
             parse("ruleRemoveTargetById=123;ARGS:User"),
             CtlCommand::RuleRemoveTargetById(
-                123,
+                123..=123,
                 RuleTarget {
                     variable: RuleVariable::Args,
                     key: VariableException::new_string("user".to_string())
