@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::audit_log::AuditLogger;
 use crate::config::WafConfig;
 use crate::rules::RuleGroup;
-use crate::transaction::Transaction;
+use crate::transaction::{ErrorLog, Transaction};
 use crate::utils::strings::random_string;
 
 /// Error type for configuration validation during WAF creation.
@@ -69,6 +69,9 @@ pub struct Waf {
 
     /// Where transactions write their audit log entries
     audit_logger: Arc<AuditLogger>,
+
+    /// Where transactions hand each matched rule with `log`, if anywhere
+    error_log: Option<ErrorLog>,
 }
 
 impl Waf {
@@ -91,15 +94,19 @@ impl Waf {
     /// let waf = Waf::new(config).unwrap();
     /// ```
     pub fn new(config: WafConfig) -> Result<Self, ConfigError> {
-        Self::with_rules(config, RuleGroup::new())
+        Self::with_rules(config, RuleGroup::new(), None)
     }
 
-    /// Creates a WAF with `rules`, as SecLang directives compiled them.
+    /// Creates a WAF with `rules`, as SecLang directives compiled them, and `error_log`.
     ///
     /// # Errors
     ///
     /// As [`Waf::new`], or if the audit log can't be opened.
-    pub(crate) fn with_rules(config: WafConfig, rules: RuleGroup) -> Result<Self, ConfigError> {
+    pub(crate) fn with_rules(
+        config: WafConfig,
+        rules: RuleGroup,
+        error_log: Option<ErrorLog>,
+    ) -> Result<Self, ConfigError> {
         validate_config(&config)?;
         let audit_logger = AuditLogger::open(&config).map_err(ConfigError::new)?;
 
@@ -107,6 +114,7 @@ impl Waf {
             audit_logger: Arc::new(audit_logger),
             config: Arc::new(config),
             rules: Arc::new(rules),
+            error_log,
         })
     }
 
@@ -147,6 +155,9 @@ impl Waf {
 
         tx.set_config(Arc::clone(&self.config));
         tx.set_audit_logger(Arc::clone(&self.audit_logger));
+        if let Some(error_log) = &self.error_log {
+            tx.set_error_log(error_log.clone());
+        }
 
         // Share rules reference for CTL tag/msg-based exclusions
         tx.set_rules(Arc::clone(&self.rules));

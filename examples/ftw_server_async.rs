@@ -38,6 +38,9 @@ use coraza::seclang::Parser;
 use coraza::types::RuleEngineStatus;
 use coraza::waf::Waf;
 
+/// The log FTW reads: request markers and Go Coraza's error log lines.
+type Logfile = Arc<Mutex<std::fs::File>>;
+
 #[tokio::main]
 async fn main() {
     println!("🛡️  Coraza FTW Test Server (Async)\n");
@@ -56,6 +59,14 @@ async fn main() {
     }
     println!();
 
+    let logfile: Logfile = Arc::new(Mutex::new(
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&logfile)
+            .expect("Failed to open logfile"),
+    ));
+
     // Base configuration; directives in the rules file override it
     let mut parser = Parser::new();
     *parser.config_mut() = WafConfig {
@@ -68,6 +79,7 @@ async fn main() {
     };
     // Keep loading past directives this engine doesn't support yet, so a full CRS still loads
     parser.skip_failed_directives();
+    log_errors_to(&mut parser, &logfile);
 
     // Load rules if specified
     if let Some(rules_path) = &rules_file {
@@ -90,13 +102,6 @@ async fn main() {
 
     // Create shared state
     let waf = Arc::new(waf);
-    let logfile = Arc::new(Mutex::new(
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&logfile)
-            .expect("Failed to open logfile"),
-    ));
 
     // Bind to address
     let addr: SocketAddr = format!("127.0.0.1:{}", port)
@@ -133,7 +138,7 @@ async fn main() {
 async fn handle_request(
     req: Request<Incoming>,
     waf: Arc<Waf>,
-    logfile: Arc<Mutex<std::fs::File>>,
+    logfile: Logfile,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let method = req.method().as_str().to_string();
 
@@ -159,6 +164,10 @@ async fn handle_request(
         .get("X-CRS-Test")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+    // Before the request's own error log lines, which FTW looks for after it
+    if let Some(marker) = &marker_header {
+        write_marker(&logfile, marker);
+    }
 
     let mut tx = waf.new_transaction();
     tx.process_uri(&full_uri, &method, &protocol);
@@ -183,7 +192,6 @@ async fn handle_request(
     if let Err(e) = tx.process_logging() {
         eprintln!("failed to write the audit log: {e}");
     }
-    log_transaction(&logfile, &tx, marker_header.as_deref());
 
     Ok(response)
 }
@@ -273,21 +281,21 @@ impl BackendResponse {
     }
 }
 
-/// Writes the FTW marker, if the request had one, and Go Coraza's error log line for
-/// each matched rule with `log`, as its CRS test harness does.
-fn log_transaction(
-    logfile: &Arc<Mutex<std::fs::File>>,
-    tx: &coraza::transaction::Transaction,
-    marker: Option<&str>,
-) {
-    let mut file = logfile.lock().unwrap();
-    if let Some(marker) = marker {
-        let _ = writeln!(file, "[X-CRS-Test \"{}\"]", marker);
-    }
-    for matched in tx.matched_rules().iter().filter(|m| m.rule.log()) {
+/// Has the WAF write Go Coraza's error log line to `logfile` for each matched rule with
+/// `log`, as its CRS test harness reads it.
+fn log_errors_to(parser: &mut Parser, logfile: &Logfile) {
+    let logfile = Arc::clone(logfile);
+    parser.on_error_log(move |matched| {
+        let mut file = logfile.lock().unwrap();
+        // A line FTW can't read fails the test that looks for it
         let _ = writeln!(file, "{}", matched.error_log());
-    }
-    let _ = file.flush();
+    });
+}
+
+/// Writes the FTW marker of a request, by which FTW finds the request's lines.
+fn write_marker(logfile: &Logfile, marker: &str) {
+    let mut file = logfile.lock().unwrap();
+    let _ = writeln!(file, "[X-CRS-Test \"{}\"]", marker);
 }
 
 /// Create an error HTTP response

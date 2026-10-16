@@ -31,6 +31,7 @@ use crate::seclang::rule_compiler::{
     DefaultActions, apply_actions, compile_sec_action_in, compile_sec_marker, compile_sec_rule_in,
 };
 use crate::seclang::variable_parser::VariableList;
+use crate::transaction::{ErrorLog, MatchedRule};
 use crate::types::{
     AuditEngineStatus, AuditLogFormat, AuditLogType, BodyLimitAction, RuleEngineStatus,
     parse_audit_log_parts,
@@ -176,6 +177,9 @@ pub struct Parser {
 
     /// Directives skipped because they failed, in parse order
     skipped: Vec<ParseError>,
+
+    /// Where the WAF's transactions hand each matched rule with `log`, if anywhere
+    error_log: Option<ErrorLog>,
 }
 
 impl Parser {
@@ -190,6 +194,7 @@ impl Parser {
             datasets: Datasets::new(),
             skip_failed: false,
             skipped: Vec::new(),
+            error_log: None,
         }
     }
 
@@ -218,13 +223,44 @@ impl Parser {
         &self.skipped
     }
 
+    /// Makes the WAF hand each matched rule with `log` to `log` as it matches: its error
+    /// log, as Go Coraza's `WithErrorCallback` does, in any rule engine mode.
+    /// [`MatchedRule::error_log`] gives the line Go Coraza writes for it.
+    ///
+    /// `log` runs on the thread evaluating the transaction's phase, so it should be quick:
+    /// a connector that writes elsewhere can queue the line. A later call replaces it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::{Arc, Mutex};
+    ///
+    /// use coraza::seclang::Parser;
+    ///
+    /// let lines = Arc::new(Mutex::new(Vec::new()));
+    /// let mut parser = Parser::new();
+    /// let error_log = Arc::clone(&lines);
+    /// parser.on_error_log(move |matched| error_log.lock().unwrap().push(matched.error_log()));
+    /// parser.from_string(r#"SecRule ARGS "@streq x" "id:1,phase:1,pass,log""#)?;
+    /// let waf = parser.into_waf()?;
+    ///
+    /// let mut tx = waf.new_transaction();
+    /// tx.add_get_argument("a", "x");
+    /// tx.process_request_headers();
+    /// assert_eq!(lines.lock().unwrap().len(), 1);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn on_error_log(&mut self, log: impl Fn(&MatchedRule) + Send + Sync + 'static) {
+        self.error_log = Some(ErrorLog::new(log));
+    }
+
     /// Creates a WAF from the parsed configuration and rules.
     ///
     /// # Errors
     ///
     /// Returns [`ConfigError`] if the parsed configuration is invalid (see [`Waf::new`]).
     pub fn into_waf(self) -> Result<Waf, ConfigError> {
-        Waf::with_rules(self.waf_config, self.rules)
+        Waf::with_rules(self.waf_config, self.rules, self.error_log)
     }
 
     /// Parse directives from a string

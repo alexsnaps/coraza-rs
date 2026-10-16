@@ -73,6 +73,11 @@ A WAF's rules in evaluation order (`RuleGroup`), shared by all its transactions 
 they run.
 _Avoid_: rule group
 
+**Error log**:
+One line per matched rule with `log`, in Go Coraza's format, handed to the **Connector** through the
+WAF's sink as the rule matches.
+_Avoid_: debug log (the embedder's, at `SecDebugLogLevel`), match log
+
 **Connector**:
 The code embedding the library that feeds transactions from an HTTP server and acts on their
 interruptions, such as the FTW examples.
@@ -87,6 +92,8 @@ _Avoid_: integration, server
   **Phase**; called at any other time, it does nothing.
 - Once a **Transaction** has an **Interruption**, no later **Phase** is evaluated but logging, and
   every **Phase** returns that **Interruption**.
+- A **Transaction**'s logging **Phase** runs exactly once: when the **Connector** calls it, or when the
+  **Transaction** is dropped without it.
 - **Flow state** belongs to one **Transaction**, never to the **Rule set**.
 - A **Connector** writes a **Transaction**'s variables only through its input calls
   (`process_connection`, `process_uri`, `add_request_header`, `add_*_argument`,
