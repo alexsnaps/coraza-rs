@@ -580,10 +580,10 @@ mod tests {
         let action = CtlAction::parse("requestBodyLimit=256000").unwrap();
 
         let mut tx = Transaction::new("test-3");
-        assert_eq!(tx.request_body_limit, 128 * 1024 * 1024); // the default, as in Go
+        assert_eq!(tx.settings.request_body_limit, 128 * 1024 * 1024); // the default, as in Go
 
         action.evaluate(&mut tx);
-        assert_eq!(tx.request_body_limit, 256000);
+        assert_eq!(tx.settings.request_body_limit, 256000);
     }
 
     #[test]
@@ -593,10 +593,10 @@ mod tests {
         let action = CtlAction::parse("forceRequestBodyVariable=on").unwrap();
 
         let mut tx = Transaction::new("test-4");
-        assert!(!tx.force_request_body_variable); // default is false
+        assert!(!tx.settings.force_request_body_variable); // default is false
 
         action.evaluate(&mut tx);
-        assert!(tx.force_request_body_variable);
+        assert!(tx.settings.force_request_body_variable);
     }
 
     #[test]
@@ -619,10 +619,10 @@ mod tests {
         let action = CtlAction::parse("responseBodyLimit=1048576").unwrap();
 
         let mut tx = Transaction::new("test-6");
-        assert_eq!(tx.response_body_limit, 524288); // default is 512KB
+        assert_eq!(tx.settings.response_body_limit, 524288); // default is 512KB
 
         action.evaluate(&mut tx);
-        assert_eq!(tx.response_body_limit, 1048576);
+        assert_eq!(tx.settings.response_body_limit, 1048576);
     }
 
     #[test]
@@ -632,10 +632,10 @@ mod tests {
         let action = CtlAction::parse("forceResponseBodyVariable=on").unwrap();
 
         let mut tx = Transaction::new("test-7");
-        assert!(!tx.force_response_body_variable); // default is false
+        assert!(!tx.settings.force_response_body_variable); // default is false
 
         action.evaluate(&mut tx);
-        assert!(tx.force_response_body_variable);
+        assert!(tx.settings.force_response_body_variable);
     }
 
     #[test]
@@ -668,11 +668,11 @@ mod tests {
         tx.process_response_headers(200, "HTTP/1.1");
         tx.process_response_body(b"test");
 
-        assert_eq!(tx.response_body_limit, 524288); // default
+        assert_eq!(tx.settings.response_body_limit, 524288); // default
 
         // Try to change it - should be silently ignored
         action.evaluate(&mut tx);
-        assert_eq!(tx.response_body_limit, 524288); // unchanged
+        assert_eq!(tx.settings.response_body_limit, 524288); // unchanged
     }
 
     // ===== CTL Rule Exclusion Tests =====
